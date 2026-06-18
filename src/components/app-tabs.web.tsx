@@ -27,6 +27,9 @@ export default function AppTabs() {
           <TabTrigger name="explore" href="/explore" asChild>
             <TabButton>Explore</TabButton>
           </TabTrigger>
+          <TabTrigger name="ai" href="/ai" asChild>
+            <TabButton>Nanisuru AI</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>
