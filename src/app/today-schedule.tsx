@@ -2,11 +2,13 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { COMPANION_SUBTITLES, getItineraryEyebrow } from '@/lib/itineraries';
+import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { buildPlanDetails } from '@/lib/plan-details';
+import { ItineraryTimelineCard } from '@/components/itinerary-timeline-card';
 import { Colors, Spacing } from '@/constants/theme';
-import type { CompanionOption, ItineraryItem } from '@/types/plan';
-import { COMPANION_OPTIONS } from '@/types/plan';
+import { parseCurrencyCode } from '@/constants/currency';
+import type { CompanionOption, ItineraryItem, PersonalityOption } from '@/types/plan';
+import { COMPANION_OPTIONS, PERSONALITY_OPTIONS } from '@/types/plan';
 
 const theme = Colors.dark;
 const accent = '#818CF8';
@@ -25,15 +27,21 @@ export default function TodayScheduleScreen() {
   const params = useLocalSearchParams<{
     location: string;
     budget: string;
+    currency: string;
     people: string;
     mood: string;
     companion: string;
+    personality: string;
     items: string;
     details: string;
   }>();
 
   const companion = COMPANION_OPTIONS.includes(params.companion as CompanionOption)
     ? (params.companion as CompanionOption)
+    : null;
+
+  const personality = PERSONALITY_OPTIONS.includes(params.personality as PersonalityOption)
+    ? (params.personality as PersonalityOption)
     : null;
 
   let items: ItineraryItem[] = [];
@@ -45,6 +53,7 @@ export default function TodayScheduleScreen() {
 
   const location = params.location ?? '';
   const budget = params.budget ?? '';
+  const currency = parseCurrencyCode(params.currency);
   const people = params.people ?? '';
   const mood = params.mood ?? '';
 
@@ -68,7 +77,7 @@ export default function TodayScheduleScreen() {
 
   const planDetails =
     details ??
-    buildPlanDetails({ location, budget, people, mood, companion, items });
+    buildPlanDetails({ location, budget, currency, people, mood, companion, items });
 
   return (
     <ScrollView
@@ -92,7 +101,15 @@ export default function TodayScheduleScreen() {
         <Text style={styles.title}>今日の予定</Text>
         <Text style={styles.date}>{formatTodayDate()}</Text>
         <Text style={styles.subtitle}>{getItineraryEyebrow(companion, location)}</Text>
-        <Text style={styles.companionNote}>{COMPANION_SUBTITLES[companion]}</Text>
+        {personality ? (
+          <View style={styles.personalityBadge}>
+            <Text style={styles.personalityBadgeText}>{personality}</Text>
+          </View>
+        ) : null}
+        <Text style={styles.companionNote}>
+          {personality ? PERSONALITY_SUBTITLES[personality] : COMPANION_SUBTITLES[companion]}
+        </Text>
+        <Text style={styles.companionSubnote}>{COMPANION_SUBTITLES[companion]}</Text>
       </View>
 
       <View style={styles.statsRow}>
@@ -110,16 +127,20 @@ export default function TodayScheduleScreen() {
 
       <View style={styles.planCard}>
         <Text style={styles.planCardTitle}>プラン内容</Text>
-        {items.map((item, index) => (
-          <View key={`${item.time}-${item.activity}`} style={styles.planRow}>
-            <View style={styles.planTimeBadge}>
-              <Text style={styles.planTime}>{item.time}</Text>
-            </View>
-            <View style={styles.planActivityWrap}>
-              <Text style={styles.planActivity}>{item.activity}</Text>
-              {index < items.length - 1 && <View style={styles.planDivider} />}
-            </View>
+        {planDetails.plannerMessage ? (
+          <View style={styles.plannerMessageBox}>
+            <Text style={styles.plannerMessageLabel}>プランナーより</Text>
+            <Text style={styles.plannerMessageText}>{planDetails.plannerMessage}</Text>
           </View>
+        ) : null}
+        {items.map((item, index) => (
+          <ItineraryTimelineCard
+            key={`${item.time}-${item.activity}`}
+            item={item}
+            index={index}
+            isLast={index === items.length - 1}
+            variant="detail"
+          />
         ))}
       </View>
 
@@ -190,9 +211,31 @@ const styles = StyleSheet.create({
   },
   companionNote: {
     color: theme.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+    marginTop: Spacing.two,
+  },
+  companionSubnote: {
+    color: theme.textSecondary,
     fontSize: 13,
     lineHeight: 20,
     marginTop: 4,
+    opacity: 0.85,
+  },
+  personalityBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(129, 140, 248, 0.15)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginTop: Spacing.two,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.3)',
+  },
+  personalityBadgeText: {
+    color: accent,
+    fontSize: 13,
+    fontWeight: '700',
   },
   statsRow: {
     flexDirection: 'row',
@@ -246,42 +289,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: Spacing.three,
   },
-  planRow: {
-    flexDirection: 'row',
-    gap: Spacing.three,
-    alignItems: 'flex-start',
-  },
-  planTimeBadge: {
-    backgroundColor: 'rgba(129, 140, 248, 0.15)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    minWidth: 58,
-    alignItems: 'center',
+  plannerMessageBox: {
+    backgroundColor: 'rgba(129, 140, 248, 0.08)',
+    borderRadius: 14,
+    padding: Spacing.three,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.25)',
+    borderColor: 'rgba(129, 140, 248, 0.18)',
+    marginBottom: Spacing.three,
   },
-  planTime: {
+  plannerMessageLabel: {
     color: accent,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '700',
-    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.8,
+    marginBottom: 6,
   },
-  planActivityWrap: {
-    flex: 1,
-    paddingBottom: Spacing.two,
-  },
-  planActivity: {
-    color: theme.text,
-    fontSize: 16,
-    fontWeight: '600',
-    lineHeight: 24,
-    paddingTop: 4,
-  },
-  planDivider: {
-    height: 1,
-    backgroundColor: theme.backgroundSelected,
-    marginTop: Spacing.three,
+  plannerMessageText: {
+    color: theme.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
   },
   footerNote: {
     marginTop: Spacing.four,

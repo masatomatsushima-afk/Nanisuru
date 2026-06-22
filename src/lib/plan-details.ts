@@ -1,4 +1,9 @@
 import type { CompanionOption, ItineraryItem, PlanDetails, PlanParams } from '@/types/plan';
+import {
+  formatAmount,
+  formatBudgetDisplay,
+  type CurrencyCode,
+} from '@/constants/currency';
 
 function parseTimeMinutes(time: string): number {
   const [hours, minutes] = time.split(':').map(Number);
@@ -16,16 +21,14 @@ function formatDuration(items: ItineraryItem[]): string {
   return `約${hours}時間${minutes}分`;
 }
 
-function formatBudget(budget: string, people: string, companion: CompanionOption): string {
-  const amount = parseInt(budget.replace(/[^\d]/g, ''), 10);
-  const count = parseInt(people, 10) || 1;
-
-  if (amount > 0) {
-    const perPerson = Math.round(amount / count);
-    return count > 1
-      ? `約 ¥${amount.toLocaleString('ja-JP')}（1人あたり ¥${perPerson.toLocaleString('ja-JP')}）`
-      : `約 ¥${amount.toLocaleString('ja-JP')}`;
-  }
+function formatBudget(
+  budget: string,
+  people: string,
+  companion: CompanionOption,
+  currency: CurrencyCode,
+): string {
+  const display = formatBudgetDisplay(budget, people, currency);
+  if (display) return display;
 
   const estimates: Record<CompanionOption, number> = {
     一人: 5000,
@@ -35,8 +38,9 @@ function formatBudget(budget: string, people: string, companion: CompanionOption
     家族: 10000,
   };
 
+  const count = parseInt(people, 10) || 1;
   const total = estimates[companion] * count;
-  return `約 ¥${total.toLocaleString('ja-JP')}（目安）`;
+  return `約 ${formatAmount(total, currency)}（目安）`;
 }
 
 function getHighlights(location: string, companion: CompanionOption, items: ItineraryItem[]): string[] {
@@ -93,7 +97,7 @@ function getRainyAlternatives(location: string, companion: CompanionOption): str
 
 export function buildPlanDetails(params: PlanParams): PlanDetails {
   return {
-    totalBudget: formatBudget(params.budget, params.people, params.companion),
+    totalBudget: formatBudget(params.budget, params.people, params.companion, params.currency),
     duration: formatDuration(params.items),
     highlights: getHighlights(params.location, params.companion, params.items),
     rainyDayAlternatives: getRainyAlternatives(params.location, params.companion),

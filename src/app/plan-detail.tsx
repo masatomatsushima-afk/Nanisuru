@@ -4,10 +4,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { buildPlanDetails } from '@/lib/plan-details';
-import { COMPANION_SUBTITLES, getItineraryEyebrow } from '@/lib/itineraries';
+import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
+import { ItineraryTimelineCard } from '@/components/itinerary-timeline-card';
 import { Colors, Spacing } from '@/constants/theme';
-import type { CompanionOption, ItineraryItem } from '@/types/plan';
-import { COMPANION_OPTIONS } from '@/types/plan';
+import { parseCurrencyCode } from '@/constants/currency';
+import type { CompanionOption, ItineraryItem, PersonalityOption } from '@/types/plan';
+import { COMPANION_OPTIONS, PERSONALITY_OPTIONS } from '@/types/plan';
 
 const theme = Colors.dark;
 const accent = '#818CF8';
@@ -50,15 +52,21 @@ export default function PlanDetailScreen() {
   const params = useLocalSearchParams<{
     location: string;
     budget: string;
+    currency: string;
     people: string;
     mood: string;
     companion: string;
+    personality: string;
     items: string;
     details: string;
   }>();
 
   const companion = COMPANION_OPTIONS.includes(params.companion as CompanionOption)
     ? (params.companion as CompanionOption)
+    : null;
+
+  const personality = PERSONALITY_OPTIONS.includes(params.personality as PersonalityOption)
+    ? (params.personality as PersonalityOption)
     : null;
 
   let items: ItineraryItem[] = [];
@@ -70,6 +78,7 @@ export default function PlanDetailScreen() {
 
   const location = params.location ?? '';
   const budget = params.budget ?? '';
+  const currency = parseCurrencyCode(params.currency);
   const people = params.people ?? '';
   const mood = params.mood ?? '';
 
@@ -93,7 +102,7 @@ export default function PlanDetailScreen() {
 
   const planDetails =
     details ??
-    buildPlanDetails({ location, budget, people, mood, companion, items });
+    buildPlanDetails({ location, budget, currency, people, mood, companion, items });
 
   return (
     <ScrollView
@@ -113,7 +122,15 @@ export default function PlanDetailScreen() {
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>{getItineraryEyebrow(companion, location)}</Text>
         <Text style={styles.title}>プラン詳細</Text>
-        <Text style={styles.subtitle}>{COMPANION_SUBTITLES[companion]}</Text>
+        {personality ? (
+          <View style={styles.personalityBadge}>
+            <Text style={styles.personalityBadgeText}>{personality}</Text>
+          </View>
+        ) : null}
+        <Text style={styles.subtitle}>
+          {personality ? PERSONALITY_SUBTITLES[personality] : COMPANION_SUBTITLES[companion]}
+        </Text>
+        <Text style={styles.companionNote}>{COMPANION_SUBTITLES[companion]}</Text>
         {mood ? <Text style={styles.moodText}>気分：{mood}</Text> : null}
       </View>
 
@@ -136,14 +153,23 @@ export default function PlanDetailScreen() {
         <BulletList items={planDetails.rainyDayAlternatives} />
       </DetailCard>
 
+      {planDetails.plannerMessage ? (
+        <View style={styles.plannerCard}>
+          <Text style={styles.plannerCardLabel}>プランナーより</Text>
+          <Text style={styles.plannerCardText}>{planDetails.plannerMessage}</Text>
+        </View>
+      ) : null}
+
       <View style={styles.timelinePreview}>
         <Text style={styles.timelinePreviewTitle}>スケジュール</Text>
         {items.map((item, index) => (
-          <View key={`${item.time}-${item.activity}`} style={styles.previewRow}>
-            <Text style={styles.previewTime}>{item.time}</Text>
-            <Text style={styles.previewActivity}>{item.activity}</Text>
-            {index < items.length - 1 && <View style={styles.previewDivider} />}
-          </View>
+          <ItineraryTimelineCard
+            key={`${item.time}-${item.activity}`}
+            item={item}
+            index={index}
+            isLast={index === items.length - 1}
+            variant="detail"
+          />
         ))}
       </View>
     </ScrollView>
@@ -193,6 +219,27 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 24,
     marginTop: Spacing.two,
+  },
+  personalityBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(129, 140, 248, 0.15)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginTop: Spacing.two,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.3)',
+  },
+  personalityBadgeText: {
+    color: accent,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  companionNote: {
+    color: theme.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 4,
   },
   moodText: {
     color: accent,
@@ -292,24 +339,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: Spacing.three,
   },
-  previewRow: {
-    paddingVertical: Spacing.two,
+  plannerCard: {
+    backgroundColor: 'rgba(129, 140, 248, 0.08)',
+    borderRadius: 16,
+    padding: Spacing.four,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.18)',
+    marginBottom: Spacing.three,
   },
-  previewTime: {
+  plannerCardLabel: {
     color: accent,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
-    marginBottom: 4,
+    letterSpacing: 0.8,
+    marginBottom: Spacing.two,
   },
-  previewActivity: {
-    color: theme.text,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  previewDivider: {
-    height: 1,
-    backgroundColor: theme.backgroundSelected,
-    marginTop: Spacing.two,
+  plannerCardText: {
+    color: theme.textSecondary,
+    fontSize: 15,
+    lineHeight: 24,
   },
   errorText: {
     color: theme.textSecondary,

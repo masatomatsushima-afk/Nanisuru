@@ -1,4 +1,4 @@
-import type { CompanionOption, ItineraryItem } from '@/types/plan';
+import type { CompanionOption, ItineraryItem, PersonalityOption } from '@/types/plan';
 
 type LocationKind = 'osaka' | 'tokyo' | 'generic';
 
@@ -117,6 +117,14 @@ export const COMPANION_SUBTITLES: Record<CompanionOption, string> = {
   カップル: 'ふたりの時間を大切にするプラン',
   初デート: '第一印象を大切にするプラン',
   家族: '家族みんなで楽しめるプラン',
+};
+
+export const PERSONALITY_SUBTITLES: Record<PersonalityOption, string> = {
+  冒険家: '新しい体験とアクティビティを求める旅',
+  グルメ: '食を軸に、とことん美味しい1日を',
+  のんびり: '急がず、ゆったり過ごす癒しの旅',
+  映え重視: '写真映えするスポットを厳選した旅',
+  穴場好き: '観光地より、知る人ぞ知る場所を巡る旅',
 };
 
 function getLocationKind(location: string): LocationKind {

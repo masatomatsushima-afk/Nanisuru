@@ -13,13 +13,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomTabInset, Colors, Spacing } from '@/constants/theme';
+import {
+  CURRENCY_OPTIONS,
+  getBudgetPlaceholder,
+  getCurrency,
+  type CurrencyCode,
+} from '@/constants/currency';
 import { SuccessOverlay } from '@/components/success-overlay';
+import { ItineraryTimelineCard } from '@/components/itinerary-timeline-card';
 import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loading-screen';
 import { generatePlanWithAi, isOpenAiConfigured } from '@/lib/generate-plan';
-import { buildPlanDetails } from '@/lib/plan-details';
-import { COMPANION_SUBTITLES, getItinerary, getItineraryEyebrow } from '@/lib/itineraries';
-import type { CompanionOption, ItineraryItem, PlanDetails } from '@/types/plan';
-import { COMPANION_OPTIONS } from '@/types/plan';
+import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
+import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails } from '@/types/plan';
+import { COMPANION_OPTIONS, PERSONALITY_OPTIONS } from '@/types/plan';
 
 const theme = Colors.dark;
 const accent = '#818CF8';
@@ -36,27 +42,6 @@ const FEATURE_CARDS = [
   { icon: '🗓️', title: '1日まるごと提案', description: '朝から夜まで完結' },
   { icon: '🤖', title: 'AIコンシェルジュ付き', description: '天気変更にも対応' },
 ] as const;
-
-const CLOCK_EMOJIS: Record<number, string> = {
-  1: '🕐',
-  2: '🕑',
-  3: '🕒',
-  4: '🕓',
-  5: '🕔',
-  6: '🕕',
-  7: '🕖',
-  8: '🕗',
-  9: '🕘',
-  10: '🕙',
-  11: '🕚',
-  12: '🕛',
-};
-
-function getClockEmoji(time: string): string {
-  const hour = parseInt(time.split(':')[0], 10);
-  const hour12 = hour % 12 || 12;
-  return CLOCK_EMOJIS[hour12] ?? '🕐';
-}
 
 function FeatureCard({ icon, title, description }: (typeof FEATURE_CARDS)[number]) {
   return (
@@ -90,30 +75,7 @@ function HeroSection() {
 }
 
 function TimelineActivityCard({ item, index, isLast }: { item: ItineraryItem; index: number; isLast: boolean }) {
-  return (
-    <View style={styles.timelineStep}>
-      <View style={styles.timelineTrack}>
-        <View style={styles.timelineDotRing}>
-          <View style={styles.timelineDot} />
-        </View>
-        {!isLast && <View style={styles.timelineConnector} />}
-      </View>
-
-      <View style={[styles.activityCard, isLast && styles.activityCardLast]}>
-        <View style={styles.activityCardGlow} />
-        <View style={styles.activityCardInner}>
-          <View style={styles.timeRow}>
-            <Text style={styles.clockEmoji}>{getClockEmoji(item.time)}</Text>
-            <Text style={styles.timeText}>{item.time}</Text>
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepBadgeText}>{index + 1}</Text>
-            </View>
-          </View>
-          <Text style={styles.activityName}>{item.activity}</Text>
-        </View>
-      </View>
-    </View>
-  );
+  return <ItineraryTimelineCard item={item} index={index} isLast={isLast} />;
 }
 
 function ReasonCard({ label }: { label: string }) {
@@ -142,16 +104,20 @@ function RecommendReasonsSection() {
 
 function ItineraryTimeline({
   companion,
+  personality,
   location,
   budget,
+  currency,
   people,
   mood,
   items,
   details,
 }: {
   companion: CompanionOption;
+  personality: PersonalityOption;
   location: string;
   budget: string;
+  currency: CurrencyCode;
   people: string;
   mood: string;
   items: ItineraryItem[];
@@ -162,9 +128,11 @@ function ItineraryTimeline({
   const planParams = {
     location,
     budget,
+    currency,
     people,
     mood,
     companion,
+    personality,
     items: JSON.stringify(items),
     details: JSON.stringify(details),
   };
@@ -199,7 +167,21 @@ function ItineraryTimeline({
             <View style={styles.itineraryHeaderText}>
               <Text style={styles.itineraryEyebrow}>{getItineraryEyebrow(companion, location)}</Text>
               <Text style={styles.itineraryTitle}>今日のプラン</Text>
-              <Text style={styles.itinerarySubtitle}>{COMPANION_SUBTITLES[companion]}</Text>
+              <View style={styles.personalityBadge}>
+                <Text style={styles.personalityBadgeText}>{personality}</Text>
+              </View>
+              <Text style={styles.itinerarySubtitle}>{PERSONALITY_SUBTITLES[personality]}</Text>
+              <Text style={styles.itineraryCompanionNote}>{COMPANION_SUBTITLES[companion]}</Text>
+              <View style={styles.budgetPill}>
+                <Text style={styles.budgetPillLabel}>合計予算</Text>
+                <Text style={styles.budgetPillValue}>{details.totalBudget}</Text>
+              </View>
+              {details.plannerMessage ? (
+                <View style={styles.plannerMessageBox}>
+                  <Text style={styles.plannerMessageLabel}>プランナーより</Text>
+                  <Text style={styles.plannerMessageText}>{details.plannerMessage}</Text>
+                </View>
+              ) : null}
             </View>
             <View style={styles.itineraryBadge}>
               <Text style={styles.itineraryBadgeText}>{items.length}件</Text>
@@ -258,6 +240,67 @@ function FormField({ label, value, onChangeText, placeholder, keyboardType = 'de
   );
 }
 
+function CurrencySelector({
+  selected,
+  onSelect,
+}: {
+  selected: CurrencyCode;
+  onSelect: (code: CurrencyCode) => void;
+}) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>通貨</Text>
+      <View style={styles.currencyRow}>
+        {CURRENCY_OPTIONS.map((option) => {
+          const isSelected = selected === option.code;
+          return (
+            <Pressable
+              key={option.code}
+              style={[styles.currencyChip, isSelected && styles.currencyChipSelected]}
+              onPress={() => onSelect(option.code)}>
+              <Text style={[styles.currencyCode, isSelected && styles.currencyCodeSelected]}>
+                {option.code}
+              </Text>
+              <Text style={[styles.currencySymbol, isSelected && styles.currencySymbolSelected]}>
+                {option.symbol}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function BudgetField({
+  currency,
+  value,
+  onChangeText,
+}: {
+  currency: CurrencyCode;
+  value: string;
+  onChangeText: (text: string) => void;
+}) {
+  const { symbol } = getCurrency(currency);
+
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>予算（{currency}）</Text>
+      <View style={styles.budgetInputRow}>
+        <Text style={styles.budgetPrefix}>{symbol}</Text>
+        <TextInput
+          style={styles.budgetInput}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={getBudgetPlaceholder(currency)}
+          placeholderTextColor="#6B7280"
+          keyboardType="numeric"
+        />
+      </View>
+    </View>
+  );
+}
+
 function CompanionCard({
   label,
   selected,
@@ -281,12 +324,37 @@ function CompanionCard({
   );
 }
 
+function PersonalityCard({
+  label,
+  selected,
+  onPress,
+}: {
+  label: PersonalityOption;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.companionCard,
+        selected && styles.companionCardSelected,
+        pressed && styles.companionCardPressed,
+      ]}
+      onPress={onPress}>
+      <Text style={[styles.companionLabel, selected && styles.companionLabelSelected]}>{label}</Text>
+      {selected && <View style={styles.companionCheck} />}
+    </Pressable>
+  );
+}
+
 export default function HomeScreen() {
   const [location, setLocation] = useState('');
   const [budget, setBudget] = useState('');
+  const [currency, setCurrency] = useState<CurrencyCode>('JPY');
   const [people, setPeople] = useState('');
   const [mood, setMood] = useState('');
   const [companion, setCompanion] = useState<CompanionOption | null>(null);
+  const [personality, setPersonality] = useState<PersonalityOption | null>(null);
   const [showItinerary, setShowItinerary] = useState(false);
   const [itinerary, setItinerary] = useState<ItineraryItem[]>([]);
   const [planDetails, setPlanDetails] = useState<PlanDetails | null>(null);
@@ -305,27 +373,22 @@ export default function HomeScreen() {
 
   const fetchPlan = async () => {
     if (!companion) throw new Error('Companion not selected');
+    if (!personality) throw new Error('Personality not selected');
 
-    if (isOpenAiConfigured()) {
-      const plan = await generatePlanWithAi({
-        location,
-        budget,
-        people,
-        relationship: companion,
-        mood,
-      });
-      return { items: plan.items, details: plan.details };
-    }
-
-    const items = getItinerary(companion, location);
-    return {
-      items,
-      details: buildPlanDetails({ location, budget, people, mood, companion, items }),
-    };
+    const plan = await generatePlanWithAi({
+      location,
+      budget,
+      currency,
+      people,
+      relationship: companion,
+      personality,
+      mood,
+    });
+    return { items: plan.items, details: plan.details };
   };
 
   const handleGenerate = async () => {
-    if (!companion || isLoading) return;
+    if (!companion || !personality || isLoading) return;
 
     setIsLoading(true);
     setLoadingStep(0);
@@ -339,7 +402,7 @@ export default function HomeScreen() {
       setPlanDetails(plan.details);
       setShowItinerary(true);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'プランの作成に失敗しました';
+      const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
       setError(message);
       setShowItinerary(false);
     } finally {
@@ -372,8 +435,8 @@ export default function HomeScreen() {
         <HeroSection />
 
         <View style={styles.formSectionLabel}>
-          <Text style={styles.formSectionTitle}>プランを作成</Text>
-          <Text style={styles.formSectionSubtitle}>条件を入力して、あなただけの1日を</Text>
+          <Text style={styles.formSectionTitle}>プランを生成</Text>
+          <Text style={styles.formSectionSubtitle}>条件を入力して、AIがあなただけの1日を提案</Text>
         </View>
 
         <View style={styles.formCard}>
@@ -383,12 +446,17 @@ export default function HomeScreen() {
             onChangeText={handleLocationChange}
             placeholder="例）東京・渋谷"
           />
-          <FormField
-            label="予算"
+          <CurrencySelector
+            selected={currency}
+            onSelect={(code) => {
+              setCurrency(code);
+              if (showItinerary) resetPlan();
+            }}
+          />
+          <BudgetField
+            currency={currency}
             value={budget}
             onChangeText={setBudget}
-            placeholder="例）10000"
-            keyboardType="numeric"
           />
           <FormField
             label="人数"
@@ -404,8 +472,25 @@ export default function HomeScreen() {
               setMood(text);
               if (showItinerary) resetPlan();
             }}
-            placeholder="例）のんびり、グルメ重視"
+            placeholder="例）穏やかに過ごしたい、少し刺激が欲しい"
           />
+        </View>
+
+        <View style={styles.companionSection}>
+          <Text style={styles.sectionTitle}>旅行タイプは？</Text>
+          <View style={styles.companionGrid}>
+            {PERSONALITY_OPTIONS.map((option) => (
+              <PersonalityCard
+                key={option}
+                label={option}
+                selected={personality === option}
+                onPress={() => {
+                  setPersonality(option);
+                  if (showItinerary) resetPlan();
+                }}
+              />
+            ))}
+          </View>
         </View>
 
         <View style={styles.companionSection}>
@@ -428,31 +513,39 @@ export default function HomeScreen() {
         <Pressable
           style={({ pressed }) => [
             styles.button,
-            (!companion || isLoading) && styles.buttonDisabled,
-            pressed && companion && !isLoading && styles.buttonPressed,
+            (!companion || !personality || isLoading) && styles.buttonDisabled,
+            pressed && companion && personality && !isLoading && styles.buttonPressed,
           ]}
           onPress={handleGenerate}
-          disabled={!companion || isLoading}>
-          <Text style={styles.buttonText}>{isLoading ? '作成中...' : 'プランを作成'}</Text>
+          disabled={!companion || !personality || isLoading}>
+          <Text style={styles.buttonText}>{isLoading ? '生成中...' : 'プランを生成'}</Text>
         </Pressable>
 
-        {!companion && (
-          <Text style={styles.helperText}>「誰と行く？」を選んでからプランを作成してください</Text>
+        {(!companion || !personality) && (
+          <Text style={styles.helperText}>
+            {!personality && !companion
+              ? '「旅行タイプ」と「誰と行く？」を選んでからプランを生成してください'
+              : !personality
+                ? '「旅行タイプは？」を選んでからプランを生成してください'
+                : '「誰と行く？」を選んでからプランを生成してください'}
+          </Text>
         )}
 
         {!isOpenAiConfigured() && (
           <Text style={styles.helperText}>
-            APIキー未設定のためサンプルプランを表示します（.env に EXPO_PUBLIC_OPENAI_API_KEY を設定）
+            .env に EXPO_PUBLIC_OPENAI_API_KEY を設定してください（設定後は npx expo start --clear）
           </Text>
         )}
 
         {error && <Text style={styles.errorText}>{error}</Text>}
 
-        {showItinerary && companion && planDetails && (
+        {showItinerary && companion && personality && planDetails && (
           <ItineraryTimeline
             companion={companion}
+            personality={personality}
             location={location}
             budget={budget}
+            currency={currency}
             people={people}
             mood={mood}
             items={itinerary}
@@ -597,6 +690,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: 14,
   },
+  currencyRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  currencyChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#161618',
+    borderWidth: 1.5,
+    borderColor: theme.backgroundSelected,
+  },
+  currencyChipSelected: {
+    backgroundColor: 'rgba(129, 140, 248, 0.12)',
+    borderColor: accent,
+  },
+  currencyCode: {
+    color: theme.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  currencyCodeSelected: {
+    color: theme.text,
+  },
+  currencySymbol: {
+    color: theme.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  currencySymbolSelected: {
+    color: accent,
+  },
+  budgetInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#161618',
+    borderColor: theme.backgroundSelected,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingLeft: Spacing.three,
+  },
+  budgetPrefix: {
+    color: accent,
+    fontSize: 17,
+    fontWeight: '700',
+    marginRight: Spacing.two,
+  },
+  budgetInput: {
+    flex: 1,
+    color: theme.text,
+    fontSize: 16,
+    paddingVertical: 14,
+    paddingRight: Spacing.three,
+  },
   companionSection: {
     marginTop: Spacing.four,
   },
@@ -734,6 +885,69 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 6,
   },
+  itineraryCompanionNote: {
+    color: theme.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
+    opacity: 0.85,
+  },
+  personalityBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(129, 140, 248, 0.15)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginTop: Spacing.two,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.3)',
+  },
+  personalityBadgeText: {
+    color: accent,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  budgetPill: {
+    marginTop: Spacing.two,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(129, 140, 248, 0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.2)',
+  },
+  budgetPillLabel: {
+    color: theme.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  budgetPillValue: {
+    color: theme.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  plannerMessageBox: {
+    marginTop: Spacing.two,
+    backgroundColor: 'rgba(129, 140, 248, 0.08)',
+    borderRadius: 14,
+    padding: Spacing.three,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.18)',
+  },
+  plannerMessageLabel: {
+    color: accent,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  plannerMessageText: {
+    color: theme.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+  },
   itineraryBadge: {
     backgroundColor: 'rgba(129, 140, 248, 0.15)',
     borderRadius: 999,
@@ -749,113 +963,6 @@ const styles = StyleSheet.create({
   },
   timelineList: {
     paddingTop: Spacing.one,
-  },
-  timelineStep: {
-    flexDirection: 'row',
-    gap: Spacing.three,
-  },
-  timelineTrack: {
-    width: 28,
-    alignItems: 'center',
-  },
-  timelineDotRing: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(129, 140, 248, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 24,
-    shadowColor: accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  timelineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: accent,
-  },
-  timelineConnector: {
-    flex: 1,
-    width: 2,
-    backgroundColor: 'rgba(129, 140, 248, 0.25)',
-    marginVertical: 6,
-    borderRadius: 1,
-  },
-  activityCard: {
-    flex: 1,
-    marginBottom: Spacing.three,
-    borderRadius: 20,
-    overflow: 'hidden',
-    backgroundColor: '#1A1A1D',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 6,
-  },
-  activityCardLast: {
-    marginBottom: 0,
-  },
-  activityCardGlow: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(129, 140, 248, 0.45)',
-  },
-  activityCardInner: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.three + 2,
-    gap: Spacing.two,
-  },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-  },
-  clockEmoji: {
-    fontSize: 22,
-    lineHeight: 28,
-  },
-  timeText: {
-    color: accent,
-    fontSize: 15,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-    letterSpacing: 0.3,
-    flex: 1,
-  },
-  stepBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 8,
-    minWidth: 26,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  stepBadgeText: {
-    color: theme.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  activityName: {
-    color: theme.text,
-    fontSize: 20,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-    lineHeight: 28,
   },
   detailHint: {
     marginTop: Spacing.four,
