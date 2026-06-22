@@ -48,6 +48,12 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="imafima"
+            options={{
+              animation: 'slide_from_bottom',
+            }}
+          />
+          <Stack.Screen
             name="today-schedule"
             options={{
               animation: 'fade_from_bottom',

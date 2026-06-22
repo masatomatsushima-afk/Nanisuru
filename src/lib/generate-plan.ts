@@ -1,11 +1,18 @@
 import type { AiAdvice, BudgetBreakdown, ItineraryDay, ItineraryItem, PlanDetails, TripDurationOption } from '@/types/plan';
 import { isDateRelatedCompanion } from '@/types/plan';
+import type { ImaHimaMoodOption, ImaHimaTimeOption } from '@/types/imafima';
 
 import { getOpenAiApiKey, isOpenAiConfigured } from './env';
+import {
+  buildSpontaneousContext,
+  getImaHimaTripDuration,
+  resolveMoodPreferences,
+} from './imafima';
 import { buildConciergePrompt, type PlanInput } from './prompts';
 import { flattenItineraryDays, TRIP_DURATION_CONFIG } from './trip-duration';
-import { fetchWeatherForecast, type WeatherForecast } from './weather';
+import { fetchWeatherForecast, getTodayIsoDate, type WeatherForecast } from './weather';
 import { getUserPreferences } from './user-memory';
+import type { CurrencyCode } from '@/constants/currency';
 
 export type GeneratedPlan = {
   days: ItineraryDay[];
@@ -104,8 +111,15 @@ const BUDGET_BREAKDOWN_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function buildPlanJsonSchema(tripDuration: TripDurationOption, includeAiAdvice: boolean) {
-  const { dayCount, itemsMin, itemsMax } = TRIP_DURATION_CONFIG[tripDuration];
+function buildPlanJsonSchema(
+  tripDuration: TripDurationOption,
+  includeAiAdvice: boolean,
+  overrides?: { dayCount?: number; itemsMin?: number; itemsMax?: number },
+) {
+  const config = TRIP_DURATION_CONFIG[tripDuration];
+  const dayCount = overrides?.dayCount ?? config.dayCount;
+  const itemsMin = overrides?.itemsMin ?? config.itemsMin;
+  const itemsMax = overrides?.itemsMax ?? config.itemsMax;
 
   const properties: Record<string, unknown> = {
     plannerMessage: {
@@ -207,6 +221,41 @@ const WEATHER_SYSTEM_PROMPT =
 const MEMORY_SYSTEM_PROMPT =
   SYSTEM_PROMPT +
   ' ユーザーの好み（旅行タイプ・予算・期間・アクティビティ）が記憶されている場合は、矛盾しない範囲でプランに反映してください。';
+
+const IMA_HIMA_SYSTEM_PROMPT =
+  SYSTEM_PROMPT +
+  ' 即興プラン（今暇モード）では今すぐ行ける近場スポットを優先し、移動時間を最小限にしてください。';
+
+export async function generateImaHimaPlan(params: {
+  location: string;
+  budget: string;
+  currency: CurrencyCode;
+  availableTime: ImaHimaTimeOption;
+  mood: ImaHimaMoodOption;
+}): Promise<GeneratedPlan> {
+  const moodPrefs = resolveMoodPreferences(params.mood);
+  const spontaneous = buildSpontaneousContext(params.availableTime, params.mood);
+  const tripDuration = getImaHimaTripDuration(params.availableTime);
+  const people =
+    moodPrefs.companion === 'カップル'
+      ? '2'
+      : moodPrefs.companion === '一人'
+        ? '1'
+        : '2';
+
+  return generatePlanWithAi({
+    location: params.location,
+    budget: params.budget,
+    currency: params.currency,
+    people,
+    companion: moodPrefs.companion,
+    personality: moodPrefs.personality,
+    tripDuration,
+    tripDate: getTodayIsoDate(),
+    mood: params.mood,
+    spontaneous,
+  });
+}
 
 function parseAiResponse(
   content: string,
@@ -322,10 +371,21 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
 
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
   const isRegenerate = Boolean(input.avoidActivities && input.avoidActivities.length > 0);
-  const isMultiDay = TRIP_DURATION_CONFIG[input.tripDuration].dayCount > 1;
+  const isMultiDay = TRIP_DURATION_CONFIG[input.tripDuration].dayCount > 1 && !input.spontaneous;
+  const isImaHima = Boolean(input.spontaneous);
+
+  const schemaOverrides = input.spontaneous
+    ? {
+        dayCount: 1,
+        itemsMin: input.spontaneous.itemsMin,
+        itemsMax: input.spontaneous.itemsMax,
+      }
+    : undefined;
 
   let systemPrompt = SYSTEM_PROMPT;
-  if (userPreferences.hasData && weather) {
+  if (isImaHima) {
+    systemPrompt = IMA_HIMA_SYSTEM_PROMPT;
+  } else if (userPreferences.hasData && weather) {
     systemPrompt = `${MEMORY_SYSTEM_PROMPT} 天気予報にも合わせて屋内・屋外を調整してください。`;
   } else if (userPreferences.hasData) {
     systemPrompt = MEMORY_SYSTEM_PROMPT;
@@ -336,14 +396,18 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     systemPrompt = includeAiAdvice
       ? `${REGENERATE_SYSTEM_PROMPT} カップル・初デート向けは aiAdvice も作成。天気予報がある場合は天候に合わせたスポット選定を維持。`
       : `${REGENERATE_SYSTEM_PROMPT}${weather ? ' 天気予報がある場合は天候に合わせたスポット選定を維持。' : ''}`;
-  } else if (includeAiAdvice) {
+  } else if (!isImaHima && includeAiAdvice) {
     systemPrompt = weather
       ? `${DATE_SYSTEM_PROMPT} 天気予報に合わせて屋内・屋外スポットを調整してください。`
       : DATE_SYSTEM_PROMPT;
-  } else if (isMultiDay) {
+  } else if (!isImaHima && isMultiDay) {
     systemPrompt = weather
       ? `${MULTI_DAY_SYSTEM_PROMPT} 日ごとの天気予報に合わせてスポットを調整してください。`
       : MULTI_DAY_SYSTEM_PROMPT;
+  }
+
+  if (isImaHima && weather) {
+    systemPrompt = `${systemPrompt} 天気予報に合わせて屋内・屋外スポットを調整してください。`;
   }
 
   systemPrompt = `${systemPrompt} コンシェルジュモード: 全 item に reservationUrl, websiteUrl, travelTimeToNext を設定してください。`;
@@ -365,7 +429,7 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
           type: 'json_schema',
           name: includeAiAdvice ? 'nanisuru_trip_plan_with_advice' : 'nanisuru_trip_plan',
           strict: true,
-          schema: buildPlanJsonSchema(input.tripDuration, includeAiAdvice),
+          schema: buildPlanJsonSchema(input.tripDuration, includeAiAdvice, schemaOverrides),
         },
       },
     }),

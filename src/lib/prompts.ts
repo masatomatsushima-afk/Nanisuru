@@ -2,7 +2,9 @@ import type { CurrencyCode } from '@/constants/currency';
 import { getCurrency } from '@/constants/currency';
 import type { CompanionOption, PersonalityOption, TripDurationOption } from '@/types/plan';
 import { isDateRelatedCompanion } from '@/types/plan';
+import type { SpontaneousContext } from '@/types/imafima';
 
+import { buildImaHimaPromptSection, resolveMoodPreferences } from './imafima';
 import { TRIP_DURATION_CONFIG } from './trip-duration';
 import type { WeatherForecast } from './weather';
 import { formatTripDateLabel } from './weather';
@@ -22,6 +24,7 @@ export type PlanInput = {
   weather?: WeatherForecast;
   userPreferences?: UserPreferences;
   avoidActivities?: string[];
+  spontaneous?: SpontaneousContext;
 };
 
 const PERSONALITY_GUIDE: Record<PersonalityOption, string> = {
@@ -51,7 +54,12 @@ export function buildConciergePrompt(input: PlanInput): string {
   const personalityGuide = PERSONALITY_GUIDE[input.personality];
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
   const durationConfig = TRIP_DURATION_CONFIG[input.tripDuration];
-  const isMultiDay = durationConfig.dayCount > 1;
+  const itemsMin = input.spontaneous?.itemsMin ?? durationConfig.itemsMin;
+  const itemsMax = input.spontaneous?.itemsMax ?? durationConfig.itemsMax;
+  const isMultiDay = durationConfig.dayCount > 1 && !input.spontaneous;
+  const dayLabel =
+    input.spontaneous?.dayLabel ??
+    (input.tripDuration === '半日' ? '半日プラン' : '1日目');
 
   const dateAdviceSection = includeAiAdvice
     ? `
@@ -111,7 +119,7 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
     : `"days": [
     {
       "dayNumber": 1,
-      "label": "${input.tripDuration === '半日' ? '半日プラン' : '1日目'}",
+      "label": "${dayLabel}",
       "theme": "プランのテーマ（例：グルメと散策）",
       "items": [
         {
@@ -135,9 +143,9 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
 - 各日の items は${durationConfig.itemsMin}〜${durationConfig.itemsMax}件
 - 日を跨ぐ移動（新幹線・宿泊等）も該当日の items / transportation に含める
 - 合計予算は旅行全体（宿泊・交通・食事・体験）の概算`
-    : `- days配列は1件（${input.tripDuration}）
-- itemsは${durationConfig.itemsMin}〜${durationConfig.itemsMax}件
-- 合計予算は${input.tripDuration === '半日' ? '半日' : '1日'}の概算`;
+    : `- days配列は1件（${input.spontaneous ? input.spontaneous.availableTime : input.tripDuration}）
+- itemsは${itemsMin}〜${itemsMax}件
+- 合計予算は${input.spontaneous || input.tripDuration === '半日' ? 'この時間帯' : '1日'}の概算`;
 
   const accommodationRule = isMultiDay
     ? '- **宿泊費**: 泊数・人数・エリア相場に合わせて配分（旅行タイプ「' + input.personality + '」も反映）'
@@ -204,6 +212,13 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
     ? buildUserMemoryPromptSection(input.userPreferences)
     : '';
 
+  const spontaneousSection = input.spontaneous
+    ? buildImaHimaPromptSection(
+        input.spontaneous,
+        resolveMoodPreferences(input.spontaneous.moodLabel),
+      )
+    : '';
+
   const conciergeSection = `
 
 ## コンシェルジュモード（必須・各 items に設定）
@@ -217,6 +232,7 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
 
   return `あなたは日本トップクラスの旅行プランナー兼お出かけコンシェルジュです。
 高級旅行会社のパンフレットのように、温かみがあり、信頼感のある自然な日本語でプランを作成してください。
+${input.spontaneous ? '\n**⚡ 今暇モード**: ユーザーは今すぐ出かけたい。近場・今すぐ行けるスポットを最優先に。' : ''}
 
 ## お客様の条件
 - 場所: ${location}
@@ -250,7 +266,7 @@ ${personalityGuide}
 8. 地理的に近い順に並べ、移動が不自然にならないルートにする
 9. duration には期間全体の所要時間・日数を日本語で記載
 10. 文体は丁寧で親しみやすい日本語
-${budgetOptimizationSection}${weatherSection}${userMemorySection}${conciergeSection}
+${budgetOptimizationSection}${weatherSection}${userMemorySection}${spontaneousSection}${conciergeSection}
 
 ## 出力JSON（この形式のみ、余計な文章は禁止）
 {

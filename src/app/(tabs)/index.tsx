@@ -30,7 +30,7 @@ import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loadin
 import { WeatherSection } from '@/components/weather-section';
 import { UserPreferencesSection } from '@/components/user-preferences-section';
 import { FadeInView } from '@/components/ui/fade-in-view';
-import { PrimaryButton, SectionHeader, SelectChip } from '@/components/ui/premium-card';
+import { PrimaryButton, PremiumCard, SectionHeader, SelectChip } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { saveFavorite } from '@/lib/favorites-storage';
 import { generatePlanWithAi, isOpenAiConfigured } from '@/lib/generate-plan';
@@ -107,6 +107,23 @@ function HeroSection() {
             </FadeInView>
           ))}
         </View>
+
+        <FadeInView delay={280}>
+          <PremiumCard
+            variant="accent"
+            style={styles.imafimaCard}
+            onPress={() => router.push('/imafima')}>
+            <View style={styles.imafimaGlow} />
+            <View style={styles.imafimaContent}>
+              <Text style={styles.imafimaEmoji}>⚡</Text>
+              <View style={styles.imafimaTextWrap}>
+                <Text style={styles.imafimaTitle}>今暇</Text>
+                <Text style={styles.imafimaSubtitle}>今から出かける！即興プランをAIが作成</Text>
+              </View>
+              <Text style={styles.imafimaArrow}>→</Text>
+            </View>
+          </PremiumCard>
+        </FadeInView>
       </View>
     </FadeInView>
   );
@@ -907,6 +924,49 @@ const styles = StyleSheet.create({
   },
   featureList: {
     gap: Spacing.two,
+    marginBottom: Spacing.three,
+  },
+  imafimaCard: {
+    marginTop: Spacing.one,
+    overflow: 'hidden',
+  },
+  imafimaGlow: {
+    position: 'absolute',
+    top: -30,
+    right: -20,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(129, 140, 248, 0.15)',
+  },
+  imafimaContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.four,
+  },
+  imafimaEmoji: {
+    fontSize: 36,
+  },
+  imafimaTextWrap: {
+    flex: 1,
+  },
+  imafimaTitle: {
+    color: NS.colors.text,
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    marginBottom: 2,
+  },
+  imafimaSubtitle: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  imafimaArrow: {
+    color: accent,
+    fontSize: 22,
+    fontWeight: '700',
   },
   featureCard: {
     flexDirection: 'row',
