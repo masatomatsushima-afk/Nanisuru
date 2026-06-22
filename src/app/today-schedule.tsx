@@ -5,6 +5,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { buildPlanDetails } from '@/lib/plan-details';
 import { AiAdviceSection } from '@/components/ai-advice-section';
+import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
+import { ConciergeAccessSection } from '@/components/concierge-access-section';
+import { WeatherSection } from '@/components/weather-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { Colors, Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
@@ -140,6 +143,12 @@ export default function TodayScheduleScreen() {
         </View>
       </View>
 
+      {planDetails.budgetBreakdown ? (
+        <BudgetBreakdownSection breakdown={planDetails.budgetBreakdown} />
+      ) : null}
+
+      {planDetails.weather ? <WeatherSection weather={planDetails.weather} /> : null}
+
       <View style={styles.planCard}>
         <Text style={styles.planCardTitle}>プラン内容</Text>
         {planDetails.plannerMessage ? (
@@ -150,6 +159,8 @@ export default function TodayScheduleScreen() {
         ) : null}
         <ItineraryDaysView days={days} variant="detail" />
       </View>
+
+      <ConciergeAccessSection days={days} location={location} />
 
       {isDateRelatedCompanion(companion) && planDetails.aiAdvice ? (
         <AiAdviceSection advice={planDetails.aiAdvice} />

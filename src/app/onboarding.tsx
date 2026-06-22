@@ -210,7 +210,7 @@ export default function OnboardingScreen() {
     setIsSaving(true);
     try {
       await completeOnboarding(personality);
-      router.replace('/(tabs)');
+      router.replace('/');
     } finally {
       setIsSaving(false);
     }

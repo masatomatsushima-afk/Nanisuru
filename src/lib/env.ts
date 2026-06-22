@@ -1,8 +1,10 @@
 /**
  * Environment variables for Nanisuru.
  *
- * Add your key to `.env` (never commit this file):
+ * Add your keys to `.env` (never commit this file):
  *   EXPO_PUBLIC_OPENAI_API_KEY=sk-...
+ *   EXPO_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+ *   EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
  *
  * Restart Expo after changing `.env`: npx expo start --clear
  *
@@ -20,4 +22,22 @@ export function getOpenAiApiKey(): string | undefined {
 
 export function isOpenAiConfigured(): boolean {
   return Boolean(getOpenAiApiKey());
+}
+
+const SUPABASE_PLACEHOLDER_VALUES = new Set(['', 'your-supabase-url', 'your-supabase-anon-key']);
+
+export function getSupabaseUrl(): string | undefined {
+  const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim();
+  if (!url || SUPABASE_PLACEHOLDER_VALUES.has(url)) return undefined;
+  return url;
+}
+
+export function getSupabaseAnonKey(): string | undefined {
+  const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  if (!key || SUPABASE_PLACEHOLDER_VALUES.has(key)) return undefined;
+  return key;
+}
+
+export function isSupabaseConfigured(): boolean {
+  return Boolean(getSupabaseUrl() && getSupabaseAnonKey());
 }

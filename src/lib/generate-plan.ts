@@ -1,9 +1,11 @@
-import type { AiAdvice, ItineraryDay, ItineraryItem, PlanDetails, TripDurationOption } from '@/types/plan';
+import type { AiAdvice, BudgetBreakdown, ItineraryDay, ItineraryItem, PlanDetails, TripDurationOption } from '@/types/plan';
 import { isDateRelatedCompanion } from '@/types/plan';
 
 import { getOpenAiApiKey, isOpenAiConfigured } from './env';
 import { buildConciergePrompt, type PlanInput } from './prompts';
 import { flattenItineraryDays, TRIP_DURATION_CONFIG } from './trip-duration';
+import { fetchWeatherForecast, type WeatherForecast } from './weather';
+import { getUserPreferences } from './user-memory';
 
 export type GeneratedPlan = {
   days: ItineraryDay[];
@@ -16,6 +18,7 @@ export { isOpenAiConfigured };
 type AiPlanResponse = {
   plannerMessage?: string;
   days?: ItineraryDay[];
+  budgetBreakdown?: BudgetBreakdown;
   totalBudget?: string;
   duration?: string;
   highlights?: string[];
@@ -34,8 +37,31 @@ const ITINERARY_ITEM_SCHEMA = {
       type: 'string',
       description: 'Transport to next stop; use — for last item of each day',
     },
+    reservationUrl: {
+      type: 'string',
+      description:
+        'Direct reservation URL (official booking, Tabelog reserve, etc.) or empty string if not applicable',
+    },
+    websiteUrl: {
+      type: 'string',
+      description: 'Official website URL or empty string if unknown',
+    },
+    travelTimeToNext: {
+      type: 'string',
+      description:
+        'Estimated travel time to next stop in Japanese e.g. 約15分（徒歩）; use — for last item of each day',
+    },
   },
-  required: ['time', 'activity', 'reason', 'estimatedCost', 'transportation'],
+  required: [
+    'time',
+    'activity',
+    'reason',
+    'estimatedCost',
+    'transportation',
+    'reservationUrl',
+    'websiteUrl',
+    'travelTimeToNext',
+  ],
   additionalProperties: false,
 } as const;
 
@@ -62,6 +88,19 @@ const AI_ADVICE_SCHEMA = {
     },
   },
   required: ['conversationTips', 'recommendedTopics', 'topicsToAvoid'],
+  additionalProperties: false,
+} as const;
+
+const BUDGET_BREAKDOWN_SCHEMA = {
+  type: 'object',
+  properties: {
+    total: { type: 'string', description: 'Total budget with currency symbol in Japanese' },
+    accommodation: { type: 'string', description: 'Accommodation cost estimate in Japanese' },
+    food: { type: 'string', description: 'Food cost estimate in Japanese' },
+    transportation: { type: 'string', description: 'Transportation cost estimate in Japanese' },
+    activity: { type: 'string', description: 'Activity cost estimate in Japanese' },
+  },
+  required: ['total', 'accommodation', 'food', 'transportation', 'activity'],
   additionalProperties: false,
 } as const;
 
@@ -94,9 +133,13 @@ function buildPlanJsonSchema(tripDuration: TripDurationOption, includeAiAdvice: 
       minItems: dayCount,
       maxItems: dayCount,
     },
+    budgetBreakdown: {
+      ...BUDGET_BREAKDOWN_SCHEMA,
+      description: 'Category budget breakdown optimized for user budget in Japanese',
+    },
     totalBudget: {
       type: 'string',
-      description: 'Total trip budget with currency symbol in Japanese',
+      description: 'Total trip budget with currency symbol in Japanese, same as budgetBreakdown.total',
     },
     duration: { type: 'string', description: 'Total duration in Japanese' },
     highlights: {
@@ -116,6 +159,7 @@ function buildPlanJsonSchema(tripDuration: TripDurationOption, includeAiAdvice: 
   const required = [
     'plannerMessage',
     'days',
+    'budgetBreakdown',
     'totalBudget',
     'duration',
     'highlights',
@@ -156,10 +200,20 @@ const MULTI_DAY_SYSTEM_PROMPT =
   SYSTEM_PROMPT +
   ' 複数日の旅行では、days配列の各日ごとに独立した itinerary を日本語で作成してください。';
 
+const WEATHER_SYSTEM_PROMPT =
+  SYSTEM_PROMPT +
+  ' 天気予報が提供されている場合は、雨の日は屋内スポットを、晴れの日は屋外スポットを優先してください。';
+
+const MEMORY_SYSTEM_PROMPT =
+  SYSTEM_PROMPT +
+  ' ユーザーの好み（旅行タイプ・予算・期間・アクティビティ）が記憶されている場合は、矛盾しない範囲でプランに反映してください。';
+
 function parseAiResponse(
   content: string,
   includeAiAdvice: boolean,
   tripDuration: TripDurationOption,
+  tripDate: string,
+  weather?: WeatherForecast,
 ): GeneratedPlan {
   const parsed = JSON.parse(content) as AiPlanResponse;
 
@@ -177,6 +231,9 @@ function parseAiResponse(
       reason: item.reason,
       estimatedCost: item.estimatedCost,
       transportation: item.transportation,
+      reservationUrl: item.reservationUrl || undefined,
+      websiteUrl: item.websiteUrl || undefined,
+      travelTimeToNext: item.travelTimeToNext || undefined,
     })),
   }));
 
@@ -185,9 +242,13 @@ function parseAiResponse(
     items: flattenItineraryDays(days),
     details: {
       plannerMessage: parsed.plannerMessage,
-      totalBudget: parsed.totalBudget ?? '予算目安を算出できませんでした',
+      totalBudget:
+        parsed.budgetBreakdown?.total ?? parsed.totalBudget ?? '予算目安を算出できませんでした',
+      budgetBreakdown: parsed.budgetBreakdown,
       duration: parsed.duration ?? tripDuration,
       tripDuration,
+      tripDate,
+      weather,
       highlights: parsed.highlights ?? [],
       rainyDayAlternatives: parsed.rainyDayAlternatives ?? [],
       aiAdvice: includeAiAdvice ? parsed.aiAdvice : undefined,
@@ -239,18 +300,53 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     );
   }
 
+  let weather: WeatherForecast | undefined;
+  if (input.location.trim()) {
+    try {
+      weather = await fetchWeatherForecast({
+        location: input.location,
+        startDate: input.tripDate,
+        tripDuration: input.tripDuration,
+      });
+    } catch {
+      weather = undefined;
+    }
+  }
+
+  const userPreferences = await getUserPreferences();
+  const enrichedInput: PlanInput = {
+    ...input,
+    weather,
+    userPreferences: userPreferences.hasData ? userPreferences : undefined,
+  };
+
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
   const isRegenerate = Boolean(input.avoidActivities && input.avoidActivities.length > 0);
   const isMultiDay = TRIP_DURATION_CONFIG[input.tripDuration].dayCount > 1;
 
   let systemPrompt = SYSTEM_PROMPT;
-  if (isRegenerate) {
-    systemPrompt = includeAiAdvice ? `${REGENERATE_SYSTEM_PROMPT} カップル・初デート向けは aiAdvice も作成。` : REGENERATE_SYSTEM_PROMPT;
-  } else if (includeAiAdvice) {
-    systemPrompt = DATE_SYSTEM_PROMPT;
-  } else if (isMultiDay) {
-    systemPrompt = MULTI_DAY_SYSTEM_PROMPT;
+  if (userPreferences.hasData && weather) {
+    systemPrompt = `${MEMORY_SYSTEM_PROMPT} 天気予報にも合わせて屋内・屋外を調整してください。`;
+  } else if (userPreferences.hasData) {
+    systemPrompt = MEMORY_SYSTEM_PROMPT;
+  } else if (weather) {
+    systemPrompt = WEATHER_SYSTEM_PROMPT;
   }
+  if (isRegenerate) {
+    systemPrompt = includeAiAdvice
+      ? `${REGENERATE_SYSTEM_PROMPT} カップル・初デート向けは aiAdvice も作成。天気予報がある場合は天候に合わせたスポット選定を維持。`
+      : `${REGENERATE_SYSTEM_PROMPT}${weather ? ' 天気予報がある場合は天候に合わせたスポット選定を維持。' : ''}`;
+  } else if (includeAiAdvice) {
+    systemPrompt = weather
+      ? `${DATE_SYSTEM_PROMPT} 天気予報に合わせて屋内・屋外スポットを調整してください。`
+      : DATE_SYSTEM_PROMPT;
+  } else if (isMultiDay) {
+    systemPrompt = weather
+      ? `${MULTI_DAY_SYSTEM_PROMPT} 日ごとの天気予報に合わせてスポットを調整してください。`
+      : MULTI_DAY_SYSTEM_PROMPT;
+  }
+
+  systemPrompt = `${systemPrompt} コンシェルジュモード: 全 item に reservationUrl, websiteUrl, travelTimeToNext を設定してください。`;
 
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -262,7 +358,7 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
       model: 'gpt-4o-mini',
       input: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: buildConciergePrompt(input) },
+        { role: 'user', content: buildConciergePrompt(enrichedInput) },
       ],
       text: {
         format: {
@@ -281,5 +377,11 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   }
 
   const data = await response.json();
-  return parseAiResponse(extractResponseText(data), includeAiAdvice, input.tripDuration);
+  return parseAiResponse(
+    extractResponseText(data),
+    includeAiAdvice,
+    input.tripDuration,
+    input.tripDate,
+    weather,
+  );
 }

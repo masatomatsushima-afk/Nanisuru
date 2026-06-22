@@ -6,6 +6,9 @@ export type ItineraryItem = {
   reason?: string;
   estimatedCost?: string;
   transportation?: string;
+  reservationUrl?: string;
+  websiteUrl?: string;
+  travelTimeToNext?: string;
 };
 
 export const COMPANION_OPTIONS = ['一人', '友達', 'カップル', '初デート', '家族'] as const;
@@ -40,10 +43,42 @@ export type AiAdvice = {
   topicsToAvoid: string[];
 };
 
+export type BudgetBreakdown = {
+  total: string;
+  accommodation: string;
+  food: string;
+  transportation: string;
+  activity: string;
+};
+
+export type WeatherDayForecast = {
+  date: string;
+  label: string;
+  condition: string;
+  category: 'sunny' | 'partly_cloudy' | 'cloudy' | 'rainy' | 'snow';
+  temperatureMax: number;
+  temperatureMin: number;
+  precipitationProbability: number;
+  preferIndoor: boolean;
+  preferOutdoor: boolean;
+  summary: string;
+};
+
+export type WeatherForecast = {
+  locationName: string;
+  days: WeatherDayForecast[];
+  summary: string;
+  hasRainExpected: boolean;
+  isMostlySunny: boolean;
+};
+
 export type PlanDetails = {
   totalBudget: string;
+  budgetBreakdown?: BudgetBreakdown;
   duration: string;
   tripDuration?: TripDurationOption;
+  tripDate?: string;
+  weather?: WeatherForecast;
   plannerMessage?: string;
   highlights: string[];
   rainyDayAlternatives: string[];

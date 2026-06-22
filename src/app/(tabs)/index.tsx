@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomTabInset, Colors, Spacing } from '@/constants/theme';
@@ -21,8 +22,13 @@ import {
 } from '@/constants/currency';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { AiAdviceSection } from '@/components/ai-advice-section';
+import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
+import { ConciergeAccessSection } from '@/components/concierge-access-section';
+import { ShareTripButton } from '@/components/share-trip-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loading-screen';
+import { WeatherSection } from '@/components/weather-section';
+import { UserPreferencesSection } from '@/components/user-preferences-section';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PrimaryButton, SectionHeader, SelectChip } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
@@ -32,6 +38,13 @@ import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from 
 import { getPreferredPersonality } from '@/lib/onboarding-storage';
 import { getAllActivities } from '@/lib/trip-duration';
 import { getDurationBadgeLabel } from '@/lib/trip-duration';
+import { formatIsoDate, formatTripDateLabel, getTodayIsoDate } from '@/lib/weather';
+import {
+  getAverageBudgetAmount,
+  getUserPreferences,
+  recordPlanPreferences,
+} from '@/lib/user-memory';
+import type { UserPreferences } from '@/types/user-memory';
 import type {
   CompanionOption,
   ItineraryDay,
@@ -240,10 +253,17 @@ function ItineraryTimeline({
               </View>
               <Text style={styles.itinerarySubtitle}>{PERSONALITY_SUBTITLES[personality]}</Text>
               <Text style={styles.itineraryCompanionNote}>{COMPANION_SUBTITLES[companion]}</Text>
-              <View style={styles.budgetPill}>
-                <Text style={styles.budgetPillLabel}>合計予算</Text>
-                <Text style={styles.budgetPillValue}>{details.totalBudget}</Text>
-              </View>
+              {details.weather ? (
+                <WeatherSection weather={details.weather} compact />
+              ) : null}
+              {details.budgetBreakdown ? (
+                <BudgetBreakdownSection breakdown={details.budgetBreakdown} compact />
+              ) : (
+                <View style={styles.budgetPill}>
+                  <Text style={styles.budgetPillLabel}>合計予算</Text>
+                  <Text style={styles.budgetPillValue}>{details.totalBudget}</Text>
+                </View>
+              )}
               {details.plannerMessage ? (
                 <View style={styles.plannerMessageBox}>
                   <Text style={styles.plannerMessageLabel}>プランナーより</Text>
@@ -266,6 +286,8 @@ function ItineraryTimeline({
             <Text style={styles.detailHintText}>タップしてプラン詳細を見る →</Text>
           </View>
         </Pressable>
+
+        <ConciergeAccessSection days={days} location={location} compact />
 
         {isDateRelatedCompanion(companion) && details.aiAdvice ? (
           <AiAdviceSection advice={details.aiAdvice} />
@@ -291,6 +313,18 @@ function ItineraryTimeline({
           />
         </View>
 
+        <View style={styles.shareButtonWrap}>
+          <ShareTripButton
+            location={location}
+            companion={companion}
+            personality={personality}
+            tripDuration={tripDuration}
+            days={days}
+            items={items}
+            details={details}
+          />
+        </View>
+
         <View style={styles.confirmButtonWrap}>
           <PrimaryButton label="このプランで決定" onPress={handleConfirm} variant="secondary" />
         </View>
@@ -306,6 +340,73 @@ type FormFieldProps = {
   placeholder: string;
   keyboardType?: 'default' | 'numeric' | 'number-pad';
 };
+
+function TripDateField({
+  isoDate,
+  onChange,
+  onResetPlan,
+}: {
+  isoDate: string;
+  onChange: (date: string) => void;
+  onResetPlan?: () => void;
+}) {
+  const [showPicker, setShowPicker] = useState(false);
+  const dateValue = new Date(`${isoDate}T12:00:00`);
+  const label = formatTripDateLabel(isoDate);
+
+  const handleChange = (nextDate: Date) => {
+    onChange(formatIsoDate(nextDate));
+    onResetPlan?.();
+  };
+
+  if (Platform.OS === 'web') {
+    return (
+      <FormField
+        label="出発日"
+        value={isoDate}
+        onChangeText={(text) => {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+            onChange(text);
+            onResetPlan?.();
+          }
+        }}
+        placeholder="YYYY-MM-DD"
+      />
+    );
+  }
+
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>出発日</Text>
+      <Pressable style={styles.dateInput} onPress={() => setShowPicker(true)}>
+        <Text style={styles.dateInputText}>{label}</Text>
+        <Text style={styles.dateInputHint}>タップして変更</Text>
+      </Pressable>
+      {showPicker ? (
+        <DateTimePicker
+          value={dateValue}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          minimumDate={new Date()}
+          locale="ja-JP"
+          onChange={(event, selectedDate) => {
+            if (Platform.OS === 'android') setShowPicker(false);
+            if (event.type === 'dismissed') {
+              setShowPicker(false);
+              return;
+            }
+            if (selectedDate) handleChange(selectedDate);
+          }}
+        />
+      ) : null}
+      {Platform.OS === 'ios' && showPicker ? (
+        <Pressable style={styles.datePickerDone} onPress={() => setShowPicker(false)}>
+          <Text style={styles.datePickerDoneText}>完了</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 
 function FormField({ label, value, onChangeText, placeholder, keyboardType = 'default' }: FormFieldProps) {
   return (
@@ -422,6 +523,7 @@ function DurationCard({
 
 export default function HomeScreen() {
   const [location, setLocation] = useState('');
+  const [tripDate, setTripDate] = useState(getTodayIsoDate());
   const [budget, setBudget] = useState('');
   const [currency, setCurrency] = useState<CurrencyCode>('JPY');
   const [people, setPeople] = useState('');
@@ -436,12 +538,40 @@ export default function HomeScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
   const insets = useSafeAreaInsets();
 
+  const refreshUserPreferences = async () => {
+    setUserPreferences(await getUserPreferences());
+  };
+
   useEffect(() => {
-    getPreferredPersonality().then((preferred) => {
-      if (preferred) setPersonality(preferred);
-    });
+    const loadDefaults = async () => {
+      const [preferredPersonality, prefs, averageBudget] = await Promise.all([
+        getPreferredPersonality(),
+        getUserPreferences(),
+        getAverageBudgetAmount(),
+      ]);
+
+      setUserPreferences(prefs);
+
+      if (prefs.favoriteTravelStyle) {
+        setPersonality(prefs.favoriteTravelStyle);
+      } else if (preferredPersonality) {
+        setPersonality(preferredPersonality);
+      }
+
+      if (prefs.preferredTripDuration) {
+        setTripDuration(prefs.preferredTripDuration);
+      }
+
+      if (averageBudget && !budget) {
+        setBudget(String(averageBudget.amount));
+        setCurrency(averageBudget.currency);
+      }
+    };
+
+    loadDefaults();
   }, []);
 
   const resetPlan = () => {
@@ -465,10 +595,27 @@ export default function HomeScreen() {
       companion,
       personality,
       tripDuration,
+      tripDate,
       mood,
       avoidActivities,
     });
     return { days: plan.days, items: plan.items, details: plan.details };
+  };
+
+  const learnFromPlan = async (plan: {
+    days: ItineraryDay[];
+    items: ItineraryItem[];
+  }) => {
+    if (!personality) return;
+
+    await recordPlanPreferences({
+      personality,
+      tripDuration,
+      budget,
+      currency,
+      activities: getAllActivities(plan.days),
+    });
+    await refreshUserPreferences();
   };
 
   const handleGenerate = async () => {
@@ -486,6 +633,7 @@ export default function HomeScreen() {
       setItinerary(plan.items);
       setPlanDetails(plan.details);
       setShowItinerary(true);
+      await learnFromPlan(plan);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
       setError(message);
@@ -515,6 +663,7 @@ export default function HomeScreen() {
       setItinerary(plan.items);
       setPlanDetails(plan.details);
       setShowItinerary(true);
+      await learnFromPlan(plan);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
       setError(message);
@@ -547,6 +696,12 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}>
         <HeroSection />
 
+        {userPreferences ? (
+          <FadeInView delay={40}>
+            <UserPreferencesSection preferences={userPreferences} compact />
+          </FadeInView>
+        ) : null}
+
         <SectionHeader
           title="プランを生成"
           subtitle="条件を入力して、AIがあなただけの1日を提案"
@@ -558,6 +713,13 @@ export default function HomeScreen() {
             value={location}
             onChangeText={handleLocationChange}
             placeholder="例）東京・渋谷"
+          />
+          <TripDateField
+            isoDate={tripDate}
+            onChange={setTripDate}
+            onResetPlan={() => {
+              if (showItinerary) resetPlan();
+            }}
           />
           <CurrencySelector
             selected={currency}
@@ -825,6 +987,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: 14,
   },
+  dateInput: {
+    backgroundColor: NS.colors.bgInput,
+    borderColor: NS.colors.borderStrong,
+    borderWidth: 1,
+    borderRadius: NS.radius.sm + 2,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  dateInputText: {
+    color: theme.text,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  dateInputHint: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  datePickerDone: {
+    alignSelf: 'flex-end',
+    marginTop: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+  },
+  datePickerDoneText: {
+    color: NS.colors.accent,
+    fontSize: 15,
+    fontWeight: '700',
+  },
   currencyRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -984,6 +1178,9 @@ const styles = StyleSheet.create({
     marginTop: Spacing.two,
   },
   saveButtonWrap: {
+    marginTop: Spacing.two,
+  },
+  shareButtonWrap: {
     marginTop: Spacing.two,
   },
   regenerateButtonWrap: {

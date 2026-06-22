@@ -4,6 +4,10 @@ import type { CompanionOption, PersonalityOption, TripDurationOption } from '@/t
 import { isDateRelatedCompanion } from '@/types/plan';
 
 import { TRIP_DURATION_CONFIG } from './trip-duration';
+import type { WeatherForecast } from './weather';
+import { formatTripDateLabel } from './weather';
+import { buildUserMemoryPromptSection } from './user-memory';
+import type { UserPreferences } from '@/types/user-memory';
 
 export type PlanInput = {
   location: string;
@@ -13,7 +17,10 @@ export type PlanInput = {
   companion: CompanionOption;
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
+  tripDate: string;
   mood: string;
+  weather?: WeatherForecast;
+  userPreferences?: UserPreferences;
   avoidActivities?: string[];
 };
 
@@ -93,7 +100,10 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
           "activity": "実在店名・施設名",
           "reason": "選んだ理由",
           "estimatedCost": "概算（${symbol}）",
-          "transportation": "次のスポットへの移動"
+          "transportation": "次のスポットへの移動",
+          "reservationUrl": "予約URL（不要なら空文字）",
+          "websiteUrl": "公式サイトURL（不明なら空文字）",
+          "travelTimeToNext": "約15分（徒歩）"
         }
       ]
     }
@@ -109,7 +119,10 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
           "activity": "実在店名・施設名",
           "reason": "選んだ理由",
           "estimatedCost": "概算（${symbol}）",
-          "transportation": "—"
+          "transportation": "—",
+          "reservationUrl": "予約URL（不要なら空文字）",
+          "websiteUrl": "公式サイトURL（不明なら空文字）",
+          "travelTimeToNext": "約12分（電車）"
         }
       ]
     }
@@ -126,11 +139,88 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
 - itemsは${durationConfig.itemsMin}〜${durationConfig.itemsMax}件
 - 合計予算は${input.tripDuration === '半日' ? '半日' : '1日'}の概算`;
 
+  const accommodationRule = isMultiDay
+    ? '- **宿泊費**: 泊数・人数・エリア相場に合わせて配分（旅行タイプ「' + input.personality + '」も反映）'
+    : '- **宿泊費**: 半日・日帰りのため「¥0（不要）」と記載';
+
+  const budgetOptimizationSection = `
+## 予算の最適配分（必須）
+お客様の予算「${budget} ${input.currency}」をもとに、budgetBreakdown でカテゴリ別の概算を作成してください。
+人数${people}人・期間「${input.tripDuration}」・旅行タイプ「${input.personality}」を考慮し、無理のない配分にすること。
+
+- **total（合計予算）**: 旅行全体の概算合計（${symbol}付き）。お客様予算を超えないよう調整
+${accommodationRule}
+- **food（食事）**: ランチ・カフェ・ディナー等の食事費合計
+- **transportation（交通費）**: 電車・バス・タクシー・新幹線等の移動費合計
+- **activity（アクティビティ）**: 入場料・体験・お土産・その他娯楽費合計
+
+各カテゴリの合計が total におおむね一致するよう配分してください。totalBudget は budgetBreakdown.total と同じ値にしてください。`;
+
+  const tripDateLabel = formatTripDateLabel(input.tripDate);
+
+  const weatherSection = input.weather
+    ? `
+
+## 天気予報（${input.weather.locationName}・必ず反映）
+${input.weather.summary}
+
+${isMultiDay ? '日別予報:' : '当日予報:'}
+${input.weather.days
+  .map((day) => {
+    const guidance = day.preferIndoor
+      ? ' → **屋内アクティビティ優先**'
+      : day.preferOutdoor
+        ? ' → **屋外アクティビティ優先**'
+        : '';
+    return `- ${day.label}: ${day.condition}（${day.summary}）${guidance}`;
+  })
+  .join('\n')}
+
+### 天気に基づくスポット選定（最重要）
+${
+  input.weather.hasRainExpected
+    ? `- **雨の予報あり**: 美術館、ショッピングモール、カフェ、水族館、屋内展望など**屋内施設を優先**してください
+- 屋外スポットを選ぶ場合は、短時間の移動・雨具不要な場所に限定すること
+- 各スポットの選定理由に「天候（雨）への配慮」を必ず記載`
+    : ''
+}
+${
+  input.weather.isMostlySunny
+    ? `- **晴れの予報**: 公園、散策、テラス席、屋外体験、展望スポットなど**屋外アクティビティを積極的に**組み込んでください
+- 各スポットの選定理由に「天候（晴れ）を活かせる」旨を記載`
+    : ''
+}
+${
+  !input.weather.hasRainExpected && !input.weather.isMostlySunny
+    ? `- 曇りや天候変化の可能性あり。**屋内・屋外をバランスよく**組み合わせ、柔軟に楽しめるプランにすること`
+    : ''
+}
+${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて**その日の items を調整すること（雨の日は屋内、晴れの日は屋外）' : ''}
+- plannerMessage に天候への一言（例：「晴れの予報なので屋外も楽しめます」等）を含めること
+- rainyDayAlternatives には、雨の日でも楽しめる具体的な代替スポットを記載すること`
+    : '';
+
+  const userMemorySection = input.userPreferences
+    ? buildUserMemoryPromptSection(input.userPreferences)
+    : '';
+
+  const conciergeSection = `
+
+## コンシェルジュモード（必須・各 items に設定）
+各スポットの items に、予約・アクセス情報を必ず含めてください。
+
+- **reservationUrl**: レストラン・体験施設・美術館等の**直接予約URL**（食べログ予約、公式予約ページ、チケット購入ページ等）。予約不要なスポット（公園・散策等）は**空文字**
+- **websiteUrl**: 施設・店舗の**公式サイトURL**。不明・存在しない場合は**空文字**（架空URLは禁止）
+- **travelTimeToNext**: 次のスポットまでの**目安移動時間**（例：約15分（徒歩800m）、約8分（地下鉄））。移動手段も含める。各日の**最終 item** は「—」
+- transportation には移動手段の説明、travelTimeToNext には時間の目安を記載（両方セットで使う）
+- URLは https:// で始まる有効な形式のみ。確信がない場合は空文字にすること`;
+
   return `あなたは日本トップクラスの旅行プランナー兼お出かけコンシェルジュです。
 高級旅行会社のパンフレットのように、温かみがあり、信頼感のある自然な日本語でプランを作成してください。
 
 ## お客様の条件
 - 場所: ${location}
+- 出発日: ${tripDateLabel}（${input.tripDate}）
 - 期間: ${input.tripDuration}
 - 予算: ${budget} ${input.currency}（${symbol}）※${isMultiDay ? '旅行全体' : 'この期間'}の目安
 - 通貨: ${input.currency}（${label}）
@@ -154,21 +244,30 @@ ${personalityGuide}
 2. 各アクティビティに**開始時刻**（HH:MM）を付ける
 3. 各スポットに**選んだ理由**を1〜2文で（旅行タイプ・関係性・気分・予算・期間に触れる）
 4. 各スポットの**概算費用**を${symbol}付きで記載（人数考慮）
-5. **合計予算**は${isMultiDay ? '旅行全体' : '期間全体'}の概算を${symbol}で示す
-6. スポット間の**移動方法**を具体的に（最終地点は「—」）
-7. 地理的に近い順に並べ、移動が不自然にならないルートにする
-8. duration には期間全体の所要時間・日数を日本語で記載
-9. 文体は丁寧で親しみやすい日本語
+5. **budgetBreakdown** で宿泊・食事・交通・アクティビティのカテゴリ別概算を${symbol}付きで記載
+6. **合計予算（totalBudget）**は budgetBreakdown.total と一致させる
+7. スポット間の**移動方法**を具体的に（最終地点は「—」）
+8. 地理的に近い順に並べ、移動が不自然にならないルートにする
+9. duration には期間全体の所要時間・日数を日本語で記載
+10. 文体は丁寧で親しみやすい日本語
+${budgetOptimizationSection}${weatherSection}${userMemorySection}${conciergeSection}
 
 ## 出力JSON（この形式のみ、余計な文章は禁止）
 {
   "plannerMessage": "プラン全体への一言（期間「${input.tripDuration}」と旅行タイプへの共感を含める）",
   ${daysJsonExample},
-  "totalBudget": "合計概算（${symbol}）",
+  "budgetBreakdown": {
+    "total": "合計概算（${symbol}）",
+    "accommodation": "宿泊費概算（${symbol}）",
+    "food": "食事費概算（${symbol}）",
+    "transportation": "交通費概算（${symbol}）",
+    "activity": "アクティビティ費概算（${symbol}）"
+  },
+  "totalBudget": "合計概算（budgetBreakdown.total と同じ）",
   "duration": "期間・所要時間（例：${input.tripDuration}・約8時間 / ${input.tripDuration}）",
   "highlights": ["魅力1", "魅力2", "魅力3"],
   "rainyDayAlternatives": ["雨の日の代替案1", "代替案2", "代替案3"]${aiAdviceJson}
 }
 
-totalBudget・estimatedCostには必ず${symbol}を使用してください。${dateAdviceSection}${variationSection}`;
+totalBudget・budgetBreakdown・estimatedCostには必ず${symbol}を使用してください。${dateAdviceSection}${variationSection}`;
 }

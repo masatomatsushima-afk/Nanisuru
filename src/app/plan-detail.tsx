@@ -6,6 +6,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { buildPlanDetails } from '@/lib/plan-details';
 import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { AiAdviceSection } from '@/components/ai-advice-section';
+import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
+import { ConciergeAccessSection } from '@/components/concierge-access-section';
+import { WeatherSection } from '@/components/weather-section';
+import { ShareTripButton } from '@/components/share-trip-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { Colors, Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
@@ -158,6 +162,12 @@ export default function PlanDetailScreen() {
         </View>
       </View>
 
+      {planDetails.budgetBreakdown ? (
+        <BudgetBreakdownSection breakdown={planDetails.budgetBreakdown} />
+      ) : null}
+
+      {planDetails.weather ? <WeatherSection weather={planDetails.weather} /> : null}
+
       <DetailCard icon="✨" title="おすすめポイント">
         <BulletList items={planDetails.highlights} />
       </DetailCard>
@@ -178,8 +188,24 @@ export default function PlanDetailScreen() {
         <ItineraryDaysView days={days} variant="detail" />
       </View>
 
+      <ConciergeAccessSection days={days} location={location} />
+
       {isDateRelatedCompanion(companion) && planDetails.aiAdvice ? (
         <AiAdviceSection advice={planDetails.aiAdvice} />
+      ) : null}
+
+      {personality && tripDuration ? (
+        <View style={styles.shareButtonWrap}>
+          <ShareTripButton
+            location={location}
+            companion={companion}
+            personality={personality}
+            tripDuration={tripDuration}
+            days={days}
+            items={items}
+            details={planDetails}
+          />
+        </View>
       ) : null}
     </ScrollView>
   );
@@ -388,5 +414,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginTop: Spacing.five,
+  },
+  shareButtonWrap: {
+    marginTop: Spacing.four,
+    marginBottom: Spacing.two,
   },
 });

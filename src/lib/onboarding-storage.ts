@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { PersonalityOption } from '@/types/plan';
 import { PERSONALITY_OPTIONS } from '@/types/plan';
+import { seedTravelStylePreference } from '@/lib/user-memory';
 
 const KEYS = {
   completed: 'nanisuru_onboarding_completed',
@@ -26,4 +27,5 @@ export async function completeOnboarding(personality: PersonalityOption): Promis
     [KEYS.completed, 'true'],
     [KEYS.personality, personality],
   ]);
+  await seedTravelStylePreference(personality);
 }

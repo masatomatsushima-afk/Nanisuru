@@ -29,6 +29,9 @@ export default function AppTabs() {
           <TabTrigger name="ai" href="/ai" asChild>
             <TabButton>AI</TabButton>
           </TabTrigger>
+          <TabTrigger name="profile" href="/profile" asChild>
+            <TabButton>マイページ</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>
