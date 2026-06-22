@@ -5,14 +5,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { buildPlanDetails } from '@/lib/plan-details';
 import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
-import { ItineraryTimelineCard } from '@/components/itinerary-timeline-card';
+import { AiAdviceSection } from '@/components/ai-advice-section';
+import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { Colors, Spacing } from '@/constants/theme';
+import { NS } from '@/constants/nanisuru-ui';
 import { parseCurrencyCode } from '@/constants/currency';
-import type { CompanionOption, ItineraryItem, PersonalityOption } from '@/types/plan';
-import { COMPANION_OPTIONS, PERSONALITY_OPTIONS } from '@/types/plan';
+import { parseItineraryDays, isTripDurationOption } from '@/lib/trip-duration';
+import type { CompanionOption, ItineraryItem, PersonalityOption, TripDurationOption } from '@/types/plan';
+import { COMPANION_OPTIONS, isDateRelatedCompanion, PERSONALITY_OPTIONS } from '@/types/plan';
 
 const theme = Colors.dark;
-const accent = '#818CF8';
+const accent = NS.colors.accent;
 
 function DetailCard({
   icon,
@@ -57,6 +60,8 @@ export default function PlanDetailScreen() {
     mood: string;
     companion: string;
     personality: string;
+    tripDuration: string;
+    days: string;
     items: string;
     details: string;
   }>();
@@ -89,7 +94,12 @@ export default function PlanDetailScreen() {
     details = null;
   }
 
-  if (!companion || items.length === 0) {
+  const days = parseItineraryDays(params.days, items);
+  const tripDuration = isTripDurationOption(params.tripDuration ?? '')
+    ? (params.tripDuration as TripDurationOption)
+    : details?.tripDuration ?? '1日';
+
+  if (!companion || days.length === 0) {
     return (
       <View style={[styles.container, { paddingTop: insets.top + Spacing.four }]}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
@@ -127,6 +137,9 @@ export default function PlanDetailScreen() {
             <Text style={styles.personalityBadgeText}>{personality}</Text>
           </View>
         ) : null}
+        <View style={styles.durationBadge}>
+          <Text style={styles.durationBadgeText}>{tripDuration}</Text>
+        </View>
         <Text style={styles.subtitle}>
           {personality ? PERSONALITY_SUBTITLES[personality] : COMPANION_SUBTITLES[companion]}
         </Text>
@@ -162,16 +175,12 @@ export default function PlanDetailScreen() {
 
       <View style={styles.timelinePreview}>
         <Text style={styles.timelinePreviewTitle}>スケジュール</Text>
-        {items.map((item, index) => (
-          <ItineraryTimelineCard
-            key={`${item.time}-${item.activity}`}
-            item={item}
-            index={index}
-            isLast={index === items.length - 1}
-            variant="detail"
-          />
-        ))}
+        <ItineraryDaysView days={days} variant="detail" />
       </View>
+
+      {isDateRelatedCompanion(companion) && planDetails.aiAdvice ? (
+        <AiAdviceSection advice={planDetails.aiAdvice} />
+      ) : null}
     </ScrollView>
   );
 }
@@ -179,7 +188,7 @@ export default function PlanDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0B',
+    backgroundColor: NS.colors.bg,
   },
   content: {
     paddingHorizontal: Spacing.four,
@@ -232,6 +241,21 @@ const styles = StyleSheet.create({
   },
   personalityBadgeText: {
     color: accent,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  durationBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginTop: Spacing.two,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+  },
+  durationBadgeText: {
+    color: NS.colors.textSecondary,
     fontSize: 13,
     fontWeight: '700',
   },

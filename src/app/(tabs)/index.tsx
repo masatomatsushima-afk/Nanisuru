@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -20,15 +20,35 @@ import {
   type CurrencyCode,
 } from '@/constants/currency';
 import { SuccessOverlay } from '@/components/success-overlay';
-import { ItineraryTimelineCard } from '@/components/itinerary-timeline-card';
+import { AiAdviceSection } from '@/components/ai-advice-section';
+import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loading-screen';
+import { FadeInView } from '@/components/ui/fade-in-view';
+import { PrimaryButton, SectionHeader, SelectChip } from '@/components/ui/premium-card';
+import { NS } from '@/constants/nanisuru-ui';
+import { saveFavorite } from '@/lib/favorites-storage';
 import { generatePlanWithAi, isOpenAiConfigured } from '@/lib/generate-plan';
 import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
-import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails } from '@/types/plan';
-import { COMPANION_OPTIONS, PERSONALITY_OPTIONS } from '@/types/plan';
+import { getPreferredPersonality } from '@/lib/onboarding-storage';
+import { getAllActivities } from '@/lib/trip-duration';
+import { getDurationBadgeLabel } from '@/lib/trip-duration';
+import type {
+  CompanionOption,
+  ItineraryDay,
+  ItineraryItem,
+  PersonalityOption,
+  PlanDetails,
+  TripDurationOption,
+} from '@/types/plan';
+import {
+  COMPANION_OPTIONS,
+  isDateRelatedCompanion,
+  PERSONALITY_OPTIONS,
+  TRIP_DURATION_OPTIONS,
+} from '@/types/plan';
 
 const theme = Colors.dark;
-const accent = '#818CF8';
+const accent = NS.colors.accent;
 
 const RECOMMEND_REASONS = [
   '雨の日でも楽しめる',
@@ -59,23 +79,24 @@ function FeatureCard({ icon, title, description }: (typeof FEATURE_CARDS)[number
 
 function HeroSection() {
   return (
-    <View style={styles.hero}>
-      <View style={styles.heroGlow} />
-      <Text style={styles.title}>Nanisuru</Text>
-      <Text style={styles.tagline}>考えなくていい。</Text>
-      <Text style={styles.taglineAccent}>最高の1日をAIが作る。</Text>
+    <FadeInView>
+      <View style={styles.hero}>
+        <View style={styles.heroGlow} />
+        <Text style={styles.heroEyebrow}>AI DAY PLANNER</Text>
+        <Text style={styles.title}>Nanisuru</Text>
+        <Text style={styles.tagline}>考えなくていい。</Text>
+        <Text style={styles.taglineAccent}>最高の1日をAIが作る。</Text>
 
-      <View style={styles.featureList}>
-        {FEATURE_CARDS.map((feature) => (
-          <FeatureCard key={feature.title} {...feature} />
-        ))}
+        <View style={styles.featureList}>
+          {FEATURE_CARDS.map((feature, index) => (
+            <FadeInView key={feature.title} delay={index * 80} direction="down">
+              <FeatureCard {...feature} />
+            </FadeInView>
+          ))}
+        </View>
       </View>
-    </View>
+    </FadeInView>
   );
-}
-
-function TimelineActivityCard({ item, index, isLast }: { item: ItineraryItem; index: number; isLast: boolean }) {
-  return <ItineraryTimelineCard item={item} index={index} isLast={isLast} />;
 }
 
 function ReasonCard({ label }: { label: string }) {
@@ -105,25 +126,35 @@ function RecommendReasonsSection() {
 function ItineraryTimeline({
   companion,
   personality,
+  tripDuration,
   location,
   budget,
   currency,
   people,
   mood,
+  days,
   items,
   details,
+  onRegenerate,
+  isRegenerating,
 }: {
   companion: CompanionOption;
   personality: PersonalityOption;
+  tripDuration: TripDurationOption;
   location: string;
   budget: string;
   currency: CurrencyCode;
   people: string;
   mood: string;
+  days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;
+  onRegenerate: () => void;
+  isRegenerating: boolean;
 }) {
   const [showSuccess, setShowSuccess] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const planParams = {
     location,
@@ -133,6 +164,8 @@ function ItineraryTimeline({
     mood,
     companion,
     personality,
+    tripDuration,
+    days: JSON.stringify(days),
     items: JSON.stringify(items),
     details: JSON.stringify(details),
   };
@@ -155,9 +188,37 @@ function ItineraryTimeline({
     }, 1800);
   };
 
+  const handleSaveFavorite = async () => {
+    if (isSaving) return;
+
+    setIsSaving(true);
+    try {
+      await saveFavorite({
+        location,
+        budget,
+        currency,
+        people,
+        mood,
+        companion,
+        personality,
+        tripDuration,
+        days,
+        items,
+        details,
+      });
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 1600);
+    } catch {
+      // ignore storage errors silently for now
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <>
       <SuccessOverlay visible={showSuccess} message="今日の予定が決まりました！" />
+      <SuccessOverlay visible={showSaved} message="お気に入りに保存しました！" />
 
       <View style={styles.itinerarySection}>
         <Pressable
@@ -166,9 +227,16 @@ function ItineraryTimeline({
           <View style={styles.itineraryHeader}>
             <View style={styles.itineraryHeaderText}>
               <Text style={styles.itineraryEyebrow}>{getItineraryEyebrow(companion, location)}</Text>
-              <Text style={styles.itineraryTitle}>今日のプラン</Text>
-              <View style={styles.personalityBadge}>
-                <Text style={styles.personalityBadgeText}>{personality}</Text>
+              <Text style={styles.itineraryTitle}>
+                {days.length > 1 ? '旅行プラン' : tripDuration === '半日' ? '半日プラン' : '今日のプラン'}
+              </Text>
+              <View style={styles.badgeRow}>
+                <View style={styles.personalityBadge}>
+                  <Text style={styles.personalityBadgeText}>{personality}</Text>
+                </View>
+                <View style={styles.durationBadge}>
+                  <Text style={styles.durationBadgeText}>{getDurationBadgeLabel(tripDuration)}</Text>
+                </View>
               </View>
               <Text style={styles.itinerarySubtitle}>{PERSONALITY_SUBTITLES[personality]}</Text>
               <Text style={styles.itineraryCompanionNote}>{COMPANION_SUBTITLES[companion]}</Text>
@@ -184,19 +252,14 @@ function ItineraryTimeline({
               ) : null}
             </View>
             <View style={styles.itineraryBadge}>
-              <Text style={styles.itineraryBadgeText}>{items.length}件</Text>
+              <Text style={styles.itineraryBadgeText}>
+                {days.length > 1 ? `${days.length}日` : `${items.length}件`}
+              </Text>
             </View>
           </View>
 
           <View style={styles.timelineList}>
-            {items.map((item, index) => (
-              <TimelineActivityCard
-                key={`${item.time}-${item.activity}`}
-                item={item}
-                index={index}
-                isLast={index === items.length - 1}
-              />
-            ))}
+            <ItineraryDaysView days={days} variant="timeline" />
           </View>
 
           <View style={styles.detailHint}>
@@ -204,13 +267,33 @@ function ItineraryTimeline({
           </View>
         </Pressable>
 
+        {isDateRelatedCompanion(companion) && details.aiAdvice ? (
+          <AiAdviceSection advice={details.aiAdvice} />
+        ) : null}
+
         <RecommendReasonsSection />
 
-        <Pressable
-          style={({ pressed }) => [styles.confirmButton, pressed && styles.confirmButtonPressed]}
-          onPress={handleConfirm}>
-          <Text style={styles.confirmButtonText}>このプランで決定</Text>
-        </Pressable>
+        <View style={styles.regenerateButtonWrap}>
+          <PrimaryButton
+            label={isRegenerating ? '提案中...' : '別のプランを提案'}
+            onPress={onRegenerate}
+            disabled={isRegenerating}
+            variant="secondary"
+          />
+        </View>
+
+        <View style={styles.saveButtonWrap}>
+          <PrimaryButton
+            label={isSaving ? '保存中...' : 'お気に入りに保存'}
+            onPress={handleSaveFavorite}
+            disabled={isSaving}
+            variant="secondary"
+          />
+        </View>
+
+        <View style={styles.confirmButtonWrap}>
+          <PrimaryButton label="このプランで決定" onPress={handleConfirm} variant="secondary" />
+        </View>
       </View>
     </>
   );
@@ -233,7 +316,7 @@ function FormField({ label, value, onChangeText, placeholder, keyboardType = 'de
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#6B7280"
+        placeholderTextColor={NS.colors.textMuted}
         keyboardType={keyboardType}
       />
     </View>
@@ -293,7 +376,7 @@ function BudgetField({
           value={value}
           onChangeText={onChangeText}
           placeholder={getBudgetPlaceholder(currency)}
-          placeholderTextColor="#6B7280"
+          placeholderTextColor={NS.colors.textMuted}
           keyboardType="numeric"
         />
       </View>
@@ -310,18 +393,7 @@ function CompanionCard({
   selected: boolean;
   onPress: () => void;
 }) {
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.companionCard,
-        selected && styles.companionCardSelected,
-        pressed && styles.companionCardPressed,
-      ]}
-      onPress={onPress}>
-      <Text style={[styles.companionLabel, selected && styles.companionLabelSelected]}>{label}</Text>
-      {selected && <View style={styles.companionCheck} />}
-    </Pressable>
-  );
+  return <SelectChip label={label} selected={selected} onPress={onPress} />;
 }
 
 function PersonalityCard({
@@ -333,18 +405,19 @@ function PersonalityCard({
   selected: boolean;
   onPress: () => void;
 }) {
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.companionCard,
-        selected && styles.companionCardSelected,
-        pressed && styles.companionCardPressed,
-      ]}
-      onPress={onPress}>
-      <Text style={[styles.companionLabel, selected && styles.companionLabelSelected]}>{label}</Text>
-      {selected && <View style={styles.companionCheck} />}
-    </Pressable>
-  );
+  return <SelectChip label={label} selected={selected} onPress={onPress} />;
+}
+
+function DurationCard({
+  label,
+  selected,
+  onPress,
+}: {
+  label: TripDurationOption;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return <SelectChip label={label} selected={selected} onPress={onPress} />;
 }
 
 export default function HomeScreen() {
@@ -355,7 +428,9 @@ export default function HomeScreen() {
   const [mood, setMood] = useState('');
   const [companion, setCompanion] = useState<CompanionOption | null>(null);
   const [personality, setPersonality] = useState<PersonalityOption | null>(null);
+  const [tripDuration, setTripDuration] = useState<TripDurationOption>('1日');
   const [showItinerary, setShowItinerary] = useState(false);
+  const [days, setDays] = useState<ItineraryDay[]>([]);
   const [itinerary, setItinerary] = useState<ItineraryItem[]>([]);
   const [planDetails, setPlanDetails] = useState<PlanDetails | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -363,15 +438,22 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
 
+  useEffect(() => {
+    getPreferredPersonality().then((preferred) => {
+      if (preferred) setPersonality(preferred);
+    });
+  }, []);
+
   const resetPlan = () => {
     setShowItinerary(false);
+    setDays([]);
     setItinerary([]);
     setPlanDetails(null);
     setError(null);
     setLoadingStep(0);
   };
 
-  const fetchPlan = async () => {
+  const fetchPlan = async (avoidActivities?: string[]) => {
     if (!companion) throw new Error('Companion not selected');
     if (!personality) throw new Error('Personality not selected');
 
@@ -380,11 +462,13 @@ export default function HomeScreen() {
       budget,
       currency,
       people,
-      relationship: companion,
+      companion,
       personality,
+      tripDuration,
       mood,
+      avoidActivities,
     });
-    return { items: plan.items, details: plan.details };
+    return { days: plan.days, items: plan.items, details: plan.details };
   };
 
   const handleGenerate = async () => {
@@ -398,6 +482,7 @@ export default function HomeScreen() {
     try {
       const [plan] = await Promise.all([fetchPlan(), runLoadingAnimation(setLoadingStep)]);
 
+      setDays(plan.days);
       setItinerary(plan.items);
       setPlanDetails(plan.details);
       setShowItinerary(true);
@@ -405,6 +490,34 @@ export default function HomeScreen() {
       const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
       setError(message);
       setShowItinerary(false);
+    } finally {
+      setIsLoading(false);
+      setLoadingStep(0);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    if (!companion || !personality || isLoading || days.length === 0) return;
+
+    setIsLoading(true);
+    setLoadingStep(0);
+    setError(null);
+
+    const avoidActivities = getAllActivities(days);
+
+    try {
+      const [plan] = await Promise.all([
+        fetchPlan(avoidActivities),
+        runLoadingAnimation(setLoadingStep),
+      ]);
+
+      setDays(plan.days);
+      setItinerary(plan.items);
+      setPlanDetails(plan.details);
+      setShowItinerary(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
+      setError(message);
     } finally {
       setIsLoading(false);
       setLoadingStep(0);
@@ -434,10 +547,10 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}>
         <HeroSection />
 
-        <View style={styles.formSectionLabel}>
-          <Text style={styles.formSectionTitle}>プランを生成</Text>
-          <Text style={styles.formSectionSubtitle}>条件を入力して、AIがあなただけの1日を提案</Text>
-        </View>
+        <SectionHeader
+          title="プランを生成"
+          subtitle="条件を入力して、AIがあなただけの1日を提案"
+        />
 
         <View style={styles.formCard}>
           <FormField
@@ -477,7 +590,24 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.companionSection}>
-          <Text style={styles.sectionTitle}>旅行タイプは？</Text>
+          <SectionHeader title="期間は？" subtitle="旅行の長さに合わせてプランを作成" />
+          <View style={styles.companionGrid}>
+            {TRIP_DURATION_OPTIONS.map((option) => (
+              <DurationCard
+                key={option}
+                label={option}
+                selected={tripDuration === option}
+                onPress={() => {
+                  setTripDuration(option);
+                  if (showItinerary) resetPlan();
+                }}
+              />
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.companionSection}>
+          <SectionHeader title="旅行タイプは？" subtitle="あなたの好みに合わせてプランを提案" />
           <View style={styles.companionGrid}>
             {PERSONALITY_OPTIONS.map((option) => (
               <PersonalityCard
@@ -494,7 +624,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.companionSection}>
-          <Text style={styles.sectionTitle}>誰と行く？</Text>
+          <SectionHeader title="誰と行く？" subtitle="一緒に行く相手に合わせた提案" />
           <View style={styles.companionGrid}>
             {COMPANION_OPTIONS.map((option) => (
               <CompanionCard
@@ -510,16 +640,13 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.button,
-            (!companion || !personality || isLoading) && styles.buttonDisabled,
-            pressed && companion && personality && !isLoading && styles.buttonPressed,
-          ]}
-          onPress={handleGenerate}
-          disabled={!companion || !personality || isLoading}>
-          <Text style={styles.buttonText}>{isLoading ? '生成中...' : 'プランを生成'}</Text>
-        </Pressable>
+        <View style={styles.generateButtonWrap}>
+          <PrimaryButton
+            label={isLoading ? '生成中...' : 'プランを生成'}
+            onPress={handleGenerate}
+            disabled={!companion || !personality || isLoading}
+          />
+        </View>
 
         {(!companion || !personality) && (
           <Text style={styles.helperText}>
@@ -540,17 +667,25 @@ export default function HomeScreen() {
         {error && <Text style={styles.errorText}>{error}</Text>}
 
         {showItinerary && companion && personality && planDetails && (
-          <ItineraryTimeline
-            companion={companion}
-            personality={personality}
-            location={location}
-            budget={budget}
-            currency={currency}
-            people={people}
-            mood={mood}
-            items={itinerary}
-            details={planDetails}
-          />
+          <FadeInView
+            key={days.map((day) => `${day.dayNumber}-${day.label}`).join('|')}
+            delay={100}>
+            <ItineraryTimeline
+              companion={companion}
+              personality={personality}
+              tripDuration={tripDuration}
+              location={location}
+              budget={budget}
+              currency={currency}
+              people={people}
+              mood={mood}
+              days={days}
+              items={itinerary}
+              details={planDetails}
+              onRegenerate={handleRegenerate}
+              isRegenerating={isLoading}
+            />
+          </FadeInView>
         )}
       </ScrollView>
     </KeyboardAvoidingView>
@@ -560,7 +695,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0B',
+    backgroundColor: NS.colors.bg,
   },
   content: {
     flexGrow: 1,
@@ -579,15 +714,18 @@ const styles = StyleSheet.create({
     left: -40,
     right: -40,
     height: 180,
-    backgroundColor: 'rgba(129, 140, 248, 0.08)',
+    backgroundColor: NS.colors.accentGlow,
     borderRadius: 999,
     transform: [{ scaleX: 1.2 }],
   },
+  heroEyebrow: {
+    color: accent,
+    ...NS.typography.eyebrow,
+    marginBottom: Spacing.two,
+  },
   title: {
     color: theme.text,
-    fontSize: 48,
-    fontWeight: '800',
-    letterSpacing: -1.5,
+    ...NS.typography.display,
     marginBottom: Spacing.three,
   },
   tagline: {
@@ -612,17 +750,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
-    backgroundColor: '#121214',
-    borderRadius: 18,
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.lg - 2,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.three,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 4,
+    borderColor: NS.colors.border,
+    ...NS.shadow.card,
   },
   featureIconWrap: {
     width: 44,
@@ -665,12 +799,13 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   formCard: {
-    backgroundColor: theme.backgroundElement,
-    borderColor: theme.backgroundSelected,
+    backgroundColor: NS.colors.bgElevated,
+    borderColor: NS.colors.border,
     borderWidth: 1,
-    borderRadius: 20,
+    borderRadius: NS.radius.lg,
     padding: Spacing.four,
     gap: Spacing.three,
+    ...NS.shadow.card,
   },
   field: {
     gap: Spacing.two,
@@ -681,10 +816,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   input: {
-    backgroundColor: '#161618',
-    borderColor: theme.backgroundSelected,
+    backgroundColor: NS.colors.bgInput,
+    borderColor: NS.colors.borderStrong,
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: NS.radius.sm + 2,
     color: theme.text,
     fontSize: 16,
     paddingHorizontal: Spacing.three,
@@ -749,13 +884,10 @@ const styles = StyleSheet.create({
     paddingRight: Spacing.three,
   },
   companionSection: {
-    marginTop: Spacing.four,
+    marginTop: NS.layout.sectionGap,
   },
-  sectionTitle: {
-    color: theme.text,
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: Spacing.three,
+  generateButtonWrap: {
+    marginTop: NS.layout.sectionGap,
   },
   companionGrid: {
     flexDirection: 'row',
@@ -841,16 +973,21 @@ const styles = StyleSheet.create({
   },
   itinerarySection: {
     marginTop: Spacing.five,
-    backgroundColor: '#121214',
-    borderColor: 'rgba(129, 140, 248, 0.18)',
+    backgroundColor: NS.colors.bgElevated,
+    borderColor: NS.colors.accentBorder,
     borderWidth: 1,
-    borderRadius: 28,
+    borderRadius: NS.radius.xxl,
     padding: Spacing.four,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.45,
-    shadowRadius: 32,
-    elevation: 12,
+    ...NS.shadow.cardLg,
+  },
+  confirmButtonWrap: {
+    marginTop: Spacing.two,
+  },
+  saveButtonWrap: {
+    marginTop: Spacing.two,
+  },
+  regenerateButtonWrap: {
+    marginTop: Spacing.four,
   },
   itinerarySectionPressed: {
     opacity: 0.92,
@@ -898,9 +1035,28 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 5,
-    marginTop: Spacing.two,
     borderWidth: 1,
     borderColor: 'rgba(129, 140, 248, 0.3)',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+  },
+  durationBadge: {
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+  },
+  durationBadgeText: {
+    color: theme.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
   },
   personalityBadgeText: {
     color: accent,

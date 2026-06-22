@@ -4,14 +4,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { buildPlanDetails } from '@/lib/plan-details';
-import { ItineraryTimelineCard } from '@/components/itinerary-timeline-card';
+import { AiAdviceSection } from '@/components/ai-advice-section';
+import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { Colors, Spacing } from '@/constants/theme';
+import { NS } from '@/constants/nanisuru-ui';
 import { parseCurrencyCode } from '@/constants/currency';
-import type { CompanionOption, ItineraryItem, PersonalityOption } from '@/types/plan';
-import { COMPANION_OPTIONS, PERSONALITY_OPTIONS } from '@/types/plan';
+import { parseItineraryDays, isTripDurationOption } from '@/lib/trip-duration';
+import type { CompanionOption, ItineraryItem, PersonalityOption, TripDurationOption } from '@/types/plan';
+import { COMPANION_OPTIONS, isDateRelatedCompanion, PERSONALITY_OPTIONS } from '@/types/plan';
 
 const theme = Colors.dark;
-const accent = '#818CF8';
+const accent = NS.colors.accent;
 
 function formatTodayDate(): string {
   return new Date().toLocaleDateString('ja-JP', {
@@ -32,6 +35,8 @@ export default function TodayScheduleScreen() {
     mood: string;
     companion: string;
     personality: string;
+    tripDuration: string;
+    days: string;
     items: string;
     details: string;
   }>();
@@ -64,7 +69,12 @@ export default function TodayScheduleScreen() {
     details = null;
   }
 
-  if (!companion || items.length === 0) {
+  const days = parseItineraryDays(params.days, items);
+  const tripDuration = isTripDurationOption(params.tripDuration ?? '')
+    ? (params.tripDuration as TripDurationOption)
+    : details?.tripDuration ?? '1日';
+
+  if (!companion || days.length === 0) {
     return (
       <View style={[styles.container, { paddingTop: insets.top + Spacing.four }]}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
@@ -98,14 +108,19 @@ export default function TodayScheduleScreen() {
         <View style={styles.heroBadge}>
           <Text style={styles.heroBadgeText}>CONFIRMED</Text>
         </View>
-        <Text style={styles.title}>今日の予定</Text>
+        <Text style={styles.title}>{days.length > 1 ? '旅行の予定' : '今日の予定'}</Text>
         <Text style={styles.date}>{formatTodayDate()}</Text>
         <Text style={styles.subtitle}>{getItineraryEyebrow(companion, location)}</Text>
-        {personality ? (
-          <View style={styles.personalityBadge}>
-            <Text style={styles.personalityBadgeText}>{personality}</Text>
+        <View style={styles.badgeRow}>
+          {personality ? (
+            <View style={styles.personalityBadge}>
+              <Text style={styles.personalityBadgeText}>{personality}</Text>
+            </View>
+          ) : null}
+          <View style={styles.durationBadge}>
+            <Text style={styles.durationBadgeText}>{tripDuration}</Text>
           </View>
-        ) : null}
+        </View>
         <Text style={styles.companionNote}>
           {personality ? PERSONALITY_SUBTITLES[personality] : COMPANION_SUBTITLES[companion]}
         </Text>
@@ -133,19 +148,17 @@ export default function TodayScheduleScreen() {
             <Text style={styles.plannerMessageText}>{planDetails.plannerMessage}</Text>
           </View>
         ) : null}
-        {items.map((item, index) => (
-          <ItineraryTimelineCard
-            key={`${item.time}-${item.activity}`}
-            item={item}
-            index={index}
-            isLast={index === items.length - 1}
-            variant="detail"
-          />
-        ))}
+        <ItineraryDaysView days={days} variant="detail" />
       </View>
 
+      {isDateRelatedCompanion(companion) && planDetails.aiAdvice ? (
+        <AiAdviceSection advice={planDetails.aiAdvice} />
+      ) : null}
+
       <View style={styles.footerNote}>
-        <Text style={styles.footerNoteText}>素敵な1日をお過ごしください ✨</Text>
+        <Text style={styles.footerNoteText}>
+          {days.length > 1 ? '素敵な旅をお過ごしください ✨' : '素敵な1日をお過ごしください ✨'}
+        </Text>
       </View>
     </ScrollView>
   );
@@ -154,7 +167,7 @@ export default function TodayScheduleScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0B',
+    backgroundColor: NS.colors.bg,
   },
   content: {
     paddingHorizontal: Spacing.four,
@@ -223,14 +236,32 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   personalityBadge: {
-    alignSelf: 'flex-start',
     backgroundColor: 'rgba(129, 140, 248, 0.15)',
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    marginTop: Spacing.two,
     borderWidth: 1,
     borderColor: 'rgba(129, 140, 248, 0.3)',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+  },
+  durationBadge: {
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+  },
+  durationBadgeText: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
   },
   personalityBadgeText: {
     color: accent,

@@ -2,9 +2,10 @@ import { useEffect, useRef } from 'react';
 import { ActivityIndicator, Animated, Modal, StyleSheet, Text, View } from 'react-native';
 
 import { Colors, Spacing } from '@/constants/theme';
+import { NS } from '@/constants/nanisuru-ui';
 
 const theme = Colors.dark;
-const accent = '#818CF8';
+const accent = NS.colors.accent;
 
 export const LOADING_STEPS = [
   { icon: '📍', label: '場所を分析中' },
@@ -133,7 +134,7 @@ export async function runLoadingAnimation(
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    backgroundColor: NS.colors.overlay,
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.four,
@@ -141,16 +142,12 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#121214',
-    borderRadius: 28,
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.xxl,
     padding: Spacing.five,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.2)',
-    shadowColor: accent,
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.3,
-    shadowRadius: 32,
-    elevation: 16,
+    borderColor: NS.colors.accentBorder,
+    ...NS.shadow.accent,
   },
   title: {
     color: theme.text,
@@ -202,14 +199,14 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(129, 140, 248, 0.4)',
   },
   stepIconWrapDone: {
-    backgroundColor: 'rgba(52, 211, 153, 0.12)',
+    backgroundColor: NS.colors.successSoft,
     borderColor: 'rgba(52, 211, 153, 0.35)',
   },
   stepIcon: {
     fontSize: 16,
   },
   stepCheck: {
-    color: '#34D399',
+    color: NS.colors.success,
     fontSize: 16,
     fontWeight: '700',
   },

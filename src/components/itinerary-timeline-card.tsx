@@ -1,10 +1,11 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Colors, Spacing } from '@/constants/theme';
+import { NS } from '@/constants/nanisuru-ui';
 import type { ItineraryItem } from '@/types/plan';
 
 const theme = Colors.dark;
-const accent = '#818CF8';
+const accent = NS.colors.accent;
 
 const CLOCK_EMOJIS: Record<number, string> = {
   1: '🕐',
@@ -133,16 +134,12 @@ const styles = StyleSheet.create({
   card: {
     flex: 1,
     marginBottom: Spacing.three,
-    borderRadius: 20,
+    borderRadius: NS.radius.lg,
     overflow: 'hidden',
-    backgroundColor: '#1A1A1D',
+    backgroundColor: NS.colors.bgCard,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 6,
+    borderColor: NS.colors.border,
+    ...NS.shadow.card,
   },
   cardLast: {
     marginBottom: 0,
@@ -236,11 +233,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   transportBox: {
-    backgroundColor: '#161618',
-    borderRadius: 10,
+    backgroundColor: NS.colors.bgInput,
+    borderRadius: NS.radius.xs,
     padding: Spacing.two + 2,
     borderWidth: 1,
-    borderColor: theme.backgroundSelected,
+    borderColor: NS.colors.border,
   },
   transportLabel: {
     color: theme.textSecondary,

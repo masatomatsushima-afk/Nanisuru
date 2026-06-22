@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { NS } from '@/constants/nanisuru-ui';
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -13,8 +14,16 @@ export default function RootLayout() {
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#0A0A0B' },
+          contentStyle: { backgroundColor: NS.colors.bg },
         }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen
+          name="onboarding"
+          options={{
+            animation: 'fade',
+            gestureEnabled: false,
+          }}
+        />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
           name="plan-detail"

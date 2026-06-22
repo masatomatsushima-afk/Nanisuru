@@ -9,12 +9,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BottomTabInset, Colors, Spacing } from '@/constants/theme';
-
-const theme = Colors.dark;
-const accent = '#818CF8';
+import { FadeInView } from '@/components/ui/fade-in-view';
+import { NS } from '@/constants/nanisuru-ui';
+import { BottomTabInset, Spacing } from '@/constants/theme';
 
 type Message = {
   id: string;
@@ -37,26 +37,30 @@ const SAMPLE_MESSAGES: Message[] = [
 
 function ChatHeader() {
   return (
-    <View style={styles.header}>
-      <View style={styles.headerAvatar}>
-        <Text style={styles.headerAvatarText}>N</Text>
-      </View>
-      <View style={styles.headerText}>
-        <Text style={styles.headerTitle}>Nanisuru AI</Text>
-        <View style={styles.statusRow}>
-          <View style={styles.statusDot} />
-          <Text style={styles.headerSubtitle}>お出かけアシスタント</Text>
+    <FadeInView direction="down">
+      <View style={styles.header}>
+        <View style={styles.headerAvatar}>
+          <Text style={styles.headerAvatarText}>N</Text>
+        </View>
+        <View style={styles.headerText}>
+          <Text style={styles.headerTitle}>Nanisuru AI</Text>
+          <View style={styles.statusRow}>
+            <View style={styles.statusDot} />
+            <Text style={styles.headerSubtitle}>お出かけアシスタント</Text>
+          </View>
         </View>
       </View>
-    </View>
+    </FadeInView>
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, index }: { message: Message; index: number }) {
   const isUser = message.role === 'user';
 
   return (
-    <View style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAi]}>
+    <Animated.View
+      entering={FadeInDown.delay(index * 80).duration(450).springify()}
+      style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAi]}>
       {!isUser && (
         <View style={styles.aiAvatar}>
           <Text style={styles.aiAvatarText}>✦</Text>
@@ -67,7 +71,7 @@ function MessageBubble({ message }: { message: Message }) {
           {message.content}
         </Text>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -78,8 +82,7 @@ export default function NanisuruAiScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[styles.inner, { paddingTop: insets.top }]}>
         <ChatHeader />
 
@@ -89,16 +92,18 @@ export default function NanisuruAiScreen() {
           contentContainerStyle={styles.messagesContent}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}>
-          <View style={styles.welcomeCard}>
-            <Text style={styles.welcomeEyebrow}>CONCIERGE</Text>
-            <Text style={styles.welcomeTitle}>今日のプラン、お手伝いします</Text>
-            <Text style={styles.welcomeText}>
-              天気の変化や急な予定変更にも対応。いつでも相談してください。
-            </Text>
-          </View>
+          <FadeInView>
+            <View style={styles.welcomeCard}>
+              <Text style={styles.welcomeEyebrow}>コンシェルジュ</Text>
+              <Text style={styles.welcomeTitle}>今日のプラン、お手伝いします</Text>
+              <Text style={styles.welcomeText}>
+                天気の変化や急な予定変更にも対応。いつでも相談してください。
+              </Text>
+            </View>
+          </FadeInView>
 
-          {SAMPLE_MESSAGES.map((message) => (
-            <MessageBubble key={message.id} message={message} />
+          {SAMPLE_MESSAGES.map((message, index) => (
+            <MessageBubble key={message.id} message={message} index={index} />
           ))}
         </ScrollView>
 
@@ -111,7 +116,7 @@ export default function NanisuruAiScreen() {
             <TextInput
               style={styles.input}
               placeholder="メッセージを入力..."
-              placeholderTextColor="#6B7280"
+              placeholderTextColor={NS.colors.textMuted}
               editable={false}
             />
             <Pressable style={styles.sendButton}>
@@ -128,7 +133,7 @@ export default function NanisuruAiScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0B',
+    backgroundColor: NS.colors.bg,
   },
   inner: {
     flex: 1,
@@ -137,24 +142,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: NS.layout.screenPadding,
     paddingVertical: Spacing.three,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
-    backgroundColor: '#0A0A0B',
+    borderBottomColor: NS.colors.border,
+    backgroundColor: NS.colors.bg,
   },
   headerAvatar: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(129, 140, 248, 0.15)',
+    backgroundColor: NS.colors.accentSoft,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.35)',
+    borderColor: NS.colors.accentBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
   headerAvatarText: {
-    color: accent,
+    color: NS.colors.accent,
     fontSize: 18,
     fontWeight: '800',
   },
@@ -162,10 +167,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerTitle: {
-    color: theme.text,
-    fontSize: 18,
-    fontWeight: '700',
-    letterSpacing: -0.3,
+    color: NS.colors.text,
+    ...NS.typography.headline,
   },
   statusRow: {
     flexDirection: 'row',
@@ -177,49 +180,46 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#34D399',
+    backgroundColor: NS.colors.success,
   },
   headerSubtitle: {
-    color: theme.textSecondary,
-    fontSize: 13,
+    color: NS.colors.textSecondary,
+    ...NS.typography.bodySm,
   },
   messagesScroll: {
     flex: 1,
   },
   messagesContent: {
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: NS.layout.screenPadding,
     paddingTop: Spacing.three,
     paddingBottom: Spacing.three,
     gap: Spacing.three,
-    maxWidth: 480,
+    maxWidth: NS.layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
   welcomeCard: {
-    backgroundColor: '#121214',
-    borderRadius: 20,
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.lg,
     padding: Spacing.four,
     marginBottom: Spacing.two,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.18)',
+    borderColor: NS.colors.accentBorder,
+    ...NS.shadow.card,
   },
   welcomeEyebrow: {
-    color: accent,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1.2,
+    color: NS.colors.accent,
+    ...NS.typography.eyebrow,
     marginBottom: Spacing.two,
   },
   welcomeTitle: {
-    color: theme.text,
-    fontSize: 17,
-    fontWeight: '700',
+    color: NS.colors.text,
+    ...NS.typography.headline,
     marginBottom: Spacing.two,
   },
   welcomeText: {
-    color: theme.textSecondary,
-    fontSize: 14,
-    lineHeight: 22,
+    color: NS.colors.textSecondary,
+    ...NS.typography.bodySm,
   },
   messageRow: {
     flexDirection: 'row',
@@ -238,58 +238,54 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: 'rgba(129, 140, 248, 0.12)',
+    backgroundColor: NS.colors.accentSoft,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.25)',
+    borderColor: NS.colors.accentBorder,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 2,
   },
   aiAvatarText: {
-    color: accent,
+    color: NS.colors.accent,
     fontSize: 12,
     fontWeight: '700',
   },
   bubble: {
-    borderRadius: 20,
+    borderRadius: NS.radius.lg,
     paddingHorizontal: Spacing.three,
     paddingVertical: 12,
     maxWidth: '100%',
   },
   bubbleUser: {
-    backgroundColor: accent,
+    backgroundColor: NS.colors.accent,
     borderBottomRightRadius: 6,
-    shadowColor: accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    ...NS.shadow.accent,
   },
   bubbleAi: {
-    backgroundColor: '#1A1A1D',
+    backgroundColor: NS.colors.bgCard,
     borderBottomLeftRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: NS.colors.border,
   },
   bubbleText: {
     fontSize: 15,
     lineHeight: 24,
   },
   bubbleTextUser: {
-    color: '#FFFFFF',
+    color: NS.colors.text,
     fontWeight: '500',
   },
   bubbleTextAi: {
-    color: theme.text,
+    color: NS.colors.text,
     fontWeight: '500',
   },
   inputBar: {
-    paddingHorizontal: Spacing.four,
+    paddingHorizontal: NS.layout.screenPadding,
     paddingTop: Spacing.two,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
-    backgroundColor: '#0A0A0B',
-    maxWidth: 480,
+    borderTopColor: NS.colors.border,
+    backgroundColor: NS.colors.bg,
+    maxWidth: NS.layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
   },
@@ -297,17 +293,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-    backgroundColor: '#161618',
-    borderRadius: 24,
+    backgroundColor: NS.colors.bgInput,
+    borderRadius: NS.radius.pill,
     borderWidth: 1,
-    borderColor: theme.backgroundSelected,
+    borderColor: NS.colors.borderStrong,
     paddingLeft: Spacing.three,
     paddingRight: 6,
     paddingVertical: 6,
   },
   input: {
     flex: 1,
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 15,
     paddingVertical: 8,
   },
@@ -315,17 +311,17 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: accent,
+    backgroundColor: NS.colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendIcon: {
-    color: '#FFFFFF',
+    color: NS.colors.text,
     fontSize: 18,
     fontWeight: '700',
   },
   inputHint: {
-    color: theme.textSecondary,
+    color: NS.colors.textMuted,
     fontSize: 11,
     textAlign: 'center',
     marginTop: Spacing.two,

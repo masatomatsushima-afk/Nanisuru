@@ -2,9 +2,10 @@ import { useEffect, useRef } from 'react';
 import { Animated, Modal, StyleSheet, Text, View } from 'react-native';
 
 import { Colors, Spacing } from '@/constants/theme';
+import { NS } from '@/constants/nanisuru-ui';
 
 const theme = Colors.dark;
-const accent = '#818CF8';
+const accent = NS.colors.accent;
 
 type SuccessOverlayProps = {
   visible: boolean;
@@ -54,7 +55,7 @@ export function SuccessOverlay({ visible, message }: SuccessOverlayProps) {
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: NS.colors.overlay,
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.four,
@@ -69,18 +70,14 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(129, 140, 248, 0.25)',
   },
   card: {
-    backgroundColor: '#121214',
-    borderRadius: 28,
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.xxl,
     paddingHorizontal: Spacing.five,
     paddingVertical: Spacing.five,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.25)',
-    shadowColor: accent,
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.4,
-    shadowRadius: 32,
-    elevation: 16,
+    borderColor: NS.colors.accentBorder,
+    ...NS.shadow.accent,
     maxWidth: 320,
     width: '100%',
   },
