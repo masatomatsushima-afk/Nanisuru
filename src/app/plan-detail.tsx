@@ -8,9 +8,12 @@ import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from 
 import { AiAdviceSection } from '@/components/ai-advice-section';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
+import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { WeatherSection } from '@/components/weather-section';
 import { ShareTripButton } from '@/components/share-trip-button';
+import { SaveTripButton } from '@/components/save-trip-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { CurrentLocationButton } from '@/components/current-location-button';
 import { Colors, Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
 import { parseCurrencyCode } from '@/constants/currency';
@@ -166,13 +169,17 @@ export default function PlanDetailScreen() {
         <BudgetBreakdownSection breakdown={planDetails.budgetBreakdown} />
       ) : null}
 
+      {planDetails.conciergeAnalysis ? (
+        <ConciergeAnalysisSection analysis={planDetails.conciergeAnalysis} />
+      ) : null}
+
       {planDetails.weather ? <WeatherSection weather={planDetails.weather} /> : null}
 
       <DetailCard icon="✨" title="おすすめポイント">
         <BulletList items={planDetails.highlights} />
       </DetailCard>
 
-      <DetailCard icon="☔" title="雨の日の代替案">
+      <DetailCard icon="☔" title="天候変化時のバックアップ">
         <BulletList items={planDetails.rainyDayAlternatives} />
       </DetailCard>
 
@@ -185,6 +192,7 @@ export default function PlanDetailScreen() {
 
       <View style={styles.timelinePreview}>
         <Text style={styles.timelinePreviewTitle}>スケジュール</Text>
+        <CurrentLocationButton compact />
         <ItineraryDaysView days={days} variant="detail" />
       </View>
 
@@ -195,16 +203,33 @@ export default function PlanDetailScreen() {
       ) : null}
 
       {personality && tripDuration ? (
-        <View style={styles.shareButtonWrap}>
-          <ShareTripButton
-            location={location}
-            companion={companion}
-            personality={personality}
-            tripDuration={tripDuration}
-            days={days}
-            items={items}
-            details={planDetails}
-          />
+        <View style={styles.actionButtons}>
+          <View style={styles.shareButtonWrap}>
+            <SaveTripButton
+              location={location}
+              budget={budget}
+              currency={currency}
+              people={people}
+              mood={mood}
+              companion={companion}
+              personality={personality}
+              tripDuration={tripDuration}
+              days={days}
+              items={items}
+              details={planDetails}
+            />
+          </View>
+          <View style={styles.shareButtonWrap}>
+            <ShareTripButton
+              location={location}
+              companion={companion}
+              personality={personality}
+              tripDuration={tripDuration}
+              days={days}
+              items={items}
+              details={planDetails}
+            />
+          </View>
         </View>
       ) : null}
     </ScrollView>
@@ -414,6 +439,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginTop: Spacing.five,
+  },
+  actionButtons: {
+    gap: Spacing.three,
+    marginTop: Spacing.four,
   },
   shareButtonWrap: {
     marginTop: Spacing.four,

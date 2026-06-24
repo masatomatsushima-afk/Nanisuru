@@ -1,14 +1,26 @@
 import type { CurrencyCode } from '@/constants/currency';
+import type { PlacesDataSource } from '@/types/nearby-places';
+
+export type ConciergeAnalysis = {
+  userPreferences: string;
+  weather: string;
+  budget: string;
+  tripDuration: string;
+  travelStyle: string;
+  overallStrategy: string;
+};
 
 export type ItineraryItem = {
   time: string;
   activity: string;
+  placeAddress?: string;
   reason?: string;
   estimatedCost?: string;
   transportation?: string;
   reservationUrl?: string;
   websiteUrl?: string;
   travelTimeToNext?: string;
+  weatherBackup?: string;
 };
 
 export const COMPANION_OPTIONS = ['一人', '友達', 'カップル', '初デート', '家族'] as const;
@@ -80,9 +92,12 @@ export type PlanDetails = {
   tripDate?: string;
   weather?: WeatherForecast;
   plannerMessage?: string;
+  conciergeAnalysis?: ConciergeAnalysis;
   highlights: string[];
   rainyDayAlternatives: string[];
   aiAdvice?: AiAdvice;
+  placesNotice?: string;
+  placesSource?: PlacesDataSource;
 };
 
 export type PlanParams = {

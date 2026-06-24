@@ -1,5 +1,7 @@
-import { useRef } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,40 +15,51 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FadeInView } from '@/components/ui/fade-in-view';
+import { NearbyPlacesSection } from '@/components/nearby-places-section';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
+import {
+  buildSecretaryWelcomeMessage,
+  buildSecretaryWelcomeMessageGeneric,
+  getActiveTrip,
+} from '@/lib/active-trip';
+import { isGoogleMapsConfigured } from '@/lib/env';
+import { fetchNearbyFromCurrentLocation } from '@/lib/nearby-places';
+import { isOpenAiConfigured, sendSecretaryMessage } from '@/lib/travel-secretary';
+import type { NearbyPlacesContext } from '@/types/nearby-places';
+import type { ActiveTripContext, SecretaryMessage } from '@/types/travel-secretary';
+import { SECRETARY_QUICK_PROMPTS } from '@/types/travel-secretary';
 
-type Message = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-};
+function createMessage(role: SecretaryMessage['role'], content: string): SecretaryMessage {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    role,
+    content,
+    createdAt: new Date().toISOString(),
+  };
+}
 
-const SAMPLE_MESSAGES: Message[] = [
-  {
-    id: '1',
-    role: 'user',
-    content: '雨降ってきた',
-  },
-  {
-    id: '2',
-    role: 'assistant',
-    content: '屋外プランを変更しますか？\n近くのカフェと美術館に変更できます。',
-  },
-];
+function createWelcomeMessage(trip: ActiveTripContext | null): SecretaryMessage {
+  return createMessage(
+    'assistant',
+    trip ? buildSecretaryWelcomeMessage(trip) : buildSecretaryWelcomeMessageGeneric(),
+  );
+}
 
-function ChatHeader() {
+function ChatHeader({ hasActiveTrip }: { hasActiveTrip: boolean }) {
   return (
     <FadeInView direction="down">
       <View style={styles.header}>
         <View style={styles.headerAvatar}>
-          <Text style={styles.headerAvatarText}>N</Text>
+          <Text style={styles.headerAvatarText}>秘</Text>
         </View>
         <View style={styles.headerText}>
-          <Text style={styles.headerTitle}>Nanisuru AI</Text>
+          <Text style={styles.headerTitle}>AI旅行秘書</Text>
           <View style={styles.statusRow}>
-            <View style={styles.statusDot} />
-            <Text style={styles.headerSubtitle}>お出かけアシスタント</Text>
+            <View style={[styles.statusDot, hasActiveTrip && styles.statusDotActive]} />
+            <Text style={styles.headerSubtitle}>
+              {hasActiveTrip ? 'プラン連携中 · オンライン' : 'プラン未設定 · 一般相談モード'}
+            </Text>
           </View>
         </View>
       </View>
@@ -54,16 +67,16 @@ function ChatHeader() {
   );
 }
 
-function MessageBubble({ message, index }: { message: Message; index: number }) {
+function MessageBubble({ message, index }: { message: SecretaryMessage; index: number }) {
   const isUser = message.role === 'user';
 
   return (
     <Animated.View
-      entering={FadeInDown.delay(index * 80).duration(450).springify()}
+      entering={FadeInDown.delay(Math.min(index * 60, 300)).duration(400).springify()}
       style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAi]}>
       {!isUser && (
         <View style={styles.aiAvatar}>
-          <Text style={styles.aiAvatarText}>✦</Text>
+          <Text style={styles.aiAvatarText}>🛎</Text>
         </View>
       )}
       <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAi]}>
@@ -75,55 +88,273 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
   );
 }
 
-export default function NanisuruAiScreen() {
+function TypingIndicator() {
+  return (
+    <View style={[styles.messageRow, styles.messageRowAi]}>
+      <View style={styles.aiAvatar}>
+        <Text style={styles.aiAvatarText}>🛎</Text>
+      </View>
+      <View style={[styles.bubble, styles.bubbleAi, styles.typingBubble]}>
+        <ActivityIndicator size="small" color={NS.colors.accent} />
+        <Text style={styles.typingText}>考え中...</Text>
+      </View>
+    </View>
+  );
+}
+
+function QuickPrompts({
+  prompts,
+  onSelect,
+  disabled,
+}: {
+  prompts: readonly string[];
+  onSelect: (text: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.quickPromptsContent}>
+      {prompts.map((prompt) => (
+        <Pressable
+          key={prompt}
+          style={({ pressed }) => [
+            styles.quickChip,
+            pressed && styles.quickChipPressed,
+            disabled && styles.quickChipDisabled,
+          ]}
+          onPress={() => onSelect(prompt)}
+          disabled={disabled}>
+          <Text style={styles.quickChipText}>{prompt}</Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+}
+
+function ActiveTripBanner({ trip }: { trip: ActiveTripContext }) {
+  return (
+    <View style={styles.tripBanner}>
+      <Text style={styles.tripBannerLabel}>把握済みの旅行プラン</Text>
+      <Text style={styles.tripBannerTitle} numberOfLines={1}>
+        {trip.title}
+      </Text>
+      <Text style={styles.tripBannerMeta}>
+        {trip.location} · {trip.tripDuration} · {trip.personality}
+      </Text>
+      <Text style={styles.tripBannerMeta}>
+        {trip.companion} · {trip.people}人 · 予算 {trip.details.totalBudget}
+      </Text>
+    </View>
+  );
+}
+
+export default function TravelSecretaryScreen() {
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
+  const [messages, setMessages] = useState<SecretaryMessage[]>(() => [
+    createWelcomeMessage(null),
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeTrip, setActiveTrip] = useState<ActiveTripContext | null>(null);
+  const [nearbyPlaces, setNearbyPlaces] = useState<NearbyPlacesContext | null>(null);
+  const [isSearchingNearby, setIsSearchingNearby] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshActiveTrip = useCallback(async () => {
+    const trip = await getActiveTrip();
+    setActiveTrip(trip);
+    setMessages((prev) => {
+      const isOnlyWelcome = prev.length === 1 && prev[0].role === 'assistant';
+      if (!isOnlyWelcome) return prev;
+      return [createWelcomeMessage(trip)];
+    });
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshActiveTrip();
+    }, [refreshActiveTrip]),
+  );
+
+  const scrollToEnd = () => {
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  };
+
+  const searchNearbyFromCurrentLocation = async () => {
+    if (isSearchingNearby) return;
+
+    if (!isGoogleMapsConfigured()) {
+      setError(
+        'Google Maps APIキーが未設定です。\n.env に EXPO_PUBLIC_GOOGLE_MAPS_API_KEY を追加してください。',
+      );
+      return;
+    }
+
+    setError(null);
+    setIsSearchingNearby(true);
+    scrollToEnd();
+
+    try {
+      const context = await fetchNearbyFromCurrentLocation();
+      setNearbyPlaces(context);
+      setMessages((prev) => [
+        ...prev,
+        createMessage(
+          'assistant',
+          `${context.locationLabel} 周辺のスポットを${context.places.length}件見つけました。\n` +
+            'カフェ・レストラン・観光スポット・公園・バーを距離・徒歩時間付きで表示しています。\n' +
+            '「近くでランチできるところは？」など、そのまま相談してください。',
+        ),
+      ]);
+      scrollToEnd();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : '周辺スポットの検索に失敗しました';
+      setError(message);
+    } finally {
+      setIsSearchingNearby(false);
+    }
+  };
+
+  const sendMessage = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || isLoading) return;
+
+    if (!isOpenAiConfigured()) {
+      setError('OpenAI APIキーが未設定です。.env を確認してください。');
+      return;
+    }
+
+    setError(null);
+    const userMessage = createMessage('user', trimmed);
+    setMessages((prev) => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
+    scrollToEnd();
+
+    try {
+      const reply = await sendSecretaryMessage({
+        userMessage: trimmed,
+        history: [...messages, userMessage],
+        nearbyPlaces,
+      });
+      setMessages((prev) => [...prev, createMessage('assistant', reply)]);
+      scrollToEnd();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'メッセージの送信に失敗しました';
+      setError(message);
+      setMessages((prev) => [
+        ...prev,
+        createMessage('assistant', `申し訳ありません。${message}\nもう一度お試しください。`),
+      ]);
+      scrollToEnd();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const canSend = input.trim().length > 0 && !isLoading;
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
       <View style={[styles.inner, { paddingTop: insets.top }]}>
-        <ChatHeader />
+        <ChatHeader hasActiveTrip={Boolean(activeTrip)} />
 
         <ScrollView
           ref={scrollRef}
           style={styles.messagesScroll}
           contentContainerStyle={styles.messagesContent}
           showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}>
-          <FadeInView>
-            <View style={styles.welcomeCard}>
-              <Text style={styles.welcomeEyebrow}>コンシェルジュ</Text>
-              <Text style={styles.welcomeTitle}>今日のプラン、お手伝いします</Text>
-              <Text style={styles.welcomeText}>
-                天気の変化や急な予定変更にも対応。いつでも相談してください。
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={scrollToEnd}>
+          {activeTrip ? <ActiveTripBanner trip={activeTrip} /> : null}
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.nearbyButton,
+              pressed && styles.nearbyButtonPressed,
+              (isSearchingNearby || isLoading) && styles.nearbyButtonDisabled,
+            ]}
+            onPress={searchNearbyFromCurrentLocation}
+            disabled={isSearchingNearby || isLoading}>
+            {isSearchingNearby ? (
+              <ActivityIndicator size="small" color={NS.colors.text} />
+            ) : (
+              <Text style={styles.nearbyButtonIcon}>📍</Text>
+            )}
+            <View style={styles.nearbyButtonTextWrap}>
+              <Text style={styles.nearbyButtonTitle}>現在地から探す</Text>
+              <Text style={styles.nearbyButtonSubtitle}>
+                {nearbyPlaces
+                  ? `${nearbyPlaces.locationLabel} · ${nearbyPlaces.places.length}件取得済み`
+                  : 'GPS + Google Places で周辺スポットを検索'}
               </Text>
             </View>
-          </FadeInView>
+          </Pressable>
 
-          {SAMPLE_MESSAGES.map((message, index) => (
+          {nearbyPlaces ? <NearbyPlacesSection context={nearbyPlaces} /> : null}
+
+          {!activeTrip ? (
+            <FadeInView>
+              <View style={styles.noTripCard}>
+                <Text style={styles.noTripTitle}>プラン未連携</Text>
+                <Text style={styles.noTripText}>
+                  ホームでプランを生成すると、行程・予算・旅行タイプをもとに具体的なアドバイスができます。
+                </Text>
+              </View>
+            </FadeInView>
+          ) : null}
+
+          {messages.map((message, index) => (
             <MessageBubble key={message.id} message={message} index={index} />
           ))}
+
+          {isLoading ? <TypingIndicator /> : null}
         </ScrollView>
 
-        <View
-          style={[
-            styles.inputBar,
-            { paddingBottom: insets.bottom + BottomTabInset + Spacing.two },
-          ]}>
+        <View style={[styles.inputArea, { paddingBottom: insets.bottom + BottomTabInset + Spacing.two }]}>
+          <QuickPrompts
+            prompts={SECRETARY_QUICK_PROMPTS}
+            onSelect={sendMessage}
+            disabled={isLoading}
+          />
+
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
           <View style={styles.inputWrap}>
             <TextInput
               style={styles.input}
-              placeholder="メッセージを入力..."
+              placeholder={
+                activeTrip
+                  ? '行程の変更、予算、天気…そのまま相談できます'
+                  : '旅行の相談を入力...'
+              }
               placeholderTextColor={NS.colors.textMuted}
-              editable={false}
+              value={input}
+              onChangeText={setInput}
+              multiline
+              maxLength={500}
+              editable={!isLoading}
+              onSubmitEditing={() => sendMessage(input)}
+              blurOnSubmit={false}
             />
-            <Pressable style={styles.sendButton}>
-              <Text style={styles.sendIcon}>↑</Text>
+            <Pressable
+              style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+              onPress={() => sendMessage(input)}
+              disabled={!canSend}>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={NS.colors.text} />
+              ) : (
+                <Text style={styles.sendIcon}>↑</Text>
+              )}
             </Pressable>
           </View>
-          <Text style={styles.inputHint}>サンプル会話を表示中</Text>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -180,11 +411,14 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
+    backgroundColor: NS.colors.textMuted,
+  },
+  statusDotActive: {
     backgroundColor: NS.colors.success,
   },
   headerSubtitle: {
     color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
+    fontSize: 12,
   },
   messagesScroll: {
     flex: 1,
@@ -198,28 +432,81 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
   },
-  welcomeCard: {
+  tripBanner: {
+    backgroundColor: NS.colors.accentSoft,
+    borderRadius: NS.radius.md,
+    padding: Spacing.three,
+    borderWidth: 1,
+    borderColor: NS.colors.accentBorder,
+    marginBottom: Spacing.one,
+  },
+  tripBannerLabel: {
+    color: NS.colors.accent,
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  tripBannerTitle: {
+    color: NS.colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  tripBannerMeta: {
+    color: NS.colors.textSecondary,
+    fontSize: 12,
+  },
+  nearbyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: NS.colors.successSoft,
+    borderRadius: NS.radius.lg,
+    padding: Spacing.three,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.25)',
+    marginBottom: Spacing.one,
+  },
+  nearbyButtonPressed: {
+    opacity: 0.88,
+  },
+  nearbyButtonDisabled: {
+    opacity: 0.6,
+  },
+  nearbyButtonIcon: {
+    fontSize: 22,
+  },
+  nearbyButtonTextWrap: {
+    flex: 1,
+  },
+  nearbyButtonTitle: {
+    color: NS.colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  nearbyButtonSubtitle: {
+    color: NS.colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  noTripCard: {
     backgroundColor: NS.colors.bgElevated,
     borderRadius: NS.radius.lg,
     padding: Spacing.four,
-    marginBottom: Spacing.two,
     borderWidth: 1,
-    borderColor: NS.colors.accentBorder,
-    ...NS.shadow.card,
-  },
-  welcomeEyebrow: {
-    color: NS.colors.accent,
-    ...NS.typography.eyebrow,
+    borderColor: NS.colors.border,
     marginBottom: Spacing.two,
   },
-  welcomeTitle: {
+  noTripTitle: {
     color: NS.colors.text,
-    ...NS.typography.headline,
+    fontSize: 15,
+    fontWeight: '700',
     marginBottom: Spacing.two,
   },
-  welcomeText: {
+  noTripText: {
     color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
+    fontSize: 13,
+    lineHeight: 20,
   },
   messageRow: {
     flexDirection: 'row',
@@ -246,9 +533,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   aiAvatarText: {
-    color: NS.colors.accent,
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 13,
   },
   bubble: {
     borderRadius: NS.radius.lg,
@@ -279,7 +564,17 @@ const styles = StyleSheet.create({
     color: NS.colors.text,
     fontWeight: '500',
   },
-  inputBar: {
+  typingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: 14,
+  },
+  typingText: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+  },
+  inputArea: {
     paddingHorizontal: NS.layout.screenPadding,
     paddingTop: Spacing.two,
     borderTopWidth: 1,
@@ -289,23 +584,50 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
   },
+  quickPromptsContent: {
+    gap: Spacing.two,
+    paddingBottom: Spacing.two,
+  },
+  quickChip: {
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: NS.radius.pill,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderWidth: 1,
+    borderColor: NS.colors.borderStrong,
+  },
+  quickChipPressed: {
+    opacity: 0.85,
+    backgroundColor: NS.colors.accentSoft,
+    borderColor: NS.colors.accentBorder,
+  },
+  quickChipDisabled: {
+    opacity: 0.5,
+  },
+  quickChipText: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
   inputWrap: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: Spacing.two,
     backgroundColor: NS.colors.bgInput,
-    borderRadius: NS.radius.pill,
+    borderRadius: NS.radius.lg,
     borderWidth: 1,
     borderColor: NS.colors.borderStrong,
     paddingLeft: Spacing.three,
     paddingRight: 6,
     paddingVertical: 6,
+    minHeight: 48,
   },
   input: {
     flex: 1,
     color: NS.colors.text,
     fontSize: 15,
     paddingVertical: 8,
+    maxHeight: 120,
   },
   sendButton: {
     width: 36,
@@ -314,16 +636,20 @@ const styles = StyleSheet.create({
     backgroundColor: NS.colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 2,
+  },
+  sendButtonDisabled: {
+    opacity: 0.4,
   },
   sendIcon: {
     color: NS.colors.text,
     fontSize: 18,
     fontWeight: '700',
   },
-  inputHint: {
-    color: NS.colors.textMuted,
-    fontSize: 11,
+  errorText: {
+    color: NS.colors.danger,
+    fontSize: 12,
+    marginBottom: Spacing.two,
     textAlign: 'center',
-    marginTop: Spacing.two,
   },
 });

@@ -1,4 +1,5 @@
 import type { ItineraryItem } from '@/types/plan';
+import { buildGoogleMapsSearchUrl } from '@/lib/geo';
 
 export function isValidHttpUrl(value: string | undefined): boolean {
   if (!value) return false;
@@ -6,9 +7,30 @@ export function isValidHttpUrl(value: string | undefined): boolean {
   return /^https?:\/\/.+/i.test(trimmed);
 }
 
+function isGoogleMapsUrl(value: string): boolean {
+  return /google\.com\/maps/i.test(value);
+}
+
 export function buildGoogleMapsUrl(activity: string, location: string): string {
   const query = [activity, location].filter(Boolean).join(' ');
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+  return buildGoogleMapsSearchUrl(query);
+}
+
+export function buildDirectionsDestination(item: ItineraryItem): string {
+  const name = item.activity.trim();
+  const address = item.placeAddress?.trim();
+  if (name && address) {
+    return `${name}, ${address}`;
+  }
+  return name;
+}
+
+export function getPlaceMapsUrl(item: ItineraryItem): string {
+  const website = item.websiteUrl?.trim();
+  if (website && isGoogleMapsUrl(website)) {
+    return website;
+  }
+  return buildGoogleMapsSearchUrl(buildDirectionsDestination(item));
 }
 
 export function buildReservationSearchUrl(activity: string, location: string): string {
@@ -31,7 +53,7 @@ export function getWebsiteUrl(item: ItineraryItem, location: string): string | n
 }
 
 export function getMapsUrl(item: ItineraryItem, location: string): string {
-  return buildGoogleMapsUrl(item.activity, location);
+  return getPlaceMapsUrl(item);
 }
 
 export function hasTravelTime(item: ItineraryItem): boolean {

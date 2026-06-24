@@ -9,6 +9,7 @@ import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { WeatherSection } from '@/components/weather-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { CurrentLocationButton } from '@/components/current-location-button';
 import { Colors, Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
 import { parseCurrencyCode } from '@/constants/currency';
@@ -157,6 +158,7 @@ export default function TodayScheduleScreen() {
             <Text style={styles.plannerMessageText}>{planDetails.plannerMessage}</Text>
           </View>
         ) : null}
+        <CurrentLocationButton compact />
         <ItineraryDaysView days={days} variant="detail" />
       </View>
 

@@ -5,6 +5,7 @@
  *   EXPO_PUBLIC_OPENAI_API_KEY=sk-...
  *   EXPO_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
  *   EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+ *   EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=AIza...  （プラン生成の実在スポット取得・現在地検索）
  *
  * Restart Expo after changing `.env`: npx expo start --clear
  *
@@ -40,4 +41,16 @@ export function getSupabaseAnonKey(): string | undefined {
 
 export function isSupabaseConfigured(): boolean {
   return Boolean(getSupabaseUrl() && getSupabaseAnonKey());
+}
+
+const GOOGLE_MAPS_PLACEHOLDER_KEYS = new Set(['', 'your-google-maps-api-key']);
+
+export function getGoogleMapsApiKey(): string | undefined {
+  const key = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
+  if (!key || GOOGLE_MAPS_PLACEHOLDER_KEYS.has(key)) return undefined;
+  return key;
+}
+
+export function isGoogleMapsConfigured(): boolean {
+  return Boolean(getGoogleMapsApiKey());
 }

@@ -7,63 +7,85 @@ import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
+import { useAuth } from '@/contexts/auth-context';
 import {
-  deleteFavorite,
-  favoriteToPlanParams,
-  formatFavoriteDate,
-  getFavorites,
-} from '@/lib/favorites-storage';
-import type { SavedFavorite } from '@/types/plan';
+  deleteTrip,
+  formatSavedTripDate,
+  getUserTrips,
+} from '@/lib/saved-trips';
+import type { SavedTrip } from '@/types/trip';
 
-function FavoriteCard({
-  favorite,
+function TripCard({
+  trip,
   onOpen,
   onDelete,
 }: {
-  favorite: SavedFavorite;
+  trip: SavedTrip;
   onOpen: () => void;
   onDelete: () => void;
 }) {
+  const { payload } = trip;
+
   return (
-    <PremiumCard style={styles.favoriteCard}>
-      <Pressable style={({ pressed }) => pressed && styles.cardPressed} onPress={onOpen}>
-        <View style={styles.favoriteHeader}>
-          <View style={styles.favoriteHeaderText}>
-            <Text style={styles.favoriteTitle} numberOfLines={2}>
-              {favorite.title}
-            </Text>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaIcon}>📍</Text>
-              <Text style={styles.metaText}>{favorite.location}</Text>
-            </View>
-            <View style={styles.metaRow}>
-              <Text style={styles.metaIcon}>📅</Text>
-              <Text style={styles.metaText}>{formatFavoriteDate(favorite.createdAt)}</Text>
-            </View>
+    <PremiumCard style={styles.tripCard}>
+      <View style={styles.tripHeader}>
+        <Pressable
+          style={({ pressed }) => [styles.tripHeaderText, pressed && styles.cardPressed]}
+          onPress={onOpen}>
+          <Text style={styles.tripTitle} numberOfLines={2}>
+            {trip.title}
+          </Text>
+          <View style={styles.metaRow}>
+            <Text style={styles.metaIcon}>📍</Text>
+            <Text style={styles.metaText}>{payload.location || '未指定'}</Text>
           </View>
-          <Pressable
-            style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}
-            onPress={onDelete}
-            hitSlop={8}>
-            <Text style={styles.deleteButtonText}>削除</Text>
-          </Pressable>
+          <View style={styles.metaRow}>
+            <Text style={styles.metaIcon}>📅</Text>
+            <Text style={styles.metaText}>{formatSavedTripDate(trip.createdAt)}</Text>
+          </View>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.deleteButton, pressed && styles.deleteButtonPressed]}
+          onPress={onDelete}
+          hitSlop={8}>
+          <Text style={styles.deleteButtonText}>削除</Text>
+        </Pressable>
+      </View>
+      <Pressable
+        style={({ pressed }) => [styles.tripFooter, pressed && styles.cardPressed]}
+        onPress={onOpen}>
+        <View style={styles.tag}>
+          <Text style={styles.tagText}>{payload.personality}</Text>
         </View>
-        <View style={styles.favoriteFooter}>
-          <View style={styles.tag}>
-            <Text style={styles.tagText}>{favorite.personality}</Text>
-          </View>
-          <View style={styles.tag}>
-            <Text style={styles.tagText}>{favorite.companion}</Text>
-          </View>
-          {favorite.tripDuration ? (
-            <View style={styles.tagMuted}>
-              <Text style={styles.tagMutedText}>{favorite.tripDuration}</Text>
-            </View>
-          ) : null}
-          <Text style={styles.openHint}>タップして開く →</Text>
+        <View style={styles.tag}>
+          <Text style={styles.tagText}>{payload.companion}</Text>
         </View>
+        {payload.tripDuration ? (
+          <View style={styles.tagMuted}>
+            <Text style={styles.tagMutedText}>{payload.tripDuration}</Text>
+          </View>
+        ) : null}
+        <Text style={styles.openHint}>タップして詳細を見る →</Text>
       </Pressable>
     </PremiumCard>
+  );
+}
+
+function LoginPrompt() {
+  return (
+    <FadeInView>
+      <PremiumCard style={styles.loginCard}>
+        <Text style={styles.loginIcon}>☁️</Text>
+        <Text style={styles.loginTitle}>ログインが必要です</Text>
+        <Text style={styles.loginText}>
+          保存したプランはアカウントに紐づけてクラウドに保存されます。ログインしてからご利用ください。
+        </Text>
+        <PrimaryButton label="ログイン" onPress={() => router.push('/login')} />
+        <Pressable style={styles.signUpLink} onPress={() => router.push('/sign-up')}>
+          <Text style={styles.signUpLinkText}>新規登録はこちら</Text>
+        </Pressable>
+      </PremiumCard>
+    </FadeInView>
   );
 }
 
@@ -71,10 +93,10 @@ function EmptyState() {
   return (
     <FadeInView>
       <View style={styles.emptyState}>
-        <Text style={styles.emptyIcon}>♡</Text>
-        <Text style={styles.emptyTitle}>保存したプランはまだありません</Text>
+        <Text style={styles.emptyIcon}>📋</Text>
+        <Text style={styles.emptyTitle}>保存済みプランはまだありません</Text>
         <Text style={styles.emptyText}>
-          ホームでプランを生成し、「お気に入りに保存」から追加できます。
+          ホームでプランを生成し、「プランを保存」から追加できます。
         </Text>
         <PrimaryButton label="プランを作る" onPress={() => router.push('/')} />
       </View>
@@ -82,42 +104,57 @@ function EmptyState() {
   );
 }
 
-export default function FavoritesScreen() {
+export default function SavedTripsScreen() {
   const insets = useSafeAreaInsets();
-  const [favorites, setFavorites] = useState<SavedFavorite[]>([]);
+  const { session, isConfigured } = useAuth();
+  const [trips, setTrips] = useState<SavedTrip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const loadFavorites = useCallback(async () => {
+  const loadTrips = useCallback(async () => {
+    if (!session) {
+      setTrips([]);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
+    setError(null);
     try {
-      setFavorites(await getFavorites());
+      setTrips(await getUserTrips());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'プランの読み込みに失敗しました';
+      setError(message);
+      setTrips([]);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [session]);
 
   useFocusEffect(
     useCallback(() => {
-      loadFavorites();
-    }, [loadFavorites]),
+      loadTrips();
+    }, [loadTrips]),
   );
 
-  const handleOpen = (favorite: SavedFavorite) => {
-    router.push({
-      pathname: '/plan-detail',
-      params: favoriteToPlanParams(favorite),
-    });
+  const handleOpen = (trip: SavedTrip) => {
+    router.push(`/saved-trip/${trip.id}`);
   };
 
-  const handleDelete = (favorite: SavedFavorite) => {
-    Alert.alert('お気に入りを削除', `「${favorite.title}」を削除しますか？`, [
+  const handleDelete = (trip: SavedTrip) => {
+    Alert.alert('プランを削除', `「${trip.title}」を削除しますか？`, [
       { text: 'キャンセル', style: 'cancel' },
       {
         text: '削除',
         style: 'destructive',
         onPress: async () => {
-          await deleteFavorite(favorite.id);
-          await loadFavorites();
+          try {
+            await deleteTrip(trip.id);
+            await loadTrips();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : '削除に失敗しました';
+            Alert.alert('エラー', message);
+          }
         },
       },
     ]);
@@ -135,23 +172,31 @@ export default function FavoritesScreen() {
       ]}
       showsVerticalScrollIndicator={false}>
       <FadeInView>
-        <Text style={styles.eyebrow}>SAVED</Text>
-        <Text style={styles.title}>お気に入り</Text>
-        <Text style={styles.subtitle}>保存したプランをいつでも見返せます</Text>
+        <Text style={styles.eyebrow}>MY TRIPS</Text>
+        <Text style={styles.title}>保存済みプラン</Text>
+        <Text style={styles.subtitle}>クラウドに保存したプランをいつでも見返せます</Text>
       </FadeInView>
 
-      {isLoading ? (
+      {!session ? (
+        <LoginPrompt />
+      ) : !isConfigured ? (
+        <Text style={styles.errorText}>
+          Supabaseの設定を確認し、trips テーブルを作成してください。
+        </Text>
+      ) : isLoading ? (
         <Text style={styles.loadingText}>読み込み中...</Text>
-      ) : favorites.length === 0 ? (
+      ) : error ? (
+        <Text style={styles.errorText}>{error}</Text>
+      ) : trips.length === 0 ? (
         <EmptyState />
       ) : (
         <View style={styles.list}>
-          {favorites.map((favorite, index) => (
-            <FadeInView key={favorite.id} delay={index * 60} direction="down">
-              <FavoriteCard
-                favorite={favorite}
-                onOpen={() => handleOpen(favorite)}
-                onDelete={() => handleDelete(favorite)}
+          {trips.map((trip, index) => (
+            <FadeInView key={trip.id} delay={index * 60} direction="down">
+              <TripCard
+                trip={trip}
+                onOpen={() => handleOpen(trip)}
+                onDelete={() => handleDelete(trip)}
               />
             </FadeInView>
           ))}
@@ -193,28 +238,35 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: Spacing.five,
   },
+  errorText: {
+    color: NS.colors.danger,
+    ...NS.typography.bodySm,
+    textAlign: 'center',
+    marginTop: Spacing.five,
+    lineHeight: 22,
+  },
   list: {
     gap: Spacing.three,
   },
-  favoriteCard: {
+  tripCard: {
     padding: 0,
     overflow: 'hidden',
   },
   cardPressed: {
     opacity: 0.92,
   },
-  favoriteHeader: {
+  tripHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: Spacing.two,
     padding: Spacing.four,
     paddingBottom: 0,
   },
-  favoriteHeaderText: {
+  tripHeaderText: {
     flex: 1,
     gap: Spacing.two,
   },
-  favoriteTitle: {
+  tripTitle: {
     color: NS.colors.text,
     ...NS.typography.titleSm,
   },
@@ -247,7 +299,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  favoriteFooter: {
+  tripFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
@@ -291,6 +343,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 'auto',
   },
+  loginCard: {
+    padding: Spacing.five,
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  loginIcon: {
+    fontSize: 48,
+  },
+  loginTitle: {
+    color: NS.colors.text,
+    ...NS.typography.headline,
+  },
+  loginText: {
+    color: NS.colors.textSecondary,
+    ...NS.typography.bodySm,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: Spacing.two,
+  },
+  signUpLink: {
+    paddingVertical: Spacing.two,
+  },
+  signUpLinkText: {
+    color: NS.colors.accent,
+    fontSize: 14,
+    fontWeight: '700',
+  },
   emptyState: {
     alignItems: 'center',
     paddingVertical: Spacing.six,
@@ -299,7 +378,6 @@ const styles = StyleSheet.create({
   },
   emptyIcon: {
     fontSize: 48,
-    color: NS.colors.accent,
     marginBottom: Spacing.two,
   },
   emptyTitle: {

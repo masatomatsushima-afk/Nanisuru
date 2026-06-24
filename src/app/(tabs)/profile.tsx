@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
+import { TravelMemorySection } from '@/components/travel-memory-section';
 import { UserPreferencesSection } from '@/components/user-preferences-section';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
@@ -97,6 +98,14 @@ export default function ProfileScreen() {
             <UserPreferencesSection preferences={userPreferences} />
           </FadeInView>
         ) : null}
+
+        <FadeInView delay={140}>
+          <TravelMemorySection
+            isLoggedIn={false}
+            isConfigured={isConfigured}
+            onRequireLogin={() => router.push('/login')}
+          />
+        </FadeInView>
       </ScrollView>
     );
   }
@@ -156,6 +165,14 @@ export default function ProfileScreen() {
           <UserPreferencesSection preferences={userPreferences} />
         </FadeInView>
       ) : null}
+
+      <FadeInView delay={165}>
+        <TravelMemorySection
+          isLoggedIn
+          isConfigured={isConfigured}
+          onRequireLogin={() => router.push('/login')}
+        />
+      </FadeInView>
 
       {!isConfigured ? (
         <FadeInView delay={160}>

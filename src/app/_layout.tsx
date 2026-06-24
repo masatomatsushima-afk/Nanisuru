@@ -4,6 +4,7 @@ import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider } from '@/contexts/auth-context';
+import { UserLocationProvider } from '@/contexts/user-location-context';
 import { NS } from '@/constants/nanisuru-ui';
 
 export default function RootLayout() {
@@ -11,7 +12,8 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <UserLocationProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <AnimatedSplashOverlay />
         <Stack
           screenOptions={{
@@ -54,9 +56,21 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="best-day"
+            options={{
+              animation: 'slide_from_bottom',
+            }}
+          />
+          <Stack.Screen
             name="today-schedule"
             options={{
               animation: 'fade_from_bottom',
+            }}
+          />
+          <Stack.Screen
+            name="saved-trip/[id]"
+            options={{
+              animation: 'slide_from_right',
             }}
           />
           <Stack.Screen
@@ -67,6 +81,7 @@ export default function RootLayout() {
           />
         </Stack>
       </ThemeProvider>
+      </UserLocationProvider>
     </AuthProvider>
   );
 }

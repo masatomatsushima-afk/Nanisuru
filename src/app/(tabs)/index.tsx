@@ -20,20 +20,25 @@ import {
   getCurrency,
   type CurrencyCode,
 } from '@/constants/currency';
+import { buildLocationCurrencyHint, inferCurrencyFromLocation } from '@/lib/location-currency';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { AiAdviceSection } from '@/components/ai-advice-section';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
+import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ShareTripButton } from '@/components/share-trip-button';
+import { SaveTripButton } from '@/components/save-trip-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { CurrentLocationButton } from '@/components/current-location-button';
 import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loading-screen';
+import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { WeatherSection } from '@/components/weather-section';
 import { UserPreferencesSection } from '@/components/user-preferences-section';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PrimaryButton, PremiumCard, SectionHeader, SelectChip } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
-import { saveFavorite } from '@/lib/favorites-storage';
 import { generatePlanWithAi, isOpenAiConfigured } from '@/lib/generate-plan';
+import { buildActiveTripContext, saveActiveTrip } from '@/lib/active-trip';
 import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { getPreferredPersonality } from '@/lib/onboarding-storage';
 import { getAllActivities } from '@/lib/trip-duration';
@@ -124,6 +129,22 @@ function HeroSection() {
             </View>
           </PremiumCard>
         </FadeInView>
+
+        <FadeInView delay={320}>
+          <PremiumCard style={styles.bestDayCard} onPress={() => router.push('/best-day')}>
+            <View style={styles.bestDayGlow} />
+            <View style={styles.bestDayContent}>
+              <Text style={styles.bestDayEmoji}>🔥</Text>
+              <View style={styles.bestDayTextWrap}>
+                <Text style={styles.bestDayTitle}>最高の1日</Text>
+                <Text style={styles.bestDaySubtitle}>
+                  計画は不要。AIコンシェルジュが最高の1日を設計
+                </Text>
+              </View>
+              <Text style={styles.bestDayArrow}>→</Text>
+            </View>
+          </PremiumCard>
+        </FadeInView>
       </View>
     </FadeInView>
   );
@@ -183,8 +204,6 @@ function ItineraryTimeline({
   isRegenerating: boolean;
 }) {
   const [showSuccess, setShowSuccess] = useState(false);
-  const [showSaved, setShowSaved] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
 
   const planParams = {
     location,
@@ -218,37 +237,9 @@ function ItineraryTimeline({
     }, 1800);
   };
 
-  const handleSaveFavorite = async () => {
-    if (isSaving) return;
-
-    setIsSaving(true);
-    try {
-      await saveFavorite({
-        location,
-        budget,
-        currency,
-        people,
-        mood,
-        companion,
-        personality,
-        tripDuration,
-        days,
-        items,
-        details,
-      });
-      setShowSaved(true);
-      setTimeout(() => setShowSaved(false), 1600);
-    } catch {
-      // ignore storage errors silently for now
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   return (
     <>
       <SuccessOverlay visible={showSuccess} message="今日の予定が決まりました！" />
-      <SuccessOverlay visible={showSaved} message="お気に入りに保存しました！" />
 
       <View style={styles.itinerarySection}>
         <Pressable
@@ -273,6 +264,9 @@ function ItineraryTimeline({
               {details.weather ? (
                 <WeatherSection weather={details.weather} compact />
               ) : null}
+              {details.placesNotice ? (
+                <PlacesNoticeBanner message={details.placesNotice} />
+              ) : null}
               {details.budgetBreakdown ? (
                 <BudgetBreakdownSection breakdown={details.budgetBreakdown} compact />
               ) : (
@@ -281,6 +275,9 @@ function ItineraryTimeline({
                   <Text style={styles.budgetPillValue}>{details.totalBudget}</Text>
                 </View>
               )}
+              {details.conciergeAnalysis ? (
+                <ConciergeAnalysisSection analysis={details.conciergeAnalysis} compact />
+              ) : null}
               {details.plannerMessage ? (
                 <View style={styles.plannerMessageBox}>
                   <Text style={styles.plannerMessageLabel}>プランナーより</Text>
@@ -296,6 +293,7 @@ function ItineraryTimeline({
           </View>
 
           <View style={styles.timelineList}>
+            <CurrentLocationButton compact />
             <ItineraryDaysView days={days} variant="timeline" />
           </View>
 
@@ -322,11 +320,18 @@ function ItineraryTimeline({
         </View>
 
         <View style={styles.saveButtonWrap}>
-          <PrimaryButton
-            label={isSaving ? '保存中...' : 'お気に入りに保存'}
-            onPress={handleSaveFavorite}
-            disabled={isSaving}
-            variant="secondary"
+          <SaveTripButton
+            location={location}
+            budget={budget}
+            currency={currency}
+            people={people}
+            mood={mood}
+            companion={companion}
+            personality={personality}
+            tripDuration={tripDuration}
+            days={days}
+            items={items}
+            details={details}
           />
         </View>
 
@@ -444,13 +449,16 @@ function FormField({ label, value, onChangeText, placeholder, keyboardType = 'de
 function CurrencySelector({
   selected,
   onSelect,
+  locationHint,
 }: {
   selected: CurrencyCode;
   onSelect: (code: CurrencyCode) => void;
+  locationHint?: string | null;
 }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>通貨</Text>
+      {locationHint ? <Text style={styles.currencyAutoHint}>{locationHint}</Text> : null}
       <View style={styles.currencyRow}>
         {CURRENCY_OPTIONS.map((option) => {
           const isSelected = selected === option.code;
@@ -591,6 +599,14 @@ export default function HomeScreen() {
     loadDefaults();
   }, []);
 
+  useEffect(() => {
+    const trimmed = location.trim();
+    if (!trimmed) return;
+    setCurrency(inferCurrencyFromLocation(trimmed));
+  }, [location]);
+
+  const locationCurrencyHint = buildLocationCurrencyHint(location);
+
   const resetPlan = () => {
     setShowItinerary(false);
     setDays([]);
@@ -617,6 +633,28 @@ export default function HomeScreen() {
       avoidActivities,
     });
     return { days: plan.days, items: plan.items, details: plan.details };
+  };
+
+  const syncActiveTrip = async (plan: {
+    days: ItineraryDay[];
+    details: PlanDetails;
+  }) => {
+    if (!companion || !personality) return;
+
+    await saveActiveTrip(
+      buildActiveTripContext({
+        location,
+        budget,
+        currency,
+        people,
+        mood,
+        companion,
+        personality,
+        tripDuration,
+        days: plan.days,
+        details: plan.details,
+      }),
+    );
   };
 
   const learnFromPlan = async (plan: {
@@ -650,7 +688,7 @@ export default function HomeScreen() {
       setItinerary(plan.items);
       setPlanDetails(plan.details);
       setShowItinerary(true);
-      await learnFromPlan(plan);
+      await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
       setError(message);
@@ -680,7 +718,7 @@ export default function HomeScreen() {
       setItinerary(plan.items);
       setPlanDetails(plan.details);
       setShowItinerary(true);
-      await learnFromPlan(plan);
+      await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
       setError(message);
@@ -729,8 +767,11 @@ export default function HomeScreen() {
             label="場所"
             value={location}
             onChangeText={handleLocationChange}
-            placeholder="例）東京・渋谷"
+            placeholder="例）東京・Melbourne・Seoul"
           />
+          {locationCurrencyHint ? (
+            <Text style={styles.locationCurrencyHint}>{locationCurrencyHint}</Text>
+          ) : null}
           <TripDateField
             isoDate={tripDate}
             onChange={setTripDate}
@@ -740,6 +781,7 @@ export default function HomeScreen() {
           />
           <CurrencySelector
             selected={currency}
+            locationHint={locationCurrencyHint}
             onSelect={(code) => {
               setCurrency(code);
               if (showItinerary) resetPlan();
@@ -968,6 +1010,50 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
   },
+  bestDayCard: {
+    marginTop: Spacing.three,
+    overflow: 'hidden',
+    backgroundColor: NS.colors.bgElevated,
+    borderColor: 'rgba(249, 115, 22, 0.25)',
+  },
+  bestDayGlow: {
+    position: 'absolute',
+    top: -30,
+    right: -20,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(249, 115, 22, 0.12)',
+  },
+  bestDayContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.four,
+  },
+  bestDayEmoji: {
+    fontSize: 36,
+  },
+  bestDayTextWrap: {
+    flex: 1,
+  },
+  bestDayTitle: {
+    color: NS.colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    marginBottom: 2,
+  },
+  bestDaySubtitle: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  bestDayArrow: {
+    color: '#F97316',
+    fontSize: 22,
+    fontWeight: '700',
+  },
   featureCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1106,6 +1192,19 @@ const styles = StyleSheet.create({
   },
   currencyCodeSelected: {
     color: theme.text,
+  },
+  currencyAutoHint: {
+    color: accent,
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: Spacing.two,
+  },
+  locationCurrencyHint: {
+    color: accent,
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: -Spacing.two,
+    marginBottom: Spacing.three,
   },
   currencySymbol: {
     color: theme.textSecondary,

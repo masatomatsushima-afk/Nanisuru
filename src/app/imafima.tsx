@@ -15,22 +15,30 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AiAdviceSection } from '@/components/ai-advice-section';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
+import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { CurrentLocationButton } from '@/components/current-location-button';
 import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loading-screen';
 import { WeatherSection } from '@/components/weather-section';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PrimaryButton, PremiumCard } from '@/components/ui/premium-card';
 import { Spacing } from '@/constants/theme';
-import { getBudgetPlaceholder, getCurrency, type CurrencyCode } from '@/constants/currency';
+import { getBudgetPlaceholder, getBudgetPresets, getCurrency, type CurrencyCode } from '@/constants/currency';
+import { buildLocationCurrencyHint, inferCurrencyFromLocation } from '@/lib/location-currency';
 import { NS } from '@/constants/nanisuru-ui';
 import { getCurrentCityLabel } from '@/lib/current-location';
 import { generateImaHimaPlan, isOpenAiConfigured } from '@/lib/generate-plan';
+import { buildActiveTripContext, saveActiveTrip } from '@/lib/active-trip';
 import {
   IMA_HIMA_MOOD_EMOJI,
   IMA_HIMA_TIME_EMOJI,
   resolveMoodPreferences,
 } from '@/lib/imafima';
+import { SaveTripButton } from '@/components/save-trip-button';
+import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { getItineraryEyebrow } from '@/lib/itineraries';
+import { getImaHimaTripDuration } from '@/lib/imafima';
+import { flattenItineraryDays } from '@/lib/trip-duration';
 import {
   IMA_HIMA_MOOD_OPTIONS,
   IMA_HIMA_TIME_OPTIONS,
@@ -41,8 +49,6 @@ import type { CompanionOption, ItineraryDay, PersonalityOption, PlanDetails } fr
 import { isDateRelatedCompanion } from '@/types/plan';
 
 const accent = NS.colors.accent;
-
-const BUDGET_PRESETS_JPY = [1000, 3000, 5000, 10000, 20000] as const;
 
 type WizardStep = 'time' | 'budget' | 'mood' | 'result';
 
@@ -128,10 +134,12 @@ export default function ImaHimaScreen() {
   const [planDetails, setPlanDetails] = useState<PlanDetails | null>(null);
   const [companion, setCompanion] = useState<CompanionOption>('一人');
   const [personality, setPersonality] = useState<PersonalityOption>('のんびり');
+  const [currency, setCurrency] = useState<CurrencyCode>('JPY');
 
-  const currency: CurrencyCode = 'JPY';
   const { symbol } = getCurrency(currency);
   const resolvedLocation = (locationLabel ?? manualLocation.trim()) || '';
+  const locationCurrencyHint = buildLocationCurrencyHint(resolvedLocation);
+  const budgetPresets = getBudgetPresets(currency);
 
   useEffect(() => {
     let mounted = true;
@@ -147,6 +155,12 @@ export default function ImaHimaScreen() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    const trimmed = resolvedLocation.trim();
+    if (!trimmed) return;
+    setCurrency(inferCurrencyFromLocation(trimmed));
+  }, [resolvedLocation]);
 
   const goBack = () => {
     if (step === 'budget') setStep('time');
@@ -189,6 +203,22 @@ export default function ImaHimaScreen() {
       setDays(plan.days);
       setPlanDetails(plan.details);
       setStep('result');
+
+      const tripDuration = plan.details.tripDuration ?? getImaHimaTripDuration(availableTime);
+      await saveActiveTrip(
+        buildActiveTripContext({
+          location,
+          budget: budget.trim(),
+          currency,
+          people: moodPrefs.companion === '一人' ? '1' : '2',
+          mood,
+          companion: moodPrefs.companion,
+          personality: moodPrefs.personality,
+          tripDuration,
+          days: plan.days,
+          details: plan.details,
+        }),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
       setError(message);
@@ -246,9 +276,12 @@ export default function ImaHimaScreen() {
           )}
         </View>
       </View>
+      {locationCurrencyHint ? (
+        <Text style={styles.locationCurrencyHint}>{locationCurrencyHint}</Text>
+      ) : null}
 
       <View style={styles.presetRow}>
-        {BUDGET_PRESETS_JPY.map((amount) => {
+        {budgetPresets.map((amount) => {
           const label = `${symbol}${amount.toLocaleString('ja-JP')}`;
           const selected = budget === String(amount);
           return (
@@ -353,6 +386,14 @@ export default function ImaHimaScreen() {
           </View>
         </View>
 
+        {planDetails.placesNotice ? (
+          <PlacesNoticeBanner message={planDetails.placesNotice} />
+        ) : null}
+
+        {planDetails.conciergeAnalysis ? (
+          <ConciergeAnalysisSection analysis={planDetails.conciergeAnalysis} compact />
+        ) : null}
+
         {planDetails.plannerMessage ? (
           <PremiumCard style={styles.messageCard}>
             <Text style={styles.messageText}>{planDetails.plannerMessage}</Text>
@@ -378,6 +419,7 @@ export default function ImaHimaScreen() {
 
         {planDetails.weather ? <WeatherSection weather={planDetails.weather} /> : null}
 
+        <CurrentLocationButton compact />
         <ItineraryDaysView days={days} />
 
         <ConciergeAccessSection days={days} location={resolvedLocation} compact />
@@ -385,6 +427,22 @@ export default function ImaHimaScreen() {
         {isDateRelatedCompanion(companion) && planDetails.aiAdvice ? (
           <AiAdviceSection advice={planDetails.aiAdvice} />
         ) : null}
+
+        <View style={styles.saveButtonWrap}>
+          <SaveTripButton
+            location={resolvedLocation}
+            budget={budget}
+            currency={currency}
+            people={companion === '一人' ? '1' : '2'}
+            mood={mood}
+            companion={companion}
+            personality={personality}
+            tripDuration={planDetails.tripDuration ?? getImaHimaTripDuration(availableTime)}
+            days={days}
+            items={flattenItineraryDays(days)}
+            details={planDetails}
+          />
+        </View>
 
         <View style={styles.resultActions}>
           <PrimaryButton label="もう一度" onPress={() => {
@@ -583,6 +641,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: NS.colors.accentBorder,
     padding: Spacing.three,
+    marginBottom: Spacing.two,
+  },
+  locationCurrencyHint: {
+    color: accent,
+    fontSize: 13,
+    fontWeight: '600',
     marginBottom: Spacing.four,
   },
   locationIcon: {
@@ -788,9 +852,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   resultActions: {
-    marginTop: Spacing.five,
+    marginTop: Spacing.three,
     gap: Spacing.three,
     marginBottom: Spacing.four,
+  },
+  saveButtonWrap: {
+    marginTop: Spacing.four,
   },
   homeLink: {
     alignItems: 'center',

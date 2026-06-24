@@ -21,13 +21,13 @@ export default function AppTabs() {
             <TabButton>ホーム</TabButton>
           </TabTrigger>
           <TabTrigger name="favorites" href="/favorites" asChild>
-            <TabButton>お気に入り</TabButton>
+            <TabButton>保存済み</TabButton>
           </TabTrigger>
           <TabTrigger name="explore" href="/explore" asChild>
             <TabButton>発見</TabButton>
           </TabTrigger>
           <TabTrigger name="ai" href="/ai" asChild>
-            <TabButton>AI</TabButton>
+            <TabButton>旅行秘書</TabButton>
           </TabTrigger>
           <TabTrigger name="profile" href="/profile" asChild>
             <TabButton>マイページ</TabButton>

@@ -71,7 +71,7 @@ export default function SignUpScreen() {
         </Text>
 
         <View style={styles.benefits}>
-          <Text style={styles.benefitItem}>♡ お気に入りプランをクラウド保存</Text>
+          <Text style={styles.benefitItem}>☁️ プランをクラウドに保存</Text>
           <Text style={styles.benefitItem}>✈️ どの端末からでもアクセス</Text>
           <Text style={styles.benefitItem}>🔒 安全なソーシャルログイン</Text>
         </View>

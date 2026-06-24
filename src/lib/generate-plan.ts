@@ -1,6 +1,15 @@
-import type { AiAdvice, BudgetBreakdown, ItineraryDay, ItineraryItem, PlanDetails, TripDurationOption } from '@/types/plan';
+import type {
+  AiAdvice,
+  BudgetBreakdown,
+  ConciergeAnalysis,
+  ItineraryDay,
+  ItineraryItem,
+  PlanDetails,
+  TripDurationOption,
+} from '@/types/plan';
 import { isDateRelatedCompanion } from '@/types/plan';
 import type { ImaHimaMoodOption, ImaHimaTimeOption } from '@/types/imafima';
+import type { BestDayMoodOption, BestDayTimeOption } from '@/types/best-day';
 
 import { getOpenAiApiKey, isOpenAiConfigured } from './env';
 import {
@@ -8,10 +17,22 @@ import {
   getImaHimaTripDuration,
   resolveMoodPreferences,
 } from './imafima';
+import {
+  buildBestDayContext,
+  getBestDayTripDuration,
+  resolveBestDayPreferences,
+} from './best-day';
 import { buildConciergePrompt, type PlanInput } from './prompts';
 import { flattenItineraryDays, TRIP_DURATION_CONFIG } from './trip-duration';
 import { fetchWeatherForecast, getTodayIsoDate, type WeatherForecast } from './weather';
 import { getUserPreferences } from './user-memory';
+import { getTravelMemories } from './travel-memory';
+import {
+  enrichPlanWithRealPlaceLinks,
+  fetchRealPlacesForLocation,
+  REAL_PLACES_FETCH_ERROR,
+} from './location-places';
+import { inferCurrencyFromLocation } from './location-currency';
 import type { CurrencyCode } from '@/constants/currency';
 
 export type GeneratedPlan = {
@@ -23,6 +44,7 @@ export type GeneratedPlan = {
 export { isOpenAiConfigured };
 
 type AiPlanResponse = {
+  conciergeAnalysis?: ConciergeAnalysis;
   plannerMessage?: string;
   days?: ItineraryDay[];
   budgetBreakdown?: BudgetBreakdown;
@@ -37,12 +59,20 @@ const ITINERARY_ITEM_SCHEMA = {
   type: 'object',
   properties: {
     time: { type: 'string', description: 'Start time HH:MM' },
-    activity: { type: 'string', description: 'Real place or venue name in Japanese' },
-    reason: { type: 'string', description: 'Why this place was chosen, in Japanese' },
-    estimatedCost: { type: 'string', description: 'Estimated cost with currency symbol' },
+    activity: { type: 'string', description: 'Real place name in Japanese — must match provided real places list when available' },
+    reason: {
+      type: 'string',
+      description:
+        'Detailed selection reasoning in 2-3 Japanese sentences referencing preferences weather budget or travel style',
+    },
+    estimatedCost: {
+      type: 'string',
+      description: 'Realistic cost estimate with currency symbol considering party size',
+    },
     transportation: {
       type: 'string',
-      description: 'Transport to next stop; use — for last item of each day',
+      description:
+        'Specific transport to next stop with route station walking time and fare hint; use — for last item of each day',
     },
     reservationUrl: {
       type: 'string',
@@ -58,6 +88,11 @@ const ITINERARY_ITEM_SCHEMA = {
       description:
         'Estimated travel time to next stop in Japanese e.g. 約15分（徒歩）; use — for last item of each day',
     },
+    weatherBackup: {
+      type: 'string',
+      description:
+        'Rain or bad weather alternative for this stop in one Japanese sentence; or 天候に関わらず可 if always suitable',
+    },
   },
   required: [
     'time',
@@ -68,6 +103,46 @@ const ITINERARY_ITEM_SCHEMA = {
     'reservationUrl',
     'websiteUrl',
     'travelTimeToNext',
+    'weatherBackup',
+  ],
+  additionalProperties: false,
+} as const;
+
+const CONCIERGE_ANALYSIS_SCHEMA = {
+  type: 'object',
+  properties: {
+    userPreferences: {
+      type: 'string',
+      description: 'Analysis of user preferences and history in Japanese 2-3 sentences',
+    },
+    weather: {
+      type: 'string',
+      description: 'Weather analysis and contingency strategy in Japanese 2-3 sentences',
+    },
+    budget: {
+      type: 'string',
+      description: 'Budget analysis and allocation strategy in Japanese 2-3 sentences',
+    },
+    tripDuration: {
+      type: 'string',
+      description: 'Trip duration and schedule pacing analysis in Japanese 2-3 sentences',
+    },
+    travelStyle: {
+      type: 'string',
+      description: 'Travel personality and companion style analysis in Japanese 2-3 sentences',
+    },
+    overallStrategy: {
+      type: 'string',
+      description: 'Overall concierge planning strategy in Japanese 2-4 sentences',
+    },
+  },
+  required: [
+    'userPreferences',
+    'weather',
+    'budget',
+    'tripDuration',
+    'travelStyle',
+    'overallStrategy',
   ],
   additionalProperties: false,
 } as const;
@@ -165,12 +240,18 @@ function buildPlanJsonSchema(
     rainyDayAlternatives: {
       type: 'array',
       items: { type: 'string' },
-      minItems: 2,
-      maxItems: 4,
+      minItems: 3,
+      maxItems: 5,
+      description: 'Specific rainy-day backup spots with when to use them in Japanese',
+    },
+    conciergeAnalysis: {
+      ...CONCIERGE_ANALYSIS_SCHEMA,
+      description: 'Pre-itinerary concierge analysis in Japanese',
     },
   };
 
   const required = [
+    'conciergeAnalysis',
     'plannerMessage',
     'days',
     'budgetBreakdown',
@@ -197,10 +278,10 @@ function buildPlanJsonSchema(
 }
 
 const SYSTEM_PROMPT =
-  'あなたはプロの旅行プランナーです。' +
-  'お客様の旅行タイプ（冒険家・グルメ・のんびり・映え重視・穴場好き）を最優先で反映し、' +
-  '実在のスポット名、具体的な移動手段、丁寧な日本語で、指定JSONスキーマに厳密に従って回答してください。' +
-  '架空の店名は避け、わからない場合はそのエリアの代表的な実在スポットを選んでください。';
+  'あなたはプロの旅行コンシェルジュです。' +
+  '行程作成前に好み・天気・予算・期間・旅行スタイルを分析し、conciergeAnalysis に記載してから itinerary を設計してください。' +
+  '各スポットには詳細な選定理由、現実的な概算費用、具体的な交通手段、天候変化時の代替（weatherBackup）を必ず含めてください。' +
+  '実在のスポット名、丁寧な日本語、指定JSONスキーマに厳密に従って回答してください。';
 
 const REGENERATE_SYSTEM_PROMPT =
   SYSTEM_PROMPT +
@@ -225,6 +306,13 @@ const MEMORY_SYSTEM_PROMPT =
 const IMA_HIMA_SYSTEM_PROMPT =
   SYSTEM_PROMPT +
   ' 即興プラン（今暇モード）では今すぐ行ける近場スポットを優先し、移動時間を最小限にしてください。';
+
+const BEST_DAY_SYSTEM_PROMPT =
+  SYSTEM_PROMPT +
+  ' 最高の1日モードでは、ユーザーは計画を一切任せています。' +
+  'プレミアムAIコンシェルジュとして、感情に寄り添い、theme・overallStrategy（選定理由）・plannerMessage（一言）・highlights・timeline を完璧に設計してください。' +
+  '旅行メモリーがある場合は最優先で反映し、ユーザーが「自分のことを理解してくれた」と感じさせてください。' +
+  'plannerMessage は1〜2文の感情的な一言、overallStrategy は2〜4文の選定理由 — 役割を混同しないこと。';
 
 export async function generateImaHimaPlan(params: {
   location: string;
@@ -257,6 +345,37 @@ export async function generateImaHimaPlan(params: {
   });
 }
 
+export async function generateBestDayPlan(params: {
+  location: string;
+  budget: string;
+  currency: CurrencyCode;
+  people: string;
+  availableTime: BestDayTimeOption;
+  mood: BestDayMoodOption;
+}): Promise<GeneratedPlan> {
+  const moodPrefs = resolveBestDayPreferences(params.mood, params.people);
+  const bestDay = buildBestDayContext(
+    params.mood,
+    params.availableTime,
+    moodPrefs.effectivePeople,
+    moodPrefs.moodDescription,
+  );
+  const tripDuration = getBestDayTripDuration(params.availableTime);
+
+  return generatePlanWithAi({
+    location: params.location,
+    budget: params.budget,
+    currency: params.currency,
+    people: moodPrefs.effectivePeople,
+    companion: moodPrefs.companion,
+    personality: moodPrefs.personality,
+    tripDuration,
+    tripDate: getTodayIsoDate(),
+    mood: params.mood,
+    bestDay,
+  });
+}
+
 function parseAiResponse(
   content: string,
   includeAiAdvice: boolean,
@@ -283,6 +402,7 @@ function parseAiResponse(
       reservationUrl: item.reservationUrl || undefined,
       websiteUrl: item.websiteUrl || undefined,
       travelTimeToNext: item.travelTimeToNext || undefined,
+      weatherBackup: item.weatherBackup || undefined,
     })),
   }));
 
@@ -290,6 +410,7 @@ function parseAiResponse(
     days,
     items: flattenItineraryDays(days),
     details: {
+      conciergeAnalysis: parsed.conciergeAnalysis,
       plannerMessage: parsed.plannerMessage,
       totalBudget:
         parsed.budgetBreakdown?.total ?? parsed.totalBudget ?? '予算目安を算出できませんでした',
@@ -350,45 +471,78 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   }
 
   let weather: WeatherForecast | undefined;
-  if (input.location.trim()) {
-    try {
-      weather = await fetchWeatherForecast({
-        location: input.location,
-        startDate: input.tripDate,
-        tripDuration: input.tripDuration,
-      });
-    } catch {
-      weather = undefined;
-    }
+  const locationTrimmed = input.location.trim();
+  if (!locationTrimmed) {
+    throw new Error('場所を入力してください');
   }
 
-  const userPreferences = await getUserPreferences();
+  let realPlaces;
+  try {
+    [weather, realPlaces] = await Promise.all([
+      fetchWeatherForecast({
+        location: locationTrimmed,
+        startDate: input.tripDate,
+        tripDuration: input.tripDuration,
+      }).catch(() => undefined),
+      fetchRealPlacesForLocation(locationTrimmed),
+    ]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : REAL_PLACES_FETCH_ERROR;
+    throw new Error(message);
+  }
+
+  const [userPreferences, travelMemories] = await Promise.all([
+    getUserPreferences(),
+    getTravelMemories(),
+  ]);
+
+  const resolvedCurrency =
+    realPlaces?.inferredCurrency ??
+    inferCurrencyFromLocation(locationTrimmed) ??
+    input.currency;
+
   const enrichedInput: PlanInput = {
     ...input,
+    currency: resolvedCurrency,
     weather,
+    realPlaces,
     userPreferences: userPreferences.hasData ? userPreferences : undefined,
+    travelMemories: travelMemories.length > 0 ? travelMemories : undefined,
   };
 
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
   const isRegenerate = Boolean(input.avoidActivities && input.avoidActivities.length > 0);
-  const isMultiDay = TRIP_DURATION_CONFIG[input.tripDuration].dayCount > 1 && !input.spontaneous;
+  const isMultiDay = TRIP_DURATION_CONFIG[input.tripDuration].dayCount > 1 && !input.spontaneous && !input.bestDay;
   const isImaHima = Boolean(input.spontaneous);
+  const isBestDay = Boolean(input.bestDay);
 
-  const schemaOverrides = input.spontaneous
+  const schemaOverrides = input.bestDay
     ? {
         dayCount: 1,
-        itemsMin: input.spontaneous.itemsMin,
-        itemsMax: input.spontaneous.itemsMax,
+        itemsMin: input.bestDay.itemsMin,
+        itemsMax: input.bestDay.itemsMax,
       }
-    : undefined;
+    : input.spontaneous
+      ? {
+          dayCount: 1,
+          itemsMin: input.spontaneous.itemsMin,
+          itemsMax: input.spontaneous.itemsMax,
+        }
+      : undefined;
 
   let systemPrompt = SYSTEM_PROMPT;
-  if (isImaHima) {
+  if (isBestDay) {
+    systemPrompt = BEST_DAY_SYSTEM_PROMPT;
+  } else if (isImaHima) {
     systemPrompt = IMA_HIMA_SYSTEM_PROMPT;
   } else if (userPreferences.hasData && weather) {
     systemPrompt = `${MEMORY_SYSTEM_PROMPT} 天気予報にも合わせて屋内・屋外を調整してください。`;
   } else if (userPreferences.hasData) {
     systemPrompt = MEMORY_SYSTEM_PROMPT;
+  } else if (travelMemories.length > 0 && weather) {
+    systemPrompt = `${MEMORY_SYSTEM_PROMPT} ユーザーの旅行メモリーを最優先で反映し、天気予報にも合わせて調整してください。`;
+  } else if (travelMemories.length > 0) {
+    systemPrompt = `${MEMORY_SYSTEM_PROMPT} ユーザーの旅行メモリーを最優先で反映してください。`;
   } else if (weather) {
     systemPrompt = WEATHER_SYSTEM_PROMPT;
   }
@@ -396,21 +550,25 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     systemPrompt = includeAiAdvice
       ? `${REGENERATE_SYSTEM_PROMPT} カップル・初デート向けは aiAdvice も作成。天気予報がある場合は天候に合わせたスポット選定を維持。`
       : `${REGENERATE_SYSTEM_PROMPT}${weather ? ' 天気予報がある場合は天候に合わせたスポット選定を維持。' : ''}`;
-  } else if (!isImaHima && includeAiAdvice) {
+  } else if (!isImaHima && !isBestDay && includeAiAdvice) {
     systemPrompt = weather
       ? `${DATE_SYSTEM_PROMPT} 天気予報に合わせて屋内・屋外スポットを調整してください。`
       : DATE_SYSTEM_PROMPT;
-  } else if (!isImaHima && isMultiDay) {
+  } else if (!isImaHima && !isBestDay && isMultiDay) {
     systemPrompt = weather
       ? `${MULTI_DAY_SYSTEM_PROMPT} 日ごとの天気予報に合わせてスポットを調整してください。`
       : MULTI_DAY_SYSTEM_PROMPT;
   }
 
-  if (isImaHima && weather) {
+  if ((isImaHima || isBestDay) && weather) {
     systemPrompt = `${systemPrompt} 天気予報に合わせて屋内・屋外スポットを調整してください。`;
   }
 
-  systemPrompt = `${systemPrompt} コンシェルジュモード: 全 item に reservationUrl, websiteUrl, travelTimeToNext を設定してください。`;
+  systemPrompt = `${systemPrompt} コンシェルジュモード: conciergeAnalysis を完成させてから days を設計。全 item に reservationUrl, websiteUrl, travelTimeToNext, weatherBackup を設定してください。`;
+
+  if (realPlaces) {
+    systemPrompt = `${systemPrompt} 実在スポットリストが提供されています。リスト以外の店名・施設名を一切使用しないこと。activity にはリストの名称をそのまま使用し、架空のスポットは禁止。`;
+  }
 
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -441,11 +599,25 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   }
 
   const data = await response.json();
-  return parseAiResponse(
+  const plan = parseAiResponse(
     extractResponseText(data),
     includeAiAdvice,
     input.tripDuration,
     input.tripDate,
     weather,
   );
+
+  if (realPlaces) {
+    plan.days = enrichPlanWithRealPlaceLinks(plan.days, realPlaces.places);
+    plan.items = flattenItineraryDays(plan.days);
+    if (realPlaces.notice || realPlaces.source) {
+      plan.details = {
+        ...plan.details,
+        placesNotice: realPlaces.notice,
+        placesSource: realPlaces.source,
+      };
+    }
+  }
+
+  return plan;
 }

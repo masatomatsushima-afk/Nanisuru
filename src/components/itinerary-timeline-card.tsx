@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
+import { ItineraryMapActions } from '@/components/itinerary-map-actions';
 import { Colors, Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
 import type { ItineraryItem } from '@/types/plan';
@@ -84,10 +85,22 @@ export function ItineraryTimelineCard({
             </View>
           ) : null}
 
+          <ItineraryMapActions item={item} />
+
           {showTransport ? (
             <View style={styles.transportBox}>
               <Text style={styles.transportLabel}>🚶 次の場所へ</Text>
               <Text style={styles.transportText}>{item.transportation}</Text>
+              {item.travelTimeToNext && item.travelTimeToNext !== '—' ? (
+                <Text style={styles.travelTimeText}>⏱ {item.travelTimeToNext}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {item.weatherBackup && item.weatherBackup !== '天候に関わらず可' ? (
+            <View style={styles.weatherBackupBox}>
+              <Text style={styles.weatherBackupLabel}>☔ 天候変化時</Text>
+              <Text style={styles.weatherBackupText}>{item.weatherBackup}</Text>
             </View>
           ) : null}
         </View>
@@ -247,6 +260,30 @@ const styles = StyleSheet.create({
   },
   transportText: {
     color: theme.text,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  travelTimeText: {
+    color: theme.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  weatherBackupBox: {
+    backgroundColor: 'rgba(96, 165, 250, 0.08)',
+    borderRadius: NS.radius.xs,
+    padding: Spacing.two + 2,
+    borderWidth: 1,
+    borderColor: 'rgba(96, 165, 250, 0.2)',
+  },
+  weatherBackupLabel: {
+    color: '#93C5FD',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  weatherBackupText: {
+    color: theme.textSecondary,
     fontSize: 13,
     lineHeight: 20,
   },

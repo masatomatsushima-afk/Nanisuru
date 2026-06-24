@@ -13,15 +13,25 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AiAdviceSection } from '@/components/ai-advice-section';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { CurrentLocationButton } from '@/components/current-location-button';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard } from '@/components/ui/premium-card';
-import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
+import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { getSharedTrip } from '@/lib/trip-sharing';
 import { getDurationBadgeLabel } from '@/lib/trip-duration';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import type { SharedTrip } from '@/types/share';
 import { isDateRelatedCompanion } from '@/types/plan';
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.infoRow}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+}
 
 export default function SharedTripScreen() {
   const insets = useSafeAreaInsets();
@@ -73,6 +83,10 @@ export default function SharedTripScreen() {
 
   const { payload } = trip;
   const { location, companion, personality, tripDuration, days, details } = payload;
+  const budgetInput =
+    payload.budget && payload.currency
+      ? `${payload.budget} ${payload.currency}`
+      : payload.budget ?? null;
 
   return (
     <ScrollView
@@ -86,13 +100,19 @@ export default function SharedTripScreen() {
       ]}
       showsVerticalScrollIndicator={false}>
       <FadeInView>
+        <View style={styles.readOnlyBanner}>
+          <Text style={styles.readOnlyBannerText}>閲覧専用 — このプランは編集できません</Text>
+        </View>
+
         <Text style={styles.eyebrow}>SHARED TRIP</Text>
         <Text style={styles.title}>{trip.title}</Text>
-        <Text style={styles.subtitle}>{getItineraryEyebrow(companion, location)}</Text>
 
         <View style={styles.badgeRow}>
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{personality}</Text>
+          </View>
+          <View style={styles.badgeMuted}>
+            <Text style={styles.badgeMutedText}>{companion}</Text>
           </View>
           <View style={styles.badgeMuted}>
             <Text style={styles.badgeMutedText}>{getDurationBadgeLabel(tripDuration)}</Text>
@@ -103,30 +123,52 @@ export default function SharedTripScreen() {
         <Text style={styles.companionSubnote}>{COMPANION_SUBTITLES[companion]}</Text>
       </FadeInView>
 
-      <FadeInView delay={60}>
-        {details.budgetBreakdown ? (
-          <BudgetBreakdownSection breakdown={details.budgetBreakdown} />
-        ) : (
-          <PremiumCard style={styles.summaryCard}>
-            <Text style={styles.sectionTitle}>予算</Text>
-            <View style={styles.budgetPill}>
-              <Text style={styles.budgetLabel}>合計予算</Text>
-              <Text style={styles.budgetValue}>{details.totalBudget}</Text>
-            </View>
-          </PremiumCard>
-        )}
+      <FadeInView delay={40}>
         <PremiumCard style={styles.summaryCard}>
-          <View style={styles.metaRow}>
-            <Text style={styles.metaLabel}>所要時間</Text>
-            <Text style={styles.metaValue}>{details.duration}</Text>
+          <Text style={styles.sectionTitle}>📍 目的地</Text>
+          <Text style={styles.sectionBody}>{location.trim() || '未指定'}</Text>
+          {payload.mood ? (
+            <Text style={styles.moodText}>気分: {payload.mood}</Text>
+          ) : null}
+        </PremiumCard>
+      </FadeInView>
+
+      <FadeInView delay={60}>
+        <PremiumCard style={styles.summaryCard}>
+          <Text style={styles.sectionTitle}>💰 予算</Text>
+          <View style={styles.budgetPill}>
+            <Text style={styles.budgetLabel}>合計予算</Text>
+            <Text style={styles.budgetValue}>{details.totalBudget}</Text>
           </View>
+          {budgetInput ? <InfoRow label="入力予算" value={budgetInput} /> : null}
+          {payload.people ? <InfoRow label="人数" value={`${payload.people}人`} /> : null}
+          {details.budgetBreakdown ? (
+            <View style={styles.budgetBreakdownWrap}>
+              <BudgetBreakdownSection breakdown={details.budgetBreakdown} compact />
+            </View>
+          ) : null}
+        </PremiumCard>
+      </FadeInView>
+
+      <FadeInView delay={80}>
+        <PremiumCard style={styles.summaryCard}>
+          <Text style={styles.sectionTitle}>📅 期間</Text>
+          <InfoRow label="旅行期間" value={tripDuration} />
+          <InfoRow label="所要時間" value={details.duration} />
         </PremiumCard>
       </FadeInView>
 
       <FadeInView delay={120}>
         <PremiumCard style={styles.itineraryCard}>
-          <Text style={styles.sectionTitle}>行程</Text>
-          <ItineraryDaysView days={days} variant="detail" />
+          <Text style={styles.sectionTitle}>🗓 行程</Text>
+          {days.length > 0 ? (
+            <>
+              <CurrentLocationButton compact />
+              <ItineraryDaysView days={days} variant="detail" />
+            </>
+          ) : (
+            <Text style={styles.emptyText}>行程データがありません</Text>
+          )}
         </PremiumCard>
       </FadeInView>
 
@@ -176,6 +218,21 @@ const styles = StyleSheet.create({
     marginTop: Spacing.three,
     fontSize: 14,
   },
+  readOnlyBanner: {
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: NS.radius.md,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderWidth: 1,
+    borderColor: NS.colors.borderStrong,
+    marginBottom: Spacing.three,
+  },
+  readOnlyBannerText: {
+    color: NS.colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   eyebrow: {
     color: NS.colors.accent,
     ...NS.typography.eyebrow,
@@ -184,12 +241,7 @@ const styles = StyleSheet.create({
   title: {
     color: NS.colors.text,
     ...NS.typography.title,
-    marginBottom: Spacing.two,
-  },
-  subtitle: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    marginBottom: Spacing.two,
+    marginBottom: Spacing.three,
   },
   badgeRow: {
     flexDirection: 'row',
@@ -248,13 +300,25 @@ const styles = StyleSheet.create({
     ...NS.typography.headline,
     marginBottom: Spacing.three,
   },
+  sectionBody: {
+    color: NS.colors.textSecondary,
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: '600',
+  },
+  moodText: {
+    color: NS.colors.accent,
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: Spacing.two,
+  },
   budgetPill: {
     backgroundColor: NS.colors.accentSoft,
     borderRadius: NS.radius.md,
     padding: Spacing.three,
     borderWidth: 1,
     borderColor: NS.colors.accentBorder,
-    marginBottom: Spacing.three,
+    marginBottom: Spacing.two,
   },
   budgetLabel: {
     color: NS.colors.textSecondary,
@@ -267,22 +331,30 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
   },
-  metaRow: {
+  infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: Spacing.two,
+    paddingVertical: Spacing.two,
     borderTopWidth: 1,
     borderTopColor: NS.colors.border,
   },
-  metaLabel: {
+  infoLabel: {
     color: NS.colors.textSecondary,
     fontSize: 14,
   },
-  metaValue: {
+  infoValue: {
     color: NS.colors.text,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '600',
+  },
+  budgetBreakdownWrap: {
+    marginTop: Spacing.two,
+  },
+  emptyText: {
+    color: NS.colors.textMuted,
+    fontSize: 14,
+    lineHeight: 22,
   },
   sharedAt: {
     color: NS.colors.textMuted,

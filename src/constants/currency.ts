@@ -52,3 +52,15 @@ export function getBudgetPlaceholder(currency: CurrencyCode): string {
   };
   return `例）${examples[currency]}`;
 }
+
+export const BUDGET_PRESETS: Record<CurrencyCode, readonly number[]> = {
+  JPY: [3000, 5000, 10000, 20000, 50000],
+  AUD: [30, 50, 100, 150, 300],
+  USD: [25, 50, 100, 150, 250],
+  KRW: [30000, 50000, 100000, 200000, 500000],
+  EUR: [25, 50, 80, 120, 200],
+};
+
+export function getBudgetPresets(currency: CurrencyCode): readonly number[] {
+  return BUDGET_PRESETS[currency];
+}

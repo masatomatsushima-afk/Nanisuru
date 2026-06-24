@@ -1,0 +1,24 @@
+import type { CurrencyCode } from '@/constants/currency';
+import type { SpontaneousContext } from '@/types/imafima';
+import type { CompanionOption, PersonalityOption, TripDurationOption } from '@/types/plan';
+import type { UserPreferences } from '@/types/user-memory';
+import type { TravelMemory } from '@/types/travel-memory';
+import type { BestDayContext } from '@/types/best-day';
+import type { WeatherForecast } from '@/lib/weather';
+
+export type PlanAnalysisInput = {
+  location: string;
+  budget: string;
+  currency: CurrencyCode;
+  people: string;
+  companion: CompanionOption;
+  personality: PersonalityOption;
+  tripDuration: TripDurationOption;
+  tripDate: string;
+  mood: string;
+  weather?: WeatherForecast;
+  userPreferences?: UserPreferences;
+  travelMemories?: TravelMemory[];
+  spontaneous?: SpontaneousContext;
+  bestDay?: BestDayContext;
+};

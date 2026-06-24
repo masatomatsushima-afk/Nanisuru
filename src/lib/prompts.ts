@@ -3,13 +3,20 @@ import { getCurrency } from '@/constants/currency';
 import type { CompanionOption, PersonalityOption, TripDurationOption } from '@/types/plan';
 import { isDateRelatedCompanion } from '@/types/plan';
 import type { SpontaneousContext } from '@/types/imafima';
+import type { BestDayContext } from '@/types/best-day';
 
 import { buildImaHimaPromptSection, resolveMoodPreferences } from './imafima';
+import { buildBestDayPromptSection } from './best-day';
+import { buildPreAnalysisBriefing } from './plan-analysis';
 import { TRIP_DURATION_CONFIG } from './trip-duration';
 import type { WeatherForecast } from './weather';
 import { formatTripDateLabel } from './weather';
 import { buildUserMemoryPromptSection } from './user-memory';
+import { buildTravelMemoryPromptSection } from './travel-memory';
+import { buildRealPlacesPromptSection } from './location-places';
 import type { UserPreferences } from '@/types/user-memory';
+import type { TravelMemory } from '@/types/travel-memory';
+import type { NearbyPlacesContext } from '@/types/nearby-places';
 
 export type PlanInput = {
   location: string;
@@ -23,8 +30,11 @@ export type PlanInput = {
   mood: string;
   weather?: WeatherForecast;
   userPreferences?: UserPreferences;
+  travelMemories?: TravelMemory[];
+  realPlaces?: NearbyPlacesContext;
   avoidActivities?: string[];
   spontaneous?: SpontaneousContext;
+  bestDay?: BestDayContext;
 };
 
 const PERSONALITY_GUIDE: Record<PersonalityOption, string> = {
@@ -106,12 +116,13 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
         {
           "time": "10:00",
           "activity": "実在店名・施設名",
-          "reason": "選んだ理由",
-          "estimatedCost": "概算（${symbol}）",
-          "transportation": "次のスポットへの移動",
+          "reason": "選定理由（2〜3文・分析反映）",
+          "estimatedCost": "概算（${symbol}・人数考慮）",
+          "transportation": "具体的な移動手段（路線・駅名・料金目安）",
           "reservationUrl": "予約URL（不要なら空文字）",
           "websiteUrl": "公式サイトURL（不明なら空文字）",
-          "travelTimeToNext": "約15分（徒歩）"
+          "travelTimeToNext": "約15分（徒歩800m）",
+          "weatherBackup": "雨の場合: 代替スポットまたは過ごし方"
         }
       ]
     }
@@ -125,12 +136,13 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
         {
           "time": "10:00",
           "activity": "実在店名・施設名",
-          "reason": "選んだ理由",
-          "estimatedCost": "概算（${symbol}）",
-          "transportation": "—",
+          "reason": "選定理由（2〜3文・分析反映）",
+          "estimatedCost": "概算（${symbol}・人数考慮）",
+          "transportation": "具体的な移動手段（路線・駅名・料金目安）",
           "reservationUrl": "予約URL（不要なら空文字）",
           "websiteUrl": "公式サイトURL（不明なら空文字）",
-          "travelTimeToNext": "約12分（電車）"
+          "travelTimeToNext": "約12分（電車・${symbol}210）",
+          "weatherBackup": "雨の場合: 代替スポットまたは過ごし方"
         }
       ]
     }
@@ -149,7 +161,7 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
 
   const accommodationRule = isMultiDay
     ? '- **宿泊費**: 泊数・人数・エリア相場に合わせて配分（旅行タイプ「' + input.personality + '」も反映）'
-    : '- **宿泊費**: 半日・日帰りのため「¥0（不要）」と記載';
+    : `- **宿泊費**: 半日・日帰りのため「${symbol}0（不要）」と記載`;
 
   const budgetOptimizationSection = `
 ## 予算の最適配分（必須）
@@ -163,6 +175,14 @@ ${accommodationRule}
 - **activity（アクティビティ）**: 入場料・体験・お土産・その他娯楽費合計
 
 各カテゴリの合計が total におおむね一致するよう配分してください。totalBudget は budgetBreakdown.total と同じ値にしてください。`;
+
+  const currencySection = `
+## 通貨（最重要・すべての金額表示に適用）
+- 目的地の現地通貨: **${input.currency}（${label} · ${symbol}）**
+- estimatedCost、budgetBreakdown の全項目、totalBudget には**必ず ${symbol} を付ける**こと
+- 日本円（¥）や他通貨に変換しないこと。現地の物価水準に合った現実的な金額にすること
+- 例（AUD）: A$45、A$120 — 例（USD）: $35、$80 — 例（KRW）: ₩15,000
+- highlights や rainyDayAlternatives に金額を含める場合も ${symbol} を使用すること`;
 
   const tripDateLabel = formatTripDateLabel(input.tripDate);
 
@@ -212,12 +232,22 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
     ? buildUserMemoryPromptSection(input.userPreferences)
     : '';
 
+  const travelMemorySection = input.travelMemories?.length
+    ? buildTravelMemoryPromptSection(input.travelMemories)
+    : '';
+
+  const realPlacesSection = input.realPlaces
+    ? `\n\n${buildRealPlacesPromptSection(input.realPlaces)}`
+    : '';
+
   const spontaneousSection = input.spontaneous
     ? buildImaHimaPromptSection(
         input.spontaneous,
         resolveMoodPreferences(input.spontaneous.moodLabel),
       )
     : '';
+
+  const bestDaySection = input.bestDay ? buildBestDayPromptSection(input.bestDay) : '';
 
   const conciergeSection = `
 
@@ -230,9 +260,14 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
 - transportation には移動手段の説明、travelTimeToNext には時間の目安を記載（両方セットで使う）
 - URLは https:// で始まる有効な形式のみ。確信がない場合は空文字にすること`;
 
-  return `あなたは日本トップクラスの旅行プランナー兼お出かけコンシェルジュです。
-高級旅行会社のパンフレットのように、温かみがあり、信頼感のある自然な日本語でプランを作成してください。
+  const preAnalysisSection = buildPreAnalysisBriefing(input);
+
+  return `あなたは日本トップクラスの旅行コンシェルジュ兼プランナーです。
+高級ホテルの専属コンシェルジュのように、分析に基づいた説得力のある提案を、温かみのある自然な日本語で作成してください。
 ${input.spontaneous ? '\n**⚡ 今暇モード**: ユーザーは今すぐ出かけたい。近場・今すぐ行けるスポットを最優先に。' : ''}
+${input.bestDay ? '\n**🔥 最高の1日**: ユーザーは計画を任せた。プレミアムコンシェルジュとして最高の体験を設計すること。' : ''}
+
+${preAnalysisSection}
 
 ## お客様の条件
 - 場所: ${location}
@@ -255,22 +290,39 @@ ${personalityGuide}
 
 **旅行タイプはプラン全体の軸です。** 各日・各スポットの選定理由・plannerMessage で「${input.personality}」らしさが一貫して伝わるようにしてください。
 
-## 作成ルール
-1. **実在のスポット**を可能な限り使う（店名・施設名・エリア名を具体的に）
-2. 各アクティビティに**開始時刻**（HH:MM）を付ける
-3. 各スポットに**選んだ理由**を1〜2文で（旅行タイプ・関係性・気分・予算・期間に触れる）
-4. 各スポットの**概算費用**を${symbol}付きで記載（人数考慮）
-5. **budgetBreakdown** で宿泊・食事・交通・アクティビティのカテゴリ別概算を${symbol}付きで記載
-6. **合計予算（totalBudget）**は budgetBreakdown.total と一致させる
-7. スポット間の**移動方法**を具体的に（最終地点は「—」）
-8. 地理的に近い順に並べ、移動が不自然にならないルートにする
-9. duration には期間全体の所要時間・日数を日本語で記載
-10. 文体は丁寧で親しみやすい日本語
-${budgetOptimizationSection}${weatherSection}${userMemorySection}${spontaneousSection}${conciergeSection}
+## 作成ルール（コンシェルジュ品質）
+1. **conciergeAnalysis を先に完成**させてから days を設計すること
+2. ${
+    input.realPlaces
+      ? '**実在スポットリストに記載されたスポットのみ**を使用すること（架空の店名・施設名は禁止）'
+      : '**実在のスポット**を可能な限り使う（店名・施設名・エリア名を具体的に）'
+  }
+3. 各アクティビティに**開始時刻**（HH:MM）を付ける
+4. reason は**2〜3文**で、分析（好み・天候・予算・期間・スタイル）を反映
+5. estimatedCost は${symbol}付き・**人数${people}人考慮**の現実的な概算
+6. transportation は**路線名・駅名・徒歩分数・料金目安**を含む具体的な指示
+7. travelTimeToNext は transportation と整合した移動時間
+8. weatherBackup で各スポットの**天候変化時の代替**を1文で記載
+9. **budgetBreakdown** でカテゴリ別概算を${symbol}付きで記載
+10. **合計予算（totalBudget）**は budgetBreakdown.total と一致
+11. 地理的に近い順に並べ、移動が不自然にならないルートにする
+12. rainyDayAlternatives は**3〜5件**の具体的な代替案${
+    input.realPlaces ? '（実在スポットリスト内のみ）' : '（実在スポット名必須）'
+  }
+13. 文体は丁寧で親しみやすい日本語。プロのコンシェルジュとして信頼感のあるトーン
+${budgetOptimizationSection}${currencySection}${weatherSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
 
 ## 出力JSON（この形式のみ、余計な文章は禁止）
 {
-  "plannerMessage": "プラン全体への一言（期間「${input.tripDuration}」と旅行タイプへの共感を含める）",
+  "conciergeAnalysis": {
+    "userPreferences": "好み分析（2〜3文）",
+    "weather": "天気分析と対策方針（2〜3文）",
+    "budget": "予算分析と配分方針（2〜3文）",
+    "tripDuration": "期間・日程分析（2〜3文）",
+    "travelStyle": "旅行スタイル分析（2〜3文）",
+    "overallStrategy": "総合設計方針（2〜4文）"
+  },
+  "plannerMessage": "コンシェルジュからの提案メッセージ（分析への共感・2〜3文）",
   ${daysJsonExample},
   "budgetBreakdown": {
     "total": "合計概算（${symbol}）",
@@ -281,8 +333,8 @@ ${budgetOptimizationSection}${weatherSection}${userMemorySection}${spontaneousSe
   },
   "totalBudget": "合計概算（budgetBreakdown.total と同じ）",
   "duration": "期間・所要時間（例：${input.tripDuration}・約8時間 / ${input.tripDuration}）",
-  "highlights": ["魅力1", "魅力2", "魅力3"],
-  "rainyDayAlternatives": ["雨の日の代替案1", "代替案2", "代替案3"]${aiAdviceJson}
+  "highlights": ["このプランの魅力1", "魅力2", "魅力3"],
+  "rainyDayAlternatives": ["雨の場合: ○○の代わりに△△（屋内）", "代替案2", "代替案3", "代替案4"]${aiAdviceJson}
 }
 
 totalBudget・budgetBreakdown・estimatedCostには必ず${symbol}を使用してください。${dateAdviceSection}${variationSection}`;

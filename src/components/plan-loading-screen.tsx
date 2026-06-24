@@ -8,10 +8,12 @@ const theme = Colors.dark;
 const accent = NS.colors.accent;
 
 export const LOADING_STEPS = [
-  { icon: '📍', label: '場所を分析中' },
+  { icon: '📍', label: '実在スポットを検索中' },
+  { icon: '👤', label: '好みを分析中' },
   { icon: '☀️', label: '天気を確認中' },
-  { icon: '🍽️', label: 'おすすめスポットを検索中' },
-  { icon: '🤖', label: '最適なプランを作成中' },
+  { icon: '💰', label: '予算を最適化中' },
+  { icon: '🗓', label: '行程を設計中' },
+  { icon: '✨', label: 'コンシェルジュプラン完成' },
 ] as const;
 
 type StepStatus = 'pending' | 'active' | 'done';

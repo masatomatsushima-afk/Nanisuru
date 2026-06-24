@@ -1,5 +1,6 @@
--- Nanisuru: 旅行プラン共有テーブル
+-- Nanisuru: 旅行プラン共有テーブル（公開リンク · 閲覧専用）
 -- Supabase SQL Editor で実行してください
+-- 保存済みプランの「共有リンクを作成」から payload が保存されます
 
 create table if not exists public.shared_trips (
   id uuid primary key default gen_random_uuid(),
