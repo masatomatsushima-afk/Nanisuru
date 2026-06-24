@@ -14,6 +14,11 @@ import type {
   PublishPublicPlanInput,
 } from '@/types/public-plan';
 import { parseBudgetAmount } from '@/types/public-plan';
+import {
+  fetchImagesForPlan,
+  fetchImagesForPlans,
+  syncPublicPlanImages,
+} from '@/lib/public-plan-images';
 
 type PublicPlanRow = {
   id: string;
@@ -119,6 +124,22 @@ async function attachCreatorSocial(plans: PublicPlan[]): Promise<PublicPlan[]> {
   });
 }
 
+async function attachPlanImages(plans: PublicPlan[]): Promise<PublicPlan[]> {
+  if (plans.length === 0) return plans;
+
+  const imageMap = await fetchImagesForPlans(plans.map((plan) => plan.id));
+  return plans.map((plan) => ({
+    ...plan,
+    images: imageMap.get(plan.id) ?? [],
+  }));
+}
+
+async function finalizePlans(plans: PublicPlan[]): Promise<PublicPlan[]> {
+  const withInteractions = await attachUserInteractions(plans);
+  const withSocial = await attachCreatorSocial(withInteractions);
+  return attachPlanImages(withSocial);
+}
+
 function applyDiscoverSort(plans: PublicPlan[], sort: DiscoverSortOption): PublicPlan[] {
   const visible = plans.filter((plan) => plan.visibility === 'public');
 
@@ -169,9 +190,7 @@ export async function fetchPublicPlans(sort: DiscoverSortOption): Promise<Public
   }
 
   const plans = applyDiscoverSort((data as PublicPlanRow[]).map((row) => rowToPublicPlan(row)), sort);
-  const sliced = plans.slice(0, 30);
-  const withInteractions = await attachUserInteractions(sliced);
-  return attachCreatorSocial(withInteractions);
+  return finalizePlans(plans.slice(0, 30));
 }
 
 export async function fetchPublicPlansByUserId(userId: string): Promise<PublicPlan[]> {
@@ -194,8 +213,7 @@ export async function fetchPublicPlansByUserId(userId: string): Promise<PublicPl
   }
 
   const plans = (data as PublicPlanRow[]).map((row) => rowToPublicPlan(row));
-  const withInteractions = await attachUserInteractions(plans);
-  return attachCreatorSocial(withInteractions);
+  return finalizePlans(plans);
 }
 
 export async function getPublicPlanById(planId: string): Promise<PublicPlan | null> {
@@ -220,8 +238,7 @@ export async function getPublicPlanById(planId: string): Promise<PublicPlan | nu
     if (userId !== plan.userId) return null;
   }
 
-  const [withInteractions] = await attachUserInteractions([plan]);
-  const [withSocial] = await attachCreatorSocial([withInteractions]);
+  const [withSocial] = await finalizePlans([plan]);
   return withSocial;
 }
 
@@ -242,7 +259,9 @@ export async function getPublishedPlanForTrip(tripId: string): Promise<PublicPla
     .maybeSingle();
 
   if (error || !data) return null;
-  return rowToPublicPlan(data as PublicPlanRow);
+  const plan = rowToPublicPlan(data as PublicPlanRow);
+  const images = await fetchImagesForPlan(plan.id);
+  return { ...plan, images };
 }
 
 export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<PublicPlan> {
@@ -290,7 +309,11 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
       throw new Error(error?.message ?? '公開プランの更新に失敗しました');
     }
 
-    return rowToPublicPlan(data as PublicPlanRow);
+    const plan = rowToPublicPlan(data as PublicPlanRow);
+    const images = input.imageDrafts
+      ? await syncPublicPlanImages(plan.id, user.id, input.imageDrafts, input.visibility)
+      : await fetchImagesForPlan(plan.id);
+    return { ...plan, images };
   }
 
   const { data, error } = await supabase
@@ -305,7 +328,11 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
     throw new Error(error?.message ?? '公開プランの作成に失敗しました');
   }
 
-  return rowToPublicPlan(data as PublicPlanRow);
+  const plan = rowToPublicPlan(data as PublicPlanRow);
+  const images = input.imageDrafts
+    ? await syncPublicPlanImages(plan.id, user.id, input.imageDrafts, input.visibility)
+    : [];
+  return { ...plan, images };
 }
 
 export async function togglePublicPlanLike(

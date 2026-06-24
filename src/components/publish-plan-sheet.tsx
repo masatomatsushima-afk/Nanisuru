@@ -11,11 +11,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SuccessOverlay } from '@/components/success-overlay';
+import { PublishPlanImagePicker } from '@/components/publish-plan-image-picker';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
+import { draftsFromPublicPlanImages } from '@/lib/public-plan-images';
 import { getPublishedPlanForTrip, parseTagsInput, publishPublicPlan } from '@/lib/public-plans';
 import type { SavedTrip } from '@/types/trip';
+import type { PublishPlanImageDraft } from '@/types/public-plan-image';
 import {
   companionToDefaultCategory,
   PUBLIC_PLAN_CATEGORIES,
@@ -68,6 +71,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
   const [error, setError] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isExisting, setIsExisting] = useState(false);
+  const [imageDrafts, setImageDrafts] = useState<PublishPlanImageDraft[]>([]);
 
   useEffect(() => {
     if (!visible) return;
@@ -78,6 +82,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
     setTagsInput('');
     setVisibility('public');
     setError(null);
+    setImageDrafts([]);
 
     void getPublishedPlanForTrip(trip.id).then((existing) => {
       if (!existing) {
@@ -90,6 +95,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
       setCategory(existing.category);
       setTagsInput(existing.tags.join('、'));
       setVisibility(existing.visibility);
+      setImageDrafts(draftsFromPublicPlanImages(existing.images ?? []));
     });
   }, [visible, trip.id, trip.title, payload.companion]);
 
@@ -110,6 +116,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
         tags: parseTagsInput(tagsInput),
         visibility,
         payload,
+        imageDrafts,
       });
       setShowSuccess(true);
       setTimeout(() => {
@@ -149,6 +156,8 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
           <Text style={styles.lead}>
             コミュニティの「発見」タブに投稿して、他のユーザーとプランを共有できます。
           </Text>
+
+          <PublishPlanImagePicker images={imageDrafts} onChange={setImageDrafts} />
 
           <Text style={styles.label}>公開タイトル</Text>
           <TextInput

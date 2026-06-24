@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { FollowButton } from '@/components/follow-button';
+import { PublicPlanImageGallery } from '@/components/public-plan-image-gallery';
 import { PremiumCard } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
@@ -58,11 +59,23 @@ export function PublicPlanCard({
   return (
     <Animated.View entering={FadeInDown.delay(index * 60).duration(420).springify()}>
       <PremiumCard style={styles.card}>
-        <Pressable style={({ pressed }) => [pressed && styles.bodyPressed]} onPress={onPress}>
+        <PublicPlanImageGallery
+          images={plan.images}
+          title={plan.title}
+          category={plan.category}
+          destination={destination}
+          variant="card"
+        />
+
+        <Pressable style={({ pressed }) => [styles.body, pressed && styles.bodyPressed]} onPress={onPress}>
           <View style={styles.header}>
-            <View style={styles.categoryBadge}>
-              <Text style={styles.categoryBadgeText}>{plan.category}</Text>
-            </View>
+            {!plan.images?.length ? (
+              <View style={styles.categoryBadge}>
+                <Text style={styles.categoryBadgeText}>{plan.category}</Text>
+              </View>
+            ) : (
+              <View />
+            )}
             <View style={styles.statsRow}>
               <Text style={styles.statText}>♥ {plan.likeCount}</Text>
               <Text style={styles.statDivider}>·</Text>
@@ -149,8 +162,14 @@ export function PublicPlanCard({
 
 const styles = StyleSheet.create({
   card: {
-    padding: Spacing.four,
+    padding: 0,
+    overflow: 'hidden',
     marginBottom: Spacing.three,
+  },
+  body: {
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.two,
   },
   bodyPressed: {
     opacity: 0.92,
@@ -258,8 +277,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+    paddingHorizontal: Spacing.four,
     paddingTop: Spacing.three,
-    marginTop: Spacing.three,
+    paddingBottom: Spacing.four,
     borderTopWidth: 1,
     borderTopColor: NS.colors.border,
   },

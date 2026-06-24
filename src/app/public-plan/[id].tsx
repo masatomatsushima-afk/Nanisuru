@@ -18,6 +18,7 @@ import { CurrentLocationButton } from '@/components/current-location-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { PublicPlanActions } from '@/components/public-plan-actions';
 import { FollowButton } from '@/components/follow-button';
+import { PublicPlanImageGallery } from '@/components/public-plan-image-gallery';
 import { WeatherSection } from '@/components/weather-section';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
@@ -110,6 +111,14 @@ export default function PublicPlanDetailScreen() {
       <Pressable style={styles.backButton} onPress={() => router.back()}>
         <Text style={styles.backButtonText}>← 発見</Text>
       </Pressable>
+
+      <PublicPlanImageGallery
+        images={plan.images}
+        title={plan.title}
+        category={plan.category}
+        destination={destination}
+        variant="detail"
+      />
 
       <View style={styles.hero}>
         <View style={styles.publicBadge}>

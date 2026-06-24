@@ -47,6 +47,12 @@
         {
           "locationWhenInUsePermission": "近くのおすすめプランを提案するために現在地を使用します。"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "公開プランに写真を追加するために、写真ライブラリへのアクセスを使用します。"
+        }
       ]
     ],
     "experiments": {

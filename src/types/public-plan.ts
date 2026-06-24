@@ -1,4 +1,5 @@
 import type { SavedTripPayload } from '@/types/trip';
+import type { PublicPlanImage, PublishPlanImageDraft } from '@/types/public-plan-image';
 
 export const PUBLIC_PLAN_CATEGORIES = [
   'デート',
@@ -60,6 +61,7 @@ export type PublicPlan = {
   savedByMe?: boolean;
   creatorFollowerCount?: number;
   isFollowingCreator?: boolean;
+  images?: PublicPlanImage[];
 };
 
 export type PublishPublicPlanInput = {
@@ -70,6 +72,7 @@ export type PublishPublicPlanInput = {
   tags: string[];
   visibility: PublicPlanVisibility;
   payload: SavedTripPayload;
+  imageDrafts?: PublishPlanImageDraft[];
 };
 
 export type PublicPlanListItem = PublicPlan;
