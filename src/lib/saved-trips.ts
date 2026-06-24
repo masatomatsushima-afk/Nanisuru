@@ -148,6 +148,50 @@ export async function getUserTrips(): Promise<SavedTrip[]> {
   return (data as TripRow[]).map(rowToSavedTrip);
 }
 
+export async function updateTrip(
+  tripId: string,
+  input: SavedTripPayload,
+  title?: string,
+): Promise<SavedTrip> {
+  assertTripsConfigured();
+
+  const supabase = getSupabase();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error('ログインが必要です');
+  }
+
+  const resolvedTitle =
+    title ??
+    buildFavoriteTitle(
+      input.location,
+      input.personality,
+      input.companion,
+      input.tripDuration,
+    );
+
+  const { data, error } = await supabase
+    .from('trips')
+    .update({
+      title: resolvedTitle,
+      payload: input,
+    })
+    .eq('id', tripId)
+    .eq('user_id', user.id)
+    .select('id, user_id, title, payload, created_at')
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message ?? 'プランの更新に失敗しました');
+  }
+
+  return rowToSavedTrip(data as TripRow);
+}
+
 export async function deleteTrip(tripId: string): Promise<void> {
   assertTripsConfigured();
 

@@ -52,7 +52,10 @@ async function countPublicPlansForUser(userId: string): Promise<number> {
     .from('public_plans')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
-    .eq('visibility', 'public');
+    .eq('visibility', 'public')
+    .eq('is_public', true)
+    .eq('is_removed', false)
+    .eq('moderation_status', 'active');
 
   if (error) return 0;
   return count ?? 0;
@@ -294,6 +297,11 @@ export async function toggleFollowUser(
     throw new Error('自分自身をフォローすることはできません');
   }
 
+  const { isUserBlocked } = await import('@/lib/user-blocks');
+  if (await isUserBlocked(followingId)) {
+    throw new Error('ブロック中のユーザーはフォローできません');
+  }
+
   await ensureUserProfile();
 
   const { data: existing } = await supabase
@@ -322,6 +330,9 @@ export async function toggleFollowUser(
     if (error) {
       throw new Error(error.message ?? 'フォローに失敗しました');
     }
+
+    const { notifyUserFollowed } = await import('@/lib/notifications');
+    void notifyUserFollowed(followingId, user.id);
   }
 
   const profile = await getUserProfileById(followingId);

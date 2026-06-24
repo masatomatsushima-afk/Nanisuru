@@ -7,6 +7,8 @@ import type {
   PlanDetails,
   TripDurationOption,
 } from '@/types/plan';
+import type { PlanCopyMetadata } from '@/types/plan-copy';
+import type { PlanCustomPreferences } from '@/types/plan-preferences';
 
 export type SavedTripPayload = {
   location: string;
@@ -20,6 +22,9 @@ export type SavedTripPayload = {
   days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;
+  copyMetadata?: PlanCopyMetadata;
+  customPreferences?: PlanCustomPreferences;
+  notes?: string;
 };
 
 export type SavedTrip = {

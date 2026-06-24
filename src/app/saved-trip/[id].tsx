@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,8 +16,11 @@ import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { InspiredByCredit } from '@/components/inspired-by-credit';
 import { CurrentLocationButton } from '@/components/current-location-button';
 import { PublishPlanSheet } from '@/components/publish-plan-sheet';
+import { RequireAuthGate } from '@/components/require-auth-gate';
+import { ErrorStateCard } from '@/components/ui/state-cards';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { WeatherSection } from '@/components/weather-section';
 import { NS } from '@/constants/nanisuru-ui';
@@ -25,8 +29,10 @@ import { useAuth } from '@/contexts/auth-context';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { formatSavedTripDate, formatTripSchedule, getTripById } from '@/lib/saved-trips';
 import { ShareTripSection } from '@/components/share-trip-section';
-import { getPublishedPlanForTrip } from '@/lib/public-plans';
+import { getPublishedPlanForTrip, deletePublicPlan, stopPublicPlan } from '@/lib/public-plans';
+import { MODERATION_STATUS_LABELS } from '@/types/moderation';
 import { buildActiveTripContext, saveActiveTrip } from '@/lib/active-trip';
+import { getActionErrorMessage } from '@/lib/app-errors';
 
 import type { SavedTrip } from '@/types/trip';
 import type { PublicPlan } from '@/types/public-plan';
@@ -50,6 +56,7 @@ export default function SavedTripDetailScreen() {
   const [publishedPlan, setPublishedPlan] = useState<PublicPlan | null>(null);
   const [showPublishSheet, setShowPublishSheet] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isModerating, setIsModerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadTrip = useCallback(async () => {
@@ -90,42 +97,81 @@ export default function SavedTripDetailScreen() {
   }, [id, session]);
 
   useEffect(() => {
-    if (authLoading) return;
-
-    if (!session) {
-      router.replace('/login');
-      return;
-    }
-
-    loadTrip();
+    if (authLoading || !session) return;
+    void loadTrip();
   }, [authLoading, session, loadTrip]);
 
-  if (authLoading || isLoading) {
-    return (
-      <View style={[styles.centered, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={accent} />
-        <Text style={styles.loadingText}>プランを読み込み中...</Text>
-      </View>
-    );
-  }
+  return (
+    <RequireAuthGate
+      title="保存済みプランを見るにはログインが必要です"
+      description="あなたのプランはアカウントに安全に保存されています。ログインして確認してください。"
+      loadingMessage="確認中...">
+      {authLoading || isLoading ? (
+        <View style={[styles.centered, { paddingTop: insets.top }]}>
+          <ActivityIndicator size="large" color={accent} />
+          <Text style={styles.loadingText}>プランを読み込み中...</Text>
+        </View>
+      ) : error || !trip ? (
+        <View style={[styles.centered, styles.container, { paddingTop: insets.top + Spacing.four }]}>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>← 戻る</Text>
+          </Pressable>
+          <ErrorStateCard
+            title="プランを読み込めませんでした"
+            message={error ?? 'プランが見つかりませんでした'}
+            onRetry={() => void loadTrip()}
+          />
+          <Pressable onPress={() => router.replace('/favorites')}>
+            <Text style={styles.linkText}>保存済みプラン一覧へ</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <SavedTripDetailContent
+          trip={trip}
+          publishedPlan={publishedPlan}
+          setPublishedPlan={setPublishedPlan}
+          showPublishSheet={showPublishSheet}
+          setShowPublishSheet={setShowPublishSheet}
+          isModerating={isModerating}
+          setIsModerating={setIsModerating}
+          insets={insets}
+        />
+      )}
+    </RequireAuthGate>
+  );
+}
 
-  if (error || !trip) {
-    return (
-      <View style={[styles.centered, styles.container, { paddingTop: insets.top + Spacing.four }]}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>← 戻る</Text>
-        </Pressable>
-        <Text style={styles.errorText}>{error ?? 'プランが見つかりませんでした'}</Text>
-        <Pressable onPress={() => router.replace('/favorites')}>
-          <Text style={styles.linkText}>保存済みプラン一覧へ</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
+function SavedTripDetailContent({
+  trip,
+  publishedPlan,
+  setPublishedPlan,
+  showPublishSheet,
+  setShowPublishSheet,
+  isModerating,
+  setIsModerating,
+  insets,
+}: {
+  trip: SavedTrip;
+  publishedPlan: PublicPlan | null;
+  setPublishedPlan: (plan: PublicPlan | null) => void;
+  showPublishSheet: boolean;
+  setShowPublishSheet: (value: boolean) => void;
+  isModerating: boolean;
+  setIsModerating: (value: boolean) => void;
+  insets: { top: number; bottom: number };
+}) {
   const { payload } = trip;
   const { details } = payload;
   const days = payload.days?.length > 0 ? payload.days : [];
+
+  const runModeration = async (action: () => Promise<void>) => {
+    setIsModerating(true);
+    try {
+      await action();
+    } finally {
+      setIsModerating(false);
+    }
+  };
 
   return (
     <ScrollView
@@ -161,6 +207,22 @@ export default function SavedTripDetailScreen() {
         <Text style={styles.subtitle}>{PERSONALITY_SUBTITLES[payload.personality]}</Text>
         <Text style={styles.companionNote}>{COMPANION_SUBTITLES[payload.companion]}</Text>
       </View>
+
+      {payload.copyMetadata ? (
+        <View style={styles.creditWrap}>
+          <InspiredByCredit
+            metadata={payload.copyMetadata}
+            onPressCreator={() =>
+              router.push(`/creator/${payload.copyMetadata!.sourceCreatorUserId}`)
+            }
+          />
+          <PrimaryButton
+            label="カスタム編集を続ける"
+            variant="secondary"
+            onPress={() => router.push(`/plan-copy/${trip.id}`)}
+          />
+        </View>
+      ) : null}
 
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>📍 場所</Text>
@@ -243,18 +305,135 @@ export default function SavedTripDetailScreen() {
         <Text style={styles.publishLead}>
           発見タブに投稿して、他のユーザーとプランを共有できます。
         </Text>
-        {publishedPlan?.visibility === 'public' ? (
+        {publishedPlan?.visibility === 'public' && publishedPlan.isPublic && !publishedPlan.isRemoved ? (
           <Text style={styles.publishStatus}>公開中 · ♥ {publishedPlan.likeCount}</Text>
-        ) : publishedPlan ? (
+        ) : publishedPlan && !publishedPlan.isRemoved ? (
           <Text style={styles.publishStatusMuted}>
             {publishedPlan.visibility === 'unlisted' ? 'リンクのみ公開中' : '非公開'}
+          </Text>
+        ) : publishedPlan?.isRemoved ? (
+          <Text style={styles.publishStatusMuted}>公開から削除済み</Text>
+        ) : null}
+        {publishedPlan && publishedPlan.moderationStatus !== 'active' ? (
+          <Text style={styles.publishStatusMuted}>
+            ステータス: {MODERATION_STATUS_LABELS[publishedPlan.moderationStatus]}
           </Text>
         ) : null}
         <PrimaryButton
           label="このプランを公開する"
           onPress={() => setShowPublishSheet(true)}
         />
-        {publishedPlan?.visibility === 'public' ? (
+        {publishedPlan && !publishedPlan.isRemoved ? (
+          <>
+            {publishedPlan.isPublic ? (
+              <Pressable
+                style={[styles.moderationButton, isModerating && styles.moderationButtonDisabled]}
+                disabled={isModerating}
+                onPress={() => {
+                  Alert.alert(
+                    '公開を停止',
+                    'このプランを非公開に戻します。発見タブからは表示されなくなります。',
+                    [
+                      { text: 'キャンセル', style: 'cancel' },
+                      {
+                        text: '公開を停止する',
+                        onPress: () => {
+                          void runModeration(async () => {
+                            try {
+                              const updated = await stopPublicPlan(publishedPlan.id);
+                              setPublishedPlan(updated);
+                              Alert.alert('非公開にしました', 'プランは非公開に戻りました。');
+                            } catch (error) {
+                              Alert.alert(
+                                'エラー',
+                                getActionErrorMessage(error, '公開の停止に失敗しました'),
+                              );
+                            }
+                          });
+                        },
+                      },
+                    ],
+                  );
+                }}>
+                <Text style={styles.moderationButtonText}>
+                  {isModerating ? '処理中...' : '公開を停止する'}
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={[styles.moderationButton, isModerating && styles.moderationButtonDisabled]}
+                disabled={isModerating}
+                onPress={() => {
+                  Alert.alert(
+                    '非公開に戻す',
+                    'このプランを非公開に戻します。',
+                    [
+                      { text: 'キャンセル', style: 'cancel' },
+                      {
+                        text: '非公開に戻す',
+                        onPress: () => {
+                          void runModeration(async () => {
+                            try {
+                              const updated = await stopPublicPlan(publishedPlan.id);
+                              setPublishedPlan(updated);
+                            } catch (error) {
+                              Alert.alert(
+                                'エラー',
+                                getActionErrorMessage(error, '非公開への変更に失敗しました'),
+                              );
+                            }
+                          });
+                        },
+                      },
+                    ],
+                  );
+                }}>
+                <Text style={styles.moderationButtonText}>
+                  {isModerating ? '処理中...' : '非公開に戻す'}
+                </Text>
+              </Pressable>
+            )}
+            <Pressable
+              style={[
+                styles.moderationButton,
+                styles.moderationButtonDanger,
+                isModerating && styles.moderationButtonDisabled,
+              ]}
+              disabled={isModerating}
+              onPress={() => {
+                Alert.alert(
+                  '公開プランを削除',
+                  'この公開プランを削除しますか？この操作は元に戻せません。',
+                  [
+                    { text: 'キャンセル', style: 'cancel' },
+                    {
+                      text: '削除する',
+                      style: 'destructive',
+                      onPress: () => {
+                        void runModeration(async () => {
+                          try {
+                            await deletePublicPlan(publishedPlan.id);
+                            setPublishedPlan(null);
+                            Alert.alert('削除しました', '公開プランを削除しました。');
+                          } catch (error) {
+                            Alert.alert(
+                              'エラー',
+                              getActionErrorMessage(error, '削除に失敗しました'),
+                            );
+                          }
+                        });
+                      },
+                    },
+                  ],
+                );
+              }}>
+              <Text style={[styles.moderationButtonText, styles.moderationButtonTextDanger]}>
+                {isModerating ? '処理中...' : '公開プランを削除'}
+              </Text>
+            </Pressable>
+          </>
+        ) : null}
+        {publishedPlan?.visibility === 'public' && publishedPlan.isPublic && !publishedPlan.isRemoved ? (
           <Pressable
             style={styles.viewPublicLink}
             onPress={() => router.push(`/public-plan/${publishedPlan.id}`)}>
@@ -332,6 +511,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   hero: {
+    marginBottom: Spacing.four,
+  },
+  creditWrap: {
+    gap: Spacing.three,
     marginBottom: Spacing.four,
   },
   savedBadge: {
@@ -524,6 +707,31 @@ const styles = StyleSheet.create({
     color: NS.colors.accent,
     fontSize: 14,
     fontWeight: '700',
+  },
+  moderationButton: {
+    marginTop: Spacing.two,
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    alignItems: 'center',
+  },
+  moderationButtonDanger: {
+    backgroundColor: NS.colors.dangerSoft,
+    borderColor: 'rgba(248, 113, 113, 0.2)',
+  },
+  moderationButtonDisabled: {
+    opacity: 0.55,
+  },
+  moderationButtonText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  moderationButtonTextDanger: {
+    color: NS.colors.danger,
   },
   footerMeta: {
     alignItems: 'center',

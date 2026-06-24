@@ -21,6 +21,13 @@ export const APP_MESSAGES = {
   nearbySearchFailed: '周辺スポットの検索に失敗しました。もう一度お試しください。',
   noNearbyPlaces: '近くにスポットが見つかりませんでした。別の場所でお試しください。',
   secretaryFailed: 'メッセージの送信に失敗しました。少し時間をおいてもう一度お試しください。',
+  supabaseFailed: 'データの保存・取得に失敗しました。通信環境を確認して、もう一度お試しください。',
+  supabaseNotConfigured:
+    'Supabase が未設定です。.env を確認し、必要な SQL を実行してください。',
+  imageUploadFailed: '画像のアップロードに失敗しました。もう一度お試しください。',
+  dataNotFound: 'データが見つかりませんでした。',
+  authRequired: 'ログインが必要です。ログインしてからもう一度お試しください。',
+  genericActionFailed: '操作に失敗しました。もう一度お試しください。',
 } as const;
 
 export type AppErrorCode =
@@ -29,6 +36,9 @@ export type AppErrorCode =
   | 'NO_PLACES_FOUND'
   | 'OPENAI_FAILED'
   | 'NETWORK_ERROR'
+  | 'SUPABASE_FAILED'
+  | 'AUTH_REQUIRED'
+  | 'NOT_FOUND'
   | 'UNKNOWN';
 
 export class AppError extends Error {
@@ -53,6 +63,8 @@ const NETWORK_PATTERNS = [
 
 const OPENAI_PATTERNS = [/openai/i, /aiからの応答/i, /aiプラン/i];
 
+const SUPABASE_PATTERNS = [/supabase/i, /ログインが必要/i, /テーブル/i, /row level security/i];
+
 export function isNetworkError(error: unknown): boolean {
   if (error instanceof AppError && error.code === 'NETWORK_ERROR') return true;
   const message = error instanceof Error ? error.message : String(error);
@@ -76,6 +88,15 @@ export function classifyError(error: unknown): AppError {
   if (isNetworkError(error)) {
     return new AppError(APP_MESSAGES.networkError, 'NETWORK_ERROR');
   }
+  if (message === APP_MESSAGES.authRequired || /ログインが必要/.test(message)) {
+    return new AppError(APP_MESSAGES.authRequired, 'AUTH_REQUIRED');
+  }
+  if (message === APP_MESSAGES.dataNotFound || /見つかりません/.test(message)) {
+    return new AppError(message, 'NOT_FOUND');
+  }
+  if (SUPABASE_PATTERNS.some((pattern) => pattern.test(message))) {
+    return new AppError(APP_MESSAGES.supabaseFailed, 'SUPABASE_FAILED');
+  }
   if (OPENAI_PATTERNS.some((pattern) => pattern.test(message))) {
     return new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
   }
@@ -92,7 +113,20 @@ export function isRetryableError(error: unknown): boolean {
   return (
     code === 'NETWORK_ERROR' ||
     code === 'OPENAI_FAILED' ||
+    code === 'SUPABASE_FAILED' ||
     code === 'NO_PLACES_FOUND' ||
     code === 'UNKNOWN'
   );
+}
+
+export function getActionErrorMessage(
+  error: unknown,
+  fallback: string = APP_MESSAGES.genericActionFailed,
+): string {
+  const classified = classifyError(error);
+  if (classified.code === 'UNKNOWN' && classified.message !== fallback) {
+    return classified.message;
+  }
+  if (classified.code === 'UNKNOWN') return fallback;
+  return classified.message;
 }

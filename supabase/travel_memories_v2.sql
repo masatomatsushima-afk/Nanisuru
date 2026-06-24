@@ -1,19 +1,5 @@
--- Nanisuru: 旅行メモリー — カテゴリ拡張（苦手なこと・行きたい場所）
--- 既存テーブルがある場合は SQL Editor で実行してください
+-- Nanisuru: 旅行メモリー カテゴリ拡張
+-- 安全・冪等。カテゴリ一覧は travel_memories / SUPABASE_SAFE_SETUP.sql に含まれています。
+-- このファイルを単独実行する必要はありません（データ変更なし）。
 
-alter table public.travel_memories
-  drop constraint if exists travel_memories_category_check;
-
-alter table public.travel_memories
-  add constraint travel_memories_category_check
-  check (
-    category in (
-      'food',
-      'travel_style',
-      'budget',
-      'activities',
-      'dislikes',
-      'companion',
-      'destinations'
-    )
-  );
+SELECT 1;

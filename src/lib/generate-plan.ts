@@ -320,6 +320,11 @@ const BEST_DAY_SYSTEM_PROMPT =
   '旅行メモリーがある場合は最優先で反映し、ユーザーが「自分のことを理解してくれた」と感じさせてください。' +
   'plannerMessage は1〜2文の感情的な一言、overallStrategy は2〜4文の選定理由 — 役割を混同しないこと。';
 
+const ADJUST_SYSTEM_PROMPT =
+  SYSTEM_PROMPT +
+  ' 既存プラン調整モード: ベースプランの構造と良い要素を参考にしつつ、ユーザーの調整指示と編集後の条件に合わせて全体を更新してください。' +
+  '行程・費用・選定理由を一貫して更新し、指定JSONスキーマに従ってください。';
+
 export async function generateImaHimaPlan(params: {
   location: string;
   budget: string;
@@ -529,6 +534,7 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
 
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
   const isRegenerate = Boolean(input.avoidActivities && input.avoidActivities.length > 0);
+  const isAdjustment = Boolean(input.planAdjustment);
   const isMultiDay = TRIP_DURATION_CONFIG[input.tripDuration].dayCount > 1 && !input.spontaneous && !input.bestDay;
   const isImaHima = Boolean(input.spontaneous);
   const isBestDay = Boolean(input.bestDay);
@@ -548,7 +554,9 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
       : undefined;
 
   let systemPrompt = SYSTEM_PROMPT;
-  if (isBestDay) {
+  if (isAdjustment) {
+    systemPrompt = ADJUST_SYSTEM_PROMPT;
+  } else if (isBestDay) {
     systemPrompt = BEST_DAY_SYSTEM_PROMPT;
   } else if (isImaHima) {
     systemPrompt = IMA_HIMA_SYSTEM_PROMPT;
@@ -567,14 +575,21 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     systemPrompt = includeAiAdvice
       ? `${REGENERATE_SYSTEM_PROMPT} カップル・初デート向けは aiAdvice も作成。天気予報がある場合は天候に合わせたスポット選定を維持。`
       : `${REGENERATE_SYSTEM_PROMPT}${weather ? ' 天気予報がある場合は天候に合わせたスポット選定を維持。' : ''}`;
-  } else if (!isImaHima && !isBestDay && includeAiAdvice) {
+  } else if (!isAdjustment && !isImaHima && !isBestDay && includeAiAdvice) {
     systemPrompt = weather
       ? `${DATE_SYSTEM_PROMPT} 天気予報に合わせて屋内・屋外スポットを調整してください。`
       : DATE_SYSTEM_PROMPT;
-  } else if (!isImaHima && !isBestDay && isMultiDay) {
+  } else if (!isAdjustment && !isImaHima && !isBestDay && isMultiDay) {
     systemPrompt = weather
       ? `${MULTI_DAY_SYSTEM_PROMPT} 日ごとの天気予報に合わせてスポットを調整してください。`
       : MULTI_DAY_SYSTEM_PROMPT;
+  }
+
+  if (isAdjustment && weather) {
+    systemPrompt = `${systemPrompt} 天気予報に合わせて屋内・屋外スポットを調整してください。`;
+  }
+  if (isAdjustment && travelMemories.length > 0) {
+    systemPrompt = `${systemPrompt} ユーザーの旅行メモリーを反映してください。`;
   }
 
   if ((isImaHima || isBestDay) && weather) {

@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,12 +12,18 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FollowButton } from '@/components/follow-button';
+import { ReportReasonSheet } from '@/components/report-reason-sheet';
 import { PublicPlanCard } from '@/components/public-plan-card';
+import { ErrorStateCard } from '@/components/ui/state-cards';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { getActionErrorMessage } from '@/lib/app-errors';
 import { fetchPublicPlansByUserId } from '@/lib/public-plans';
+import { reportUser } from '@/lib/content-reports';
+import { blockUser } from '@/lib/user-blocks';
 import { getUserProfileById } from '@/lib/user-profiles';
+import { PLAN_REPORT_REASONS } from '@/types/moderation';
 import type { PublicPlan } from '@/types/public-plan';
 import { getProfileInitial, type UserProfile } from '@/types/user-profile';
 
@@ -39,15 +46,19 @@ export default function CreatorProfileScreen() {
   const [plans, setPlans] = useState<PublicPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [showReportSheet, setShowReportSheet] = useState(false);
 
   const loadProfile = useCallback(async () => {
     if (!id) {
       setNotFound(true);
+      setLoadError(null);
       setIsLoading(false);
       return;
     }
 
     setIsLoading(true);
+    setLoadError(null);
     try {
       const [loadedProfile, loadedPlans] = await Promise.all([
         getUserProfileById(id),
@@ -64,8 +75,9 @@ export default function CreatorProfileScreen() {
       setProfile(loadedProfile);
       setPlans(loadedPlans);
       setNotFound(false);
-    } catch {
-      setNotFound(true);
+    } catch (error) {
+      setLoadError(getActionErrorMessage(error, 'プロフィールの読み込みに失敗しました'));
+      setNotFound(false);
     } finally {
       setIsLoading(false);
     }
@@ -80,6 +92,17 @@ export default function CreatorProfileScreen() {
       <View style={[styles.centered, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" color={NS.colors.accent} />
         <Text style={styles.loadingText}>プロフィールを読み込み中...</Text>
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={[styles.centered, styles.container, { paddingTop: insets.top + Spacing.four }]}>
+        <ErrorStateCard message={loadError} onRetry={() => void loadProfile()} />
+        <Pressable style={styles.homeButton} onPress={() => router.back()}>
+          <Text style={styles.homeButtonText}>戻る</Text>
+        </Pressable>
       </View>
     );
   }
@@ -150,6 +173,10 @@ export default function CreatorProfileScreen() {
           </View>
         ) : null}
 
+        {!isSelf && profile.followerCount === 0 ? (
+          <Text style={styles.noFollowersText}>まだフォロワーはいません</Text>
+        ) : null}
+
         {profile.styleTags.length > 0 ? (
           <View style={styles.tagRow}>
             {profile.styleTags.map((tag) => (
@@ -179,6 +206,72 @@ export default function CreatorProfileScreen() {
           />
         ))
       )}
+
+      {!isSelf ? (
+        <View style={styles.safetySection}>
+          <Text style={styles.safetyTitle}>安全・プライバシー</Text>
+          <Pressable
+            style={styles.safetyButton}
+            onPress={() => {
+              if (!session) {
+                router.push('/login');
+                return;
+              }
+              setShowReportSheet(true);
+            }}>
+            <Text style={styles.safetyButtonText}>このユーザーを通報</Text>
+          </Pressable>
+          <Pressable
+            style={styles.safetyButton}
+            onPress={() => {
+              if (!session) {
+                router.push('/login');
+                return;
+              }
+              Alert.alert(
+                'ユーザーをブロック',
+                'このユーザーをブロックしますか？今後、このユーザーの公開プランやコメントは表示されなくなります。',
+                [
+                  { text: 'キャンセル', style: 'cancel' },
+                  {
+                    text: 'ブロックする',
+                    style: 'destructive',
+                    onPress: () => {
+                      void blockUser(profile.userId)
+                        .then(() => {
+                          Alert.alert('ブロックしました', 'このユーザーのコンテンツは表示されなくなりました。');
+                          router.back();
+                        })
+                        .catch((error) => {
+                          Alert.alert(
+                            'エラー',
+                            error instanceof Error ? error.message : 'ブロックに失敗しました',
+                          );
+                        });
+                    },
+                  },
+                ],
+              );
+            }}>
+            <Text style={styles.safetyButtonText}>このユーザーをブロック</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      <ReportReasonSheet
+        visible={showReportSheet}
+        title="ユーザーを通報"
+        subtitle="問題の内容に最も近い理由を選んでください。"
+        reasons={PLAN_REPORT_REASONS}
+        onClose={() => setShowReportSheet(false)}
+        onSubmit={async (reason, details) => {
+          await reportUser(profile.userId, reason, details);
+          Alert.alert(
+            'ご報告ありがとうございます',
+            '内容を確認いたします。安全なコミュニティ維持にご協力いただき、ありがとうございます。',
+          );
+        }}
+      />
     </ScrollView>
   );
 }
@@ -292,6 +385,12 @@ const styles = StyleSheet.create({
   followWrap: {
     marginBottom: Spacing.three,
   },
+  noFollowersText: {
+    color: NS.colors.textMuted,
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: Spacing.two,
+  },
   tagRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -351,5 +450,32 @@ const styles = StyleSheet.create({
     color: accent,
     fontSize: 15,
     fontWeight: '700',
+  },
+  safetySection: {
+    marginTop: Spacing.four,
+    gap: Spacing.two,
+    paddingTop: Spacing.four,
+    borderTopWidth: 1,
+    borderTopColor: NS.colors.border,
+  },
+  safetyTitle: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: Spacing.one,
+  },
+  safetyButton: {
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.four,
+  },
+  safetyButtonText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

@@ -1,5 +1,6 @@
 import type { SavedTripPayload } from '@/types/trip';
 import type { PublicPlanImage, PublishPlanImageDraft } from '@/types/public-plan-image';
+import type { PublicPlanVideo, PublishPlanVideoDraft } from '@/types/public-plan-video';
 
 export const PUBLIC_PLAN_CATEGORIES = [
   'デート',
@@ -20,27 +21,7 @@ export const PUBLIC_PLAN_VISIBILITY_OPTIONS = [
 
 export type PublicPlanVisibility = (typeof PUBLIC_PLAN_VISIBILITY_OPTIONS)[number]['value'];
 
-export type DiscoverSortOption =
-  | 'popular'
-  | 'newest'
-  | 'date'
-  | 'gourmet'
-  | 'travel'
-  | 'low_budget'
-  | 'rainy_day';
-
-export const DISCOVER_SORT_OPTIONS: ReadonlyArray<{
-  value: DiscoverSortOption;
-  label: string;
-}> = [
-  { value: 'popular', label: '人気' },
-  { value: 'newest', label: '新着' },
-  { value: 'date', label: 'デート' },
-  { value: 'gourmet', label: 'グルメ' },
-  { value: 'travel', label: '旅行' },
-  { value: 'low_budget', label: '低予算' },
-  { value: 'rainy_day', label: '雨の日' },
-];
+export type PublicPlanModerationStatus = 'active' | 'pending' | 'hidden' | 'removed';
 
 export type PublicPlan = {
   id: string;
@@ -51,10 +32,15 @@ export type PublicPlan = {
   category: PublicPlanCategory;
   tags: string[];
   visibility: PublicPlanVisibility;
+  isPublic: boolean;
+  isRemoved: boolean;
+  moderationStatus: PublicPlanModerationStatus;
   creatorDisplayName: string;
   payload: SavedTripPayload;
   likeCount: number;
   saveCount: number;
+  copyCount?: number;
+  commentCount?: number;
   createdAt: string;
   updatedAt: string;
   likedByMe?: boolean;
@@ -62,6 +48,7 @@ export type PublicPlan = {
   creatorFollowerCount?: number;
   isFollowingCreator?: boolean;
   images?: PublicPlanImage[];
+  videos?: PublicPlanVideo[];
 };
 
 export type PublishPublicPlanInput = {
@@ -73,6 +60,7 @@ export type PublishPublicPlanInput = {
   visibility: PublicPlanVisibility;
   payload: SavedTripPayload;
   imageDrafts?: PublishPlanImageDraft[];
+  videoDrafts?: PublishPlanVideoDraft[];
 };
 
 export type PublicPlanListItem = PublicPlan;
@@ -125,4 +113,13 @@ export function personalityToDefaultCategory(
 ): PublicPlanCategory {
   if (personality === 'グルメ') return 'グルメ';
   return '旅行';
+}
+
+export function isDiscoverablePublicPlan(plan: PublicPlan): boolean {
+  return (
+    plan.visibility === 'public' &&
+    plan.isPublic &&
+    !plan.isRemoved &&
+    plan.moderationStatus === 'active'
+  );
 }

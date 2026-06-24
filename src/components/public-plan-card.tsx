@@ -4,6 +4,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { FollowButton } from '@/components/follow-button';
 import { PublicPlanImageGallery } from '@/components/public-plan-image-gallery';
+import { PublicPlanVideoLinks } from '@/components/public-plan-video-links';
 import { PremiumCard } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
@@ -23,6 +24,10 @@ type PublicPlanCardProps = {
   onCreatorPress?: () => void;
   onFollowChange?: (planId: string, next: { isFollowing: boolean; followerCount: number }) => void;
   onRequireLogin?: () => void;
+  rankBadge?: string | null;
+  rankingScore?: number;
+  showPopularCreatorBadge?: boolean;
+  compact?: boolean;
 };
 
 export function PublicPlanCard({
@@ -33,6 +38,10 @@ export function PublicPlanCard({
   onCreatorPress,
   onFollowChange,
   onRequireLogin,
+  rankBadge,
+  rankingScore,
+  showPopularCreatorBadge = false,
+  compact = false,
 }: PublicPlanCardProps) {
   const destination = getPublicPlanDestination(plan);
   const budget = formatPublicPlanBudget(plan);
@@ -58,18 +67,28 @@ export function PublicPlanCard({
 
   return (
     <Animated.View entering={FadeInDown.delay(index * 60).duration(420).springify()}>
-      <PremiumCard style={styles.card}>
-        <PublicPlanImageGallery
-          images={plan.images}
-          title={plan.title}
-          category={plan.category}
-          destination={destination}
-          variant="card"
-        />
+      <PremiumCard style={compact ? styles.cardCompact : styles.card}>
+        {rankBadge ? (
+          <View style={[styles.rankBadge, rankBadge === '1位' && styles.rankBadgeGold]}>
+            <Text style={[styles.rankBadgeText, rankBadge === '1位' && styles.rankBadgeTextGold]}>
+              {rankBadge}
+            </Text>
+          </View>
+        ) : null}
+
+        {!compact ? (
+          <PublicPlanImageGallery
+            images={plan.images}
+            title={plan.title}
+            category={plan.category}
+            destination={destination}
+            variant="card"
+          />
+        ) : null}
 
         <Pressable style={({ pressed }) => [styles.body, pressed && styles.bodyPressed]} onPress={onPress}>
           <View style={styles.header}>
-            {!plan.images?.length ? (
+            {!plan.images?.length || compact ? (
               <View style={styles.categoryBadge}>
                 <Text style={styles.categoryBadgeText}>{plan.category}</Text>
               </View>
@@ -80,6 +99,12 @@ export function PublicPlanCard({
               <Text style={styles.statText}>♥ {plan.likeCount}</Text>
               <Text style={styles.statDivider}>·</Text>
               <Text style={styles.statText}>📌 {plan.saveCount}</Text>
+              {(plan.copyCount ?? 0) > 0 ? (
+                <>
+                  <Text style={styles.statDivider}>·</Text>
+                  <Text style={styles.statText}>📋 {plan.copyCount}</Text>
+                </>
+              ) : null}
             </View>
           </View>
 
@@ -118,6 +143,8 @@ export function PublicPlanCard({
               ))}
             </View>
           ) : null}
+
+          <PublicPlanVideoLinks videos={plan.videos} variant="compact" />
         </Pressable>
 
         <View style={styles.footer}>
@@ -133,8 +160,14 @@ export function PublicPlanCard({
               <Text style={styles.creatorName} numberOfLines={1}>
                 {plan.creatorDisplayName}
               </Text>
-              {followerCount > 0 ? (
+              {showPopularCreatorBadge ? (
+                <View style={styles.popularCreatorBadge}>
+                  <Text style={styles.popularCreatorBadgeText}>人気プラン作成者</Text>
+                </View>
+              ) : followerCount > 0 ? (
                 <Text style={styles.followerText}>フォロワー {followerCount}</Text>
+              ) : rankingScore !== undefined ? (
+                <Text style={styles.followerText}>スコア {Math.round(rankingScore)}</Text>
               ) : null}
             </View>
           </Pressable>
@@ -165,6 +198,35 @@ const styles = StyleSheet.create({
     padding: 0,
     overflow: 'hidden',
     marginBottom: Spacing.three,
+  },
+  cardCompact: {
+    padding: 0,
+    overflow: 'hidden',
+    marginBottom: 0,
+  },
+  rankBadge: {
+    position: 'absolute',
+    top: Spacing.two,
+    right: Spacing.two,
+    zIndex: 3,
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.pill,
+    paddingHorizontal: Spacing.two + 2,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: NS.colors.accentBorder,
+  },
+  rankBadgeGold: {
+    backgroundColor: NS.colors.accent,
+    borderColor: NS.colors.accent,
+  },
+  rankBadgeText: {
+    color: NS.colors.accent,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  rankBadgeTextGold: {
+    color: NS.colors.bg,
   },
   body: {
     paddingHorizontal: Spacing.four,
@@ -319,6 +381,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     marginTop: 2,
+  },
+  popularCreatorBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    backgroundColor: NS.colors.accentSoft,
+    borderRadius: NS.radius.pill,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: NS.colors.accentBorder,
+  },
+  popularCreatorBadgeText: {
+    color: NS.colors.accent,
+    fontSize: 10,
+    fontWeight: '800',
   },
   openHint: {
     color: NS.colors.accent,

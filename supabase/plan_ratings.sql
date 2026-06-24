@@ -1,43 +1,35 @@
--- Nanisuru: プラン評価・フィードバック
--- Supabase SQL Editor で実行してください
+-- Nanisuru: plan_ratings
+-- 安全・冪等。全体セットアップは SUPABASE_SAFE_SETUP.sql を推奨。
 
-create table if not exists public.plan_ratings (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users (id) on delete cascade,
-  trip_id uuid references public.trips (id) on delete set null,
-  stars smallint not null check (stars between 1 and 5),
-  feedback_tags text[] not null default '{}',
-  plan_source text not null check (plan_source in ('home', 'imafima', 'best-day')),
-  plan_snapshot jsonb not null,
-  created_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS public.plan_ratings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  trip_id uuid REFERENCES public.trips (id) ON DELETE SET NULL,
+  stars smallint NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  feedback_tags text[] NOT NULL DEFAULT '{}',
+  plan_source text NOT NULL CHECK (plan_source IN ('home', 'imafima', 'best-day')),
+  plan_snapshot jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create index if not exists plan_ratings_user_id_idx
-  on public.plan_ratings (user_id, created_at desc);
+CREATE INDEX IF NOT EXISTS plan_ratings_user_id_idx ON public.plan_ratings (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS plan_ratings_trip_id_idx ON public.plan_ratings (trip_id) WHERE trip_id IS NOT NULL;
+ALTER TABLE public.plan_ratings ENABLE ROW LEVEL SECURITY;
 
-create index if not exists plan_ratings_trip_id_idx
-  on public.plan_ratings (trip_id)
-  where trip_id is not null;
-
-alter table public.plan_ratings enable row level security;
-
-create policy "plan_ratings_select_own"
-  on public.plan_ratings
-  for select
-  using (auth.uid() = user_id);
-
-create policy "plan_ratings_insert_own"
-  on public.plan_ratings
-  for insert
-  with check (auth.uid() = user_id);
-
-create policy "plan_ratings_update_own"
-  on public.plan_ratings
-  for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-create policy "plan_ratings_delete_own"
-  on public.plan_ratings
-  for delete
-  using (auth.uid() = user_id);
+DO $policy$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'plan_ratings' AND policyname = 'plan_ratings_select_own') THEN
+    CREATE POLICY "plan_ratings_select_own" ON public.plan_ratings FOR SELECT USING (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'plan_ratings' AND policyname = 'plan_ratings_insert_own') THEN
+    CREATE POLICY "plan_ratings_insert_own" ON public.plan_ratings FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'plan_ratings' AND policyname = 'plan_ratings_update_own') THEN
+    CREATE POLICY "plan_ratings_update_own" ON public.plan_ratings FOR UPDATE
+      USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'plan_ratings' AND policyname = 'plan_ratings_delete_own') THEN
+    CREATE POLICY "plan_ratings_delete_own" ON public.plan_ratings FOR DELETE USING (auth.uid() = user_id);
+  END IF;
+END
+$policy$;

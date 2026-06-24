@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,14 +18,21 @@ import { ConciergeAnalysisSection } from '@/components/concierge-analysis-sectio
 import { CurrentLocationButton } from '@/components/current-location-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { PublicPlanActions } from '@/components/public-plan-actions';
+import { PrimaryButton } from '@/components/ui/premium-card';
 import { FollowButton } from '@/components/follow-button';
 import { PublicPlanImageGallery } from '@/components/public-plan-image-gallery';
+import { PublicPlanFeedbackSection } from '@/components/public-plan-feedback-section';
+import { PublicPlanSafetySection } from '@/components/public-plan-safety-section';
+import { PublicPlanRelatedVersions } from '@/components/public-plan-related-versions';
+import { PublicPlanVersionCreatorSection } from '@/components/public-plan-version-creator-section';
+import { PublicPlanVideoLinks } from '@/components/public-plan-video-links';
 import { WeatherSection } from '@/components/weather-section';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { getPublicPlanById } from '@/lib/public-plans';
+import { copyPublicPlanForEditing } from '@/lib/plan-copy';
 import {
   formatPublicPlanBudget,
   formatPublicPlanDuration,
@@ -50,6 +58,7 @@ export default function PublicPlanDetailScreen() {
   const currentUserId = session?.user.id ?? null;
   const [plan, setPlan] = useState<PublicPlan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isCopying, setIsCopying] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
@@ -69,6 +78,28 @@ export default function PublicPlanDetailScreen() {
       })
       .finally(() => setIsLoading(false));
   }, [id]);
+
+  const handleCopyAndEdit = async () => {
+    if (!plan) return;
+
+    if (!session) {
+      router.push('/login');
+      return;
+    }
+
+    setIsCopying(true);
+    try {
+      const copied = await copyPublicPlanForEditing(plan.id);
+      router.push(`/plan-copy/${copied.id}`);
+    } catch (error) {
+      Alert.alert(
+        'エラー',
+        error instanceof Error ? error.message : 'プランのコピーに失敗しました',
+      );
+    } finally {
+      setIsCopying(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -96,6 +127,7 @@ export default function PublicPlanDetailScreen() {
   const { details } = payload;
   const days = payload.days?.length > 0 ? payload.days : [];
   const destination = getPublicPlanDestination(plan);
+  const isCreator = currentUserId === plan.userId;
 
   return (
     <ScrollView
@@ -119,6 +151,8 @@ export default function PublicPlanDetailScreen() {
         destination={destination}
         variant="detail"
       />
+
+      <PublicPlanVideoLinks videos={plan.videos} variant="detail" />
 
       <View style={styles.hero}>
         <View style={styles.publicBadge}>
@@ -177,6 +211,11 @@ export default function PublicPlanDetailScreen() {
       </View>
 
       <View style={styles.actionsWrap}>
+        <PrimaryButton
+          label={isCopying ? 'コピー中...' : 'このプランをコピーして編集'}
+          onPress={() => void handleCopyAndEdit()}
+          disabled={isCopying}
+        />
         <PublicPlanActions
           plan={plan}
           isLoggedIn={Boolean(session)}
@@ -185,6 +224,8 @@ export default function PublicPlanDetailScreen() {
           onSaved={(savedTripId) => router.push(`/saved-trip/${savedTripId}`)}
         />
       </View>
+
+      <PublicPlanRelatedVersions publicPlanId={plan.id} currentUserId={currentUserId} />
 
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>📍 行き先</Text>
@@ -266,6 +307,31 @@ export default function PublicPlanDetailScreen() {
           <Text style={styles.emptySectionText}>予約・アクセス情報がありません</Text>
         )}
       </View>
+
+      {isCreator ? (
+        <PublicPlanVersionCreatorSection
+          publicPlanId={plan.id}
+          onDraftCreated={(draftPlanId) => router.push(`/plan-version-draft/${draftPlanId}`)}
+        />
+      ) : null}
+
+      <PublicPlanFeedbackSection
+        publicPlanId={plan.id}
+        creatorUserId={plan.userId}
+        currentUserId={currentUserId}
+        isLoggedIn={Boolean(session)}
+        onRequireLogin={() => router.push('/login')}
+      />
+
+      <PublicPlanSafetySection
+        plan={plan}
+        isCreator={isCreator}
+        isLoggedIn={Boolean(session)}
+        onRequireLogin={() => router.push('/login')}
+        onPlanUpdated={setPlan}
+        onPlanRemoved={() => router.replace('/explore')}
+        onUserBlocked={() => router.replace('/explore')}
+      />
 
       <View style={styles.readOnlyNote}>
         <Text style={styles.readOnlyNoteText}>閲覧専用 · 個人情報は表示されません</Text>
@@ -419,6 +485,7 @@ const styles = StyleSheet.create({
   },
   actionsWrap: {
     marginBottom: Spacing.four,
+    gap: Spacing.three,
   },
   sectionCard: {
     backgroundColor: NS.colors.bgElevated,

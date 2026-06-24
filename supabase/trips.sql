@@ -1,30 +1,45 @@
--- Nanisuru: ログインユーザーの保存プラン（trips）
--- Supabase SQL Editor で実行してください
+-- Nanisuru: saved_trips（実テーブル名: trips）
+-- 安全・冪等。全体セットアップは SUPABASE_SAFE_SETUP.sql を推奨。
 
-create table if not exists public.trips (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users (id) on delete cascade,
-  title text not null,
-  payload jsonb not null,
-  created_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS public.trips (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  title text NOT NULL,
+  payload jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create index if not exists trips_user_id_created_at_idx
-  on public.trips (user_id, created_at desc);
+CREATE INDEX IF NOT EXISTS trips_user_id_created_at_idx
+  ON public.trips (user_id, created_at DESC);
 
-alter table public.trips enable row level security;
+ALTER TABLE public.trips ENABLE ROW LEVEL SECURITY;
 
-create policy "trips_select_own"
-  on public.trips
-  for select
-  using (auth.uid() = user_id);
-
-create policy "trips_insert_own"
-  on public.trips
-  for insert
-  with check (auth.uid() = user_id);
-
-create policy "trips_delete_own"
-  on public.trips
-  for delete
-  using (auth.uid() = user_id);
+DO $policy$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'trips' AND policyname = 'trips_select_own'
+  ) THEN
+    CREATE POLICY "trips_select_own" ON public.trips FOR SELECT USING (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'trips' AND policyname = 'trips_insert_own'
+  ) THEN
+    CREATE POLICY "trips_insert_own" ON public.trips FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'trips' AND policyname = 'trips_update_own'
+  ) THEN
+    CREATE POLICY "trips_update_own" ON public.trips FOR UPDATE
+      USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'trips' AND policyname = 'trips_delete_own'
+  ) THEN
+    CREATE POLICY "trips_delete_own" ON public.trips FOR DELETE USING (auth.uid() = user_id);
+  END IF;
+END
+$policy$;

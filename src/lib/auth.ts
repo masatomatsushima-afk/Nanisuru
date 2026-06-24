@@ -3,7 +3,7 @@ import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
-import type { User } from '@supabase/supabase-js';
+import type { Session, User } from '@supabase/supabase-js';
 
 import { getSupabase, isSupabaseConfigured } from './supabase';
 
@@ -14,29 +14,122 @@ const redirectTo = makeRedirectUri({
   path: 'auth/callback',
 });
 
-async function createSessionFromUrl(url: string): Promise<void> {
+const SESSION_WAIT_MS = 5000;
+const SESSION_POLL_MS = 200;
+
+function oauthParamsPresent(url: string): boolean {
+  return (
+    url.includes('access_token=') ||
+    url.includes('refresh_token=') ||
+    url.includes('code=') ||
+    url.includes('error=') ||
+    url.includes('error_description=')
+  );
+}
+
+/** Web OAuth redirect URL (includes hash fragment tokens). */
+export function getWebOAuthCallbackUrl(): string | null {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return null;
+  }
+  return window.location.href;
+}
+
+/** Parse OAuth callback URL — supports `#access_token=...` and `?code=...`. */
+export async function restoreSessionFromOAuthUrl(url: string): Promise<boolean> {
+  if (!url.trim() || !oauthParamsPresent(url)) {
+    return false;
+  }
+
   const { params, errorCode } = QueryParams.getQueryParams(url);
 
   if (errorCode) {
     throw new Error(`認証エラー: ${errorCode}`);
   }
 
-  const { access_token, refresh_token, code } = params;
+  const accessToken = params.access_token ?? params.accessToken;
+  const refreshToken = params.refresh_token ?? params.refreshToken;
+  const code = params.code;
   const supabase = getSupabase();
 
-  if (access_token && refresh_token) {
-    const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+  if (accessToken && refreshToken) {
+    const { error } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
     if (error) throw error;
-    return;
+    return true;
   }
 
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) throw error;
-    return;
+    return true;
   }
 
-  throw new Error('認証セッションの取得に失敗しました');
+  return false;
+}
+
+async function createSessionFromUrl(url: string): Promise<void> {
+  const restored = await restoreSessionFromOAuthUrl(url);
+  if (!restored) {
+    throw new Error('認証セッションの取得に失敗しました');
+  }
+}
+
+/** Wait for Supabase to persist and expose a session after OAuth redirect. */
+export async function waitForAuthSession(timeoutMs = SESSION_WAIT_MS): Promise<Session | null> {
+  const supabase = getSupabase();
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session) return session;
+    await new Promise((resolve) => setTimeout(resolve, SESSION_POLL_MS));
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session;
+}
+
+/** Resolve OAuth callback from deep link and/or current web URL. */
+export async function completeOAuthCallback(initialUrl?: string | null): Promise<Session | null> {
+  const candidateUrls = [initialUrl, getWebOAuthCallbackUrl()].filter(
+    (url): url is string => Boolean(url?.trim()),
+  );
+
+  let lastError: unknown = null;
+  for (const url of candidateUrls) {
+    try {
+      if (await restoreSessionFromOAuthUrl(url)) {
+        break;
+      }
+    } catch (error) {
+      lastError = error;
+      console.warn('[auth] OAuth callback URL の処理に失敗しました:', error);
+    }
+  }
+
+  const session = await waitForAuthSession();
+  if (session) return session;
+
+  if (lastError) {
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('ログインに失敗しました。もう一度お試しください。');
+  }
+
+  return null;
+}
+
+export function clearWebOAuthCallbackUrl(): void {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  if (!oauthParamsPresent(window.location.href)) return;
+  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
 }
 
 function assertSupabaseConfigured(): void {

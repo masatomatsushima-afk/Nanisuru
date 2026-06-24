@@ -1,6 +1,6 @@
 import type { CurrencyCode } from '@/constants/currency';
 import { getCurrency } from '@/constants/currency';
-import type { CompanionOption, PersonalityOption, TripDurationOption } from '@/types/plan';
+import type { CompanionOption, ItineraryDay, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
 import { isDateRelatedCompanion } from '@/types/plan';
 import type { SpontaneousContext } from '@/types/imafima';
 import type { BestDayContext } from '@/types/best-day';
@@ -38,6 +38,12 @@ export type PlanInput = {
   avoidActivities?: string[];
   spontaneous?: SpontaneousContext;
   bestDay?: BestDayContext;
+  planAdjustment?: {
+    instruction: string;
+    baseDays: ItineraryDay[];
+    baseDetails: PlanDetails;
+    notes?: string;
+  };
 };
 
 const PERSONALITY_GUIDE: Record<PersonalityOption, string> = {
@@ -108,6 +114,36 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
 - 上記と同名・同系統の店舗も避け、別エリアや別ジャンルも積極的に検討すること
 - 旅行タイプ「${input.personality}」の方針は維持し、前回とは違う魅力が伝わるプランにすること`
       : '';
+
+  const adjustmentSection = input.planAdjustment
+    ? `
+
+## プラン調整（最重要）
+お客様は公開プランをベースに、自分用にカスタマイズしています。
+**ベースプランの良さを活かしつつ**、以下の調整指示に従ってプラン全体を更新してください。
+元の作成者クレジットはアプリ側で表示するため、JSON内には含めないでください。
+
+### 調整指示
+${input.planAdjustment.instruction}
+
+### 現在のベースプラン
+${JSON.stringify(
+  {
+    days: input.planAdjustment.baseDays,
+    totalBudget: input.planAdjustment.baseDetails.totalBudget,
+    duration: input.planAdjustment.baseDetails.duration,
+    highlights: input.planAdjustment.baseDetails.highlights,
+  },
+  null,
+  2,
+)}
+
+${input.planAdjustment.notes?.trim() ? `### ユーザーメモ\n${input.planAdjustment.notes.trim()}` : ''}
+
+- 画面上で編集された条件（場所・予算・人数・同行者・気分・行きたい/避けたい場所）を最優先すること
+- 調整指示に沿って timeline・費用・選定理由を更新すること
+- ベースプランの良い要素は残しつつ、指示に沿って改善すること`
+    : '';
 
   const daysJsonExample = isMultiDay
     ? `"days": [
@@ -345,5 +381,5 @@ ${budgetOptimizationSection}${currencySection}${weatherSection}${customPreferenc
   "rainyDayAlternatives": ["雨の場合: ○○の代わりに△△（屋内）", "代替案2", "代替案3", "代替案4"]${aiAdviceJson}
 }
 
-totalBudget・budgetBreakdown・estimatedCostには必ず${symbol}を使用してください。${dateAdviceSection}${variationSection}`;
+totalBudget・budgetBreakdown・estimatedCostには必ず${symbol}を使用してください。${dateAdviceSection}${variationSection}${adjustmentSection}`;
 }

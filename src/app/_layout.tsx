@@ -86,7 +86,25 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="plan-copy/[id]"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="plan-version-draft/[id]"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
             name="creator/[id]"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="notifications"
             options={{
               animation: 'slide_from_right',
             }}

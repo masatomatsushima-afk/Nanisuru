@@ -1,24 +1,23 @@
--- Nanisuru: 旅行プラン共有テーブル（公開リンク · 閲覧専用）
--- Supabase SQL Editor で実行してください
--- 保存済みプランの「共有リンクを作成」から payload が保存されます
+-- Nanisuru: shared_trips
+-- 安全・冪等。全体セットアップは SUPABASE_SAFE_SETUP.sql を推奨。
 
-create table if not exists public.shared_trips (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  payload jsonb not null,
-  created_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS public.shared_trips (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  payload jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create index if not exists shared_trips_created_at_idx on public.shared_trips (created_at desc);
+CREATE INDEX IF NOT EXISTS shared_trips_created_at_idx ON public.shared_trips (created_at DESC);
+ALTER TABLE public.shared_trips ENABLE ROW LEVEL SECURITY;
 
-alter table public.shared_trips enable row level security;
-
-create policy "shared_trips_public_read"
-  on public.shared_trips
-  for select
-  using (true);
-
-create policy "shared_trips_public_insert"
-  on public.shared_trips
-  for insert
-  with check (true);
+DO $policy$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'shared_trips' AND policyname = 'shared_trips_public_read') THEN
+    CREATE POLICY "shared_trips_public_read" ON public.shared_trips FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'shared_trips' AND policyname = 'shared_trips_public_insert') THEN
+    CREATE POLICY "shared_trips_public_insert" ON public.shared_trips FOR INSERT WITH CHECK (true);
+  END IF;
+END
+$policy$;

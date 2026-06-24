@@ -7,18 +7,29 @@ import {
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { SavedTripPayload } from '@/types/trip';
 import type {
-  DiscoverSortOption,
   PublicPlan,
   PublicPlanCategory,
   PublicPlanVisibility,
   PublishPublicPlanInput,
 } from '@/types/public-plan';
-import { parseBudgetAmount } from '@/types/public-plan';
 import {
   fetchImagesForPlan,
   fetchImagesForPlans,
   syncPublicPlanImages,
 } from '@/lib/public-plan-images';
+import {
+  fetchVideosForPlan,
+  fetchVideosForPlans,
+  syncPublicPlanVideos,
+  validateVideoDrafts,
+} from '@/lib/public-plan-videos';
+import { notifyPlanLiked, notifyPlanSaved } from '@/lib/notifications';
+import { getBlockedUserIds, filterPlansByBlockedUsers } from '@/lib/user-blocks';
+import type { PublicPlanModerationStatus } from '@/types/public-plan';
+import { isDiscoverablePublicPlan } from '@/types/public-plan';
+
+const PUBLIC_PLAN_SELECT =
+  'id, user_id, source_trip_id, title, description, category, tags, visibility, is_public, is_removed, moderation_status, creator_display_name, payload, like_count, save_count, copy_count, comment_count, created_at, updated_at';
 
 type PublicPlanRow = {
   id: string;
@@ -29,10 +40,15 @@ type PublicPlanRow = {
   category: PublicPlanCategory;
   tags: string[] | null;
   visibility: PublicPlanVisibility;
+  is_public?: boolean;
+  is_removed?: boolean;
+  moderation_status?: PublicPlanModerationStatus;
   creator_display_name: string;
   payload: SavedTripPayload;
   like_count: number;
   save_count: number;
+  copy_count?: number;
+  comment_count?: number;
   created_at: string;
   updated_at: string;
 };
@@ -55,10 +71,15 @@ function rowToPublicPlan(row: PublicPlanRow, extras?: Partial<PublicPlan>): Publ
     category: row.category,
     tags: row.tags ?? [],
     visibility: row.visibility,
+    isPublic: row.is_public ?? row.visibility === 'public',
+    isRemoved: row.is_removed ?? false,
+    moderationStatus: row.moderation_status ?? 'active',
     creatorDisplayName: row.creator_display_name,
     payload: row.payload,
     likeCount: row.like_count,
     saveCount: row.save_count,
+    copyCount: row.copy_count ?? 0,
+    commentCount: row.comment_count ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...extras,
@@ -134,63 +155,47 @@ async function attachPlanImages(plans: PublicPlan[]): Promise<PublicPlan[]> {
   }));
 }
 
+async function attachPlanVideos(plans: PublicPlan[]): Promise<PublicPlan[]> {
+  if (plans.length === 0) return plans;
+
+  const videoMap = await fetchVideosForPlans(plans.map((plan) => plan.id));
+  return plans.map((plan) => ({
+    ...plan,
+    videos: videoMap.get(plan.id) ?? [],
+  }));
+}
+
 async function finalizePlans(plans: PublicPlan[]): Promise<PublicPlan[]> {
-  const withInteractions = await attachUserInteractions(plans);
+  const blockedUserIds = await getBlockedUserIds();
+  const visiblePlans = filterPlansByBlockedUsers(plans, blockedUserIds);
+  const withInteractions = await attachUserInteractions(visiblePlans);
   const withSocial = await attachCreatorSocial(withInteractions);
-  return attachPlanImages(withSocial);
+  const withImages = await attachPlanImages(withSocial);
+  return attachPlanVideos(withImages);
 }
 
-function applyDiscoverSort(plans: PublicPlan[], sort: DiscoverSortOption): PublicPlan[] {
-  const visible = plans.filter((plan) => plan.visibility === 'public');
-
-  switch (sort) {
-    case 'popular':
-      return [...visible].sort((a, b) => b.likeCount - a.likeCount || b.createdAt.localeCompare(a.createdAt));
-    case 'newest':
-      return [...visible].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    case 'date':
-      return visible.filter((plan) => plan.category === 'デート');
-    case 'gourmet':
-      return visible.filter(
-        (plan) =>
-          plan.category === 'グルメ' ||
-          plan.payload.personality === 'グルメ' ||
-          plan.tags.some((tag) => tag.includes('グルメ')),
-      );
-    case 'travel':
-      return visible.filter((plan) => plan.category === '旅行');
-    case 'low_budget':
-      return [...visible].sort((a, b) => parseBudgetAmount(a) - parseBudgetAmount(b));
-    case 'rainy_day':
-      return visible.filter(
-        (plan) =>
-          plan.tags.some((tag) => tag.includes('雨')) ||
-          (plan.payload.details?.rainyDayAlternatives?.length ?? 0) > 0,
-      );
-    default:
-      return visible;
-  }
-}
-
-export async function fetchPublicPlans(sort: DiscoverSortOption): Promise<PublicPlan[]> {
+export async function fetchPublicPlans(): Promise<PublicPlan[]> {
   assertPublicPlansConfigured();
 
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('public_plans')
-    .select(
-      'id, user_id, source_trip_id, title, description, category, tags, visibility, creator_display_name, payload, like_count, save_count, created_at, updated_at',
-    )
+    .select(PUBLIC_PLAN_SELECT)
     .eq('visibility', 'public')
+    .eq('is_public', true)
+    .eq('is_removed', false)
+    .eq('moderation_status', 'active')
     .order('created_at', { ascending: false })
-    .limit(60);
+    .limit(100);
 
   if (error) {
     throw new Error(error.message ?? '公開プランの取得に失敗しました');
   }
 
-  const plans = applyDiscoverSort((data as PublicPlanRow[]).map((row) => rowToPublicPlan(row)), sort);
-  return finalizePlans(plans.slice(0, 30));
+  const plans = (data as PublicPlanRow[])
+    .map((row) => rowToPublicPlan(row))
+    .filter(isDiscoverablePublicPlan);
+  return finalizePlans(plans);
 }
 
 export async function fetchPublicPlansByUserId(userId: string): Promise<PublicPlan[]> {
@@ -201,11 +206,12 @@ export async function fetchPublicPlansByUserId(userId: string): Promise<PublicPl
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('public_plans')
-    .select(
-      'id, user_id, source_trip_id, title, description, category, tags, visibility, creator_display_name, payload, like_count, save_count, created_at, updated_at',
-    )
+    .select(PUBLIC_PLAN_SELECT)
     .eq('user_id', userId)
     .eq('visibility', 'public')
+    .eq('is_public', true)
+    .eq('is_removed', false)
+    .eq('moderation_status', 'active')
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -224,18 +230,24 @@ export async function getPublicPlanById(planId: string): Promise<PublicPlan | nu
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('public_plans')
-    .select(
-      'id, user_id, source_trip_id, title, description, category, tags, visibility, creator_display_name, payload, like_count, save_count, created_at, updated_at',
-    )
+    .select(PUBLIC_PLAN_SELECT)
     .eq('id', planId)
     .maybeSingle();
 
   if (error || !data) return null;
 
   const plan = rowToPublicPlan(data as PublicPlanRow);
-  if (plan.visibility === 'private') {
-    const userId = await getCurrentUserId();
-    if (userId !== plan.userId) return null;
+  const userId = await getCurrentUserId();
+  const isOwner = userId === plan.userId;
+
+  if (plan.visibility === 'private' && !isOwner) return null;
+  if (!isOwner && !isDiscoverablePublicPlan(plan) && plan.visibility !== 'unlisted') {
+    return null;
+  }
+
+  if (!isOwner) {
+    const blockedUserIds = await getBlockedUserIds();
+    if (blockedUserIds.has(plan.userId)) return null;
   }
 
   const [withSocial] = await finalizePlans([plan]);
@@ -251,17 +263,18 @@ export async function getPublishedPlanForTrip(tripId: string): Promise<PublicPla
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('public_plans')
-    .select(
-      'id, user_id, source_trip_id, title, description, category, tags, visibility, creator_display_name, payload, like_count, save_count, created_at, updated_at',
-    )
+    .select(PUBLIC_PLAN_SELECT)
     .eq('source_trip_id', tripId)
     .eq('user_id', userId)
     .maybeSingle();
 
   if (error || !data) return null;
   const plan = rowToPublicPlan(data as PublicPlanRow);
-  const images = await fetchImagesForPlan(plan.id);
-  return { ...plan, images };
+  const [images, videos] = await Promise.all([
+    fetchImagesForPlan(plan.id),
+    fetchVideosForPlan(plan.id),
+  ]);
+  return { ...plan, images, videos };
 }
 
 export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<PublicPlan> {
@@ -281,6 +294,13 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
   const creatorDisplayName = profile.displayName;
   const existing = await getPublishedPlanForTrip(input.sourceTripId);
 
+  if (input.videoDrafts) {
+    const videoError = validateVideoDrafts(input.videoDrafts);
+    if (videoError) {
+      throw new Error(videoError);
+    }
+  }
+
   const row = {
     user_id: user.id,
     source_trip_id: input.sourceTripId,
@@ -289,6 +309,9 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
     category: input.category,
     tags: input.tags,
     visibility: input.visibility,
+    is_public: input.visibility === 'public',
+    is_removed: false,
+    moderation_status: 'active' as const,
     creator_display_name: creatorDisplayName,
     payload: input.payload,
     updated_at: new Date().toISOString(),
@@ -300,9 +323,7 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
       .update(row)
       .eq('id', existing.id)
       .eq('user_id', user.id)
-      .select(
-        'id, user_id, source_trip_id, title, description, category, tags, visibility, creator_display_name, payload, like_count, save_count, created_at, updated_at',
-      )
+      .select(PUBLIC_PLAN_SELECT)
       .single();
 
     if (error || !data) {
@@ -310,18 +331,21 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
     }
 
     const plan = rowToPublicPlan(data as PublicPlanRow);
-    const images = input.imageDrafts
-      ? await syncPublicPlanImages(plan.id, user.id, input.imageDrafts, input.visibility)
-      : await fetchImagesForPlan(plan.id);
-    return { ...plan, images };
+    const [images, videos] = await Promise.all([
+      input.imageDrafts
+        ? syncPublicPlanImages(plan.id, user.id, input.imageDrafts, input.visibility)
+        : fetchImagesForPlan(plan.id),
+      input.videoDrafts
+        ? syncPublicPlanVideos(plan.id, input.videoDrafts)
+        : fetchVideosForPlan(plan.id),
+    ]);
+    return { ...plan, images, videos };
   }
 
   const { data, error } = await supabase
     .from('public_plans')
     .insert(row)
-    .select(
-      'id, user_id, source_trip_id, title, description, category, tags, visibility, creator_display_name, payload, like_count, save_count, created_at, updated_at',
-    )
+    .select(PUBLIC_PLAN_SELECT)
     .single();
 
   if (error || !data) {
@@ -329,10 +353,15 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
   }
 
   const plan = rowToPublicPlan(data as PublicPlanRow);
-  const images = input.imageDrafts
-    ? await syncPublicPlanImages(plan.id, user.id, input.imageDrafts, input.visibility)
-    : [];
-  return { ...plan, images };
+  const [images, videos] = await Promise.all([
+    input.imageDrafts
+      ? syncPublicPlanImages(plan.id, user.id, input.imageDrafts, input.visibility)
+      : Promise.resolve([]),
+    input.videoDrafts
+      ? syncPublicPlanVideos(plan.id, input.videoDrafts)
+      : Promise.resolve([]),
+  ]);
+  return { ...plan, images, videos };
 }
 
 export async function togglePublicPlanLike(
@@ -376,6 +405,8 @@ export async function togglePublicPlanLike(
     if (error) {
       throw new Error(error.message ?? 'いいねに失敗しました');
     }
+
+    void notifyPlanLiked(planId, user.id);
   }
 
   const plan = await getPublicPlanById(planId);
@@ -442,7 +473,71 @@ export async function savePublicPlanToMyTrips(planId: string): Promise<{ savedTr
     throw new Error(saveError.message ?? '保存記録の作成に失敗しました');
   }
 
+  void notifyPlanSaved(planId, user.id);
+
   return { savedTripId: savedTrip.id as string };
+}
+
+export async function stopPublicPlan(planId: string): Promise<PublicPlan> {
+  assertPublicPlansConfigured();
+
+  const supabase = getSupabase();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error('ログインが必要です');
+  }
+
+  const { data, error } = await supabase
+    .from('public_plans')
+    .update({
+      visibility: 'private',
+      is_public: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', planId)
+    .eq('user_id', user.id)
+    .select(PUBLIC_PLAN_SELECT)
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message ?? '公開の停止に失敗しました');
+  }
+
+  return rowToPublicPlan(data as PublicPlanRow);
+}
+
+export async function deletePublicPlan(planId: string): Promise<void> {
+  assertPublicPlansConfigured();
+
+  const supabase = getSupabase();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error('ログインが必要です');
+  }
+
+  const { error } = await supabase
+    .from('public_plans')
+    .update({
+      visibility: 'private',
+      is_public: false,
+      is_removed: true,
+      moderation_status: 'removed',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', planId)
+    .eq('user_id', user.id);
+
+  if (error) {
+    throw new Error(error.message ?? '公開プランの削除に失敗しました');
+  }
 }
 
 export function parseTagsInput(value: string): string[] {

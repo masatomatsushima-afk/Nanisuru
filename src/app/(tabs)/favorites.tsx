@@ -3,7 +3,9 @@ import { useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { LoginPromptCard } from '@/components/login-prompt-card';
 import { FadeInView } from '@/components/ui/fade-in-view';
+import { ErrorStateCard, LoadingState, EmptyStateCard } from '@/components/ui/state-cards';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
@@ -73,34 +75,23 @@ function TripCard({
 
 function LoginPrompt() {
   return (
-    <FadeInView>
-      <PremiumCard style={styles.loginCard}>
-        <Text style={styles.loginIcon}>☁️</Text>
-        <Text style={styles.loginTitle}>ログインが必要です</Text>
-        <Text style={styles.loginText}>
-          保存したプランはアカウントに紐づけてクラウドに保存されます。ログインしてからご利用ください。
-        </Text>
-        <PrimaryButton label="ログイン" onPress={() => router.push('/login')} />
-        <Pressable style={styles.signUpLink} onPress={() => router.push('/sign-up')}>
-          <Text style={styles.signUpLinkText}>新規登録はこちら</Text>
-        </Pressable>
-      </PremiumCard>
-    </FadeInView>
+    <LoginPromptCard
+      icon="☁️"
+      title="ログインが必要です"
+      description="保存したプランはアカウントに紐づけてクラウドに保存されます。ログインしてからご利用ください。"
+    />
   );
 }
 
 function EmptyState() {
   return (
-    <FadeInView>
-      <View style={styles.emptyState}>
-        <Text style={styles.emptyIcon}>📋</Text>
-        <Text style={styles.emptyTitle}>保存済みプランはまだありません</Text>
-        <Text style={styles.emptyText}>
-          ホームでプランを生成し、「プランを保存」から追加できます。
-        </Text>
-        <PrimaryButton label="プランを作る" onPress={() => router.push('/')} />
-      </View>
-    </FadeInView>
+    <EmptyStateCard
+      icon="📋"
+      title="保存済みプランはまだありません"
+      description="ホームでプランを生成し、「プランを保存」から追加できます。"
+      actionLabel="プランを作る"
+      onAction={() => router.push('/')}
+    />
   );
 }
 
@@ -184,9 +175,9 @@ export default function SavedTripsScreen() {
           Supabaseの設定を確認し、trips テーブルを作成してください。
         </Text>
       ) : isLoading ? (
-        <Text style={styles.loadingText}>読み込み中...</Text>
+        <LoadingState message="保存済みプランを読み込み中..." />
       ) : error ? (
-        <Text style={styles.errorText}>{error}</Text>
+        <ErrorStateCard message={error} onRetry={() => void loadTrips()} />
       ) : trips.length === 0 ? (
         <EmptyState />
       ) : (

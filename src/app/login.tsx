@@ -1,9 +1,10 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AuthLayout } from '@/components/auth/auth-layout';
 import { OAuthButtons } from '@/components/auth/oauth-buttons';
+import { LoadingState } from '@/components/ui/state-cards';
 import { PremiumCard } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
@@ -11,9 +12,16 @@ import { useAuth } from '@/contexts/auth-context';
 import { signInWithApple, signInWithGoogle } from '@/lib/auth';
 
 export default function LoginScreen() {
-  const { isConfigured } = useAuth();
+  const { isConfigured, session, isLoading: authLoading } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProvider, setLoadingProvider] = useState<'google' | 'apple' | null>(null);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (session) {
+      router.replace('/(tabs)');
+    }
+  }, [authLoading, session]);
 
   const handleSuccess = () => {
     router.replace('/(tabs)');
@@ -50,6 +58,14 @@ export default function LoginScreen() {
       setLoadingProvider(null);
     }
   };
+
+  if (authLoading) {
+    return (
+      <AuthLayout eyebrow="LOGIN" title="" subtitle="">
+        <LoadingState message="確認中..." />
+      </AuthLayout>
+    );
+  }
 
   return (
     <AuthLayout

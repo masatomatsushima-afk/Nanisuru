@@ -96,7 +96,11 @@ export function PublicPlanActions({
           onPress={() => void handleLike()}
           disabled={isLiking}>
           <Text style={[styles.buttonLabel, plan.likedByMe && styles.buttonLabelActive]}>
-            {plan.likedByMe ? '♥ いいね済み' : '♡ いいね'} · {plan.likeCount}
+            {isLiking
+              ? 'いいね中...'
+              : plan.likedByMe
+                ? `♥ いいね済み · ${plan.likeCount}`
+                : `♡ いいね · ${plan.likeCount}`}
           </Text>
         </Pressable>
         <Pressable

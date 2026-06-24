@@ -26,20 +26,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const supabase = getSupabase();
+    let isActive = true;
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!isActive) return;
+      setSession(nextSession);
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        setIsLoading(false);
+      }
+    });
 
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      if (!isActive) return;
       setSession(currentSession);
       setIsLoading(false);
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setIsLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      isActive = false;
+      subscription.unsubscribe();
+    };
   }, [isConfigured]);
 
   const value = useMemo<AuthContextValue>(

@@ -1,119 +1,90 @@
--- Nanisuru: 公開プロフィール & フォロー
--- Supabase SQL Editor で実行してください
+-- Nanisuru: profiles（実テーブル名: user_profiles）& user_follows
+-- 安全・冪等。全体セットアップは SUPABASE_SAFE_SETUP.sql を推奨。
 
-create table if not exists public.user_profiles (
-  user_id uuid primary key references auth.users (id) on delete cascade,
-  display_name text not null,
-  bio text not null default '',
-  style_tags text[] not null default '{}',
-  follower_count integer not null default 0,
-  following_count integer not null default 0,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS public.user_profiles (
+  user_id uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
+  display_name text NOT NULL,
+  bio text NOT NULL DEFAULT '',
+  style_tags text[] NOT NULL DEFAULT '{}',
+  follower_count integer NOT NULL DEFAULT 0,
+  following_count integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create index if not exists user_profiles_display_name_idx
-  on public.user_profiles (display_name);
+CREATE INDEX IF NOT EXISTS user_profiles_display_name_idx ON public.user_profiles (display_name);
+ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
 
-alter table public.user_profiles enable row level security;
+DO $policy$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_profiles' AND policyname = 'user_profiles_public_read') THEN
+    CREATE POLICY "user_profiles_public_read" ON public.user_profiles FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_profiles' AND policyname = 'user_profiles_insert_own') THEN
+    CREATE POLICY "user_profiles_insert_own" ON public.user_profiles FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_profiles' AND policyname = 'user_profiles_update_own') THEN
+    CREATE POLICY "user_profiles_update_own" ON public.user_profiles FOR UPDATE
+      USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+  END IF;
+END
+$policy$;
 
-create policy "user_profiles_public_read"
-  on public.user_profiles
-  for select
-  using (true);
-
-create policy "user_profiles_insert_own"
-  on public.user_profiles
-  for insert
-  with check (auth.uid() = user_id);
-
-create policy "user_profiles_update_own"
-  on public.user_profiles
-  for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-create table if not exists public.user_follows (
-  id uuid primary key default gen_random_uuid(),
-  follower_id uuid not null references auth.users (id) on delete cascade,
-  following_id uuid not null references auth.users (id) on delete cascade,
-  created_at timestamptz not null default now(),
-  unique (follower_id, following_id),
-  check (follower_id <> following_id)
+CREATE TABLE IF NOT EXISTS public.user_follows (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  follower_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  following_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (follower_id, following_id),
+  CHECK (follower_id <> following_id)
 );
 
-create index if not exists user_follows_follower_idx
-  on public.user_follows (follower_id);
+CREATE INDEX IF NOT EXISTS user_follows_follower_idx ON public.user_follows (follower_id);
+CREATE INDEX IF NOT EXISTS user_follows_following_idx ON public.user_follows (following_id);
+ALTER TABLE public.user_follows ENABLE ROW LEVEL SECURITY;
 
-create index if not exists user_follows_following_idx
-  on public.user_follows (following_id);
+DO $policy$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_follows' AND policyname = 'user_follows_read') THEN
+    CREATE POLICY "user_follows_read" ON public.user_follows FOR SELECT USING (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_follows' AND policyname = 'user_follows_insert_own') THEN
+    CREATE POLICY "user_follows_insert_own" ON public.user_follows FOR INSERT WITH CHECK (auth.uid() = follower_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'user_follows' AND policyname = 'user_follows_delete_own') THEN
+    CREATE POLICY "user_follows_delete_own" ON public.user_follows FOR DELETE USING (auth.uid() = follower_id);
+  END IF;
+END
+$policy$;
 
-alter table public.user_follows enable row level security;
-
-create policy "user_follows_read"
-  on public.user_follows
-  for select
-  using (true);
-
-create policy "user_follows_insert_own"
-  on public.user_follows
-  for insert
-  with check (auth.uid() = follower_id);
-
-create policy "user_follows_delete_own"
-  on public.user_follows
-  for delete
-  using (auth.uid() = follower_id);
-
-create or replace function public.refresh_user_follow_counts()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  target_name text;
-begin
-  if tg_op = 'INSERT' then
-    select creator_display_name
-    into target_name
-    from public.public_plans
-    where user_id = new.following_id
-    limit 1;
-
-    insert into public.user_profiles (user_id, display_name)
-    values (new.following_id, coalesce(target_name, 'Nanisuruユーザー'))
-    on conflict (user_id) do nothing;
-
-    insert into public.user_profiles (user_id, display_name)
-    values (new.follower_id, 'Nanisuruユーザー')
-    on conflict (user_id) do nothing;
-
-    update public.user_profiles
-    set follower_count = follower_count + 1, updated_at = now()
-    where user_id = new.following_id;
-
-    update public.user_profiles
-    set following_count = following_count + 1, updated_at = now()
-    where user_id = new.follower_id;
-
-    return new;
-  elsif tg_op = 'DELETE' then
-    update public.user_profiles
-    set follower_count = greatest(follower_count - 1, 0), updated_at = now()
-    where user_id = old.following_id;
-
-    update public.user_profiles
-    set following_count = greatest(following_count - 1, 0), updated_at = now()
-    where user_id = old.follower_id;
-
-    return old;
-  end if;
-  return null;
-end;
+CREATE OR REPLACE FUNCTION public.refresh_user_follow_counts()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE target_name text;
+BEGIN
+  IF tg_op = 'INSERT' THEN
+    SELECT creator_display_name INTO target_name FROM public.public_plans WHERE user_id = new.following_id LIMIT 1;
+    INSERT INTO public.user_profiles (user_id, display_name) VALUES (new.following_id, coalesce(target_name, 'Nanisuruユーザー')) ON CONFLICT (user_id) DO NOTHING;
+    INSERT INTO public.user_profiles (user_id, display_name) VALUES (new.follower_id, 'Nanisuruユーザー') ON CONFLICT (user_id) DO NOTHING;
+    UPDATE public.user_profiles SET follower_count = follower_count + 1, updated_at = now() WHERE user_id = new.following_id;
+    UPDATE public.user_profiles SET following_count = following_count + 1, updated_at = now() WHERE user_id = new.follower_id;
+    RETURN new;
+  ELSIF tg_op = 'DELETE' THEN
+    UPDATE public.user_profiles SET follower_count = greatest(follower_count - 1, 0), updated_at = now() WHERE user_id = old.following_id;
+    UPDATE public.user_profiles SET following_count = greatest(following_count - 1, 0), updated_at = now() WHERE user_id = old.follower_id;
+    RETURN old;
+  END IF;
+  RETURN NULL;
+END;
 $$;
 
-drop trigger if exists user_follows_count_trigger on public.user_follows;
-create trigger user_follows_count_trigger
-after insert or delete on public.user_follows
-for each row execute function public.refresh_user_follow_counts();
+DO $trigger$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE NOT t.tgisinternal AND t.tgname = 'user_follows_count_trigger' AND c.relname = 'user_follows' AND n.nspname = 'public'
+  ) THEN
+    CREATE TRIGGER user_follows_count_trigger AFTER INSERT OR DELETE ON public.user_follows
+    FOR EACH ROW EXECUTE FUNCTION public.refresh_user_follow_counts();
+  END IF;
+END
+$trigger$;

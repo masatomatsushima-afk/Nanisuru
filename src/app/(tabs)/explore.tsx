@@ -1,8 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -11,30 +10,100 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DiscoverSortBar } from '@/components/discover-sort-bar';
+import { DiscoverRankingSection } from '@/components/discover-ranking-section';
+import { DiscoverRecommendationsSection } from '@/components/discover-recommendations-section';
+import { DiscoverSearchFilters } from '@/components/discover-search-filters';
+import { DiscoverTrendingSection } from '@/components/discover-trending-section';
 import { PublicPlanCard } from '@/components/public-plan-card';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { useUserLocation } from '@/contexts/user-location-context';
+import { applyDiscoverFilters, countActiveDiscoverFilters } from '@/lib/discover-filters';
+import { buildDiscoverRecommendations } from '@/lib/discover-recommendations';
+import {
+  buildPopularCreatorIds,
+  buildRankedPlans,
+  buildTrendingPlans,
+} from '@/lib/discover-ranking';
+import { notifyRankingEntries } from '@/lib/notifications';
 import { fetchPublicPlans } from '@/lib/public-plans';
-import type { DiscoverSortOption, PublicPlan } from '@/types/public-plan';
+import {
+  DEFAULT_DISCOVER_FILTERS,
+  type DiscoverFilterState,
+} from '@/types/discover-filters';
+import type { RankedPublicPlan } from '@/types/discover-ranking';
+import type { DiscoverRecommendationsResult } from '@/types/discover-recommendations';
+import type { PublicPlan } from '@/types/public-plan';
 
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const { isConfigured, session } = useAuth();
+  const { location, fetchLocation } = useUserLocation();
   const currentUserId = session?.user.id ?? null;
-  const [sort, setSort] = useState<DiscoverSortOption>('popular');
-  const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [allPlans, setAllPlans] = useState<PublicPlan[]>([]);
+  const [filters, setFilters] = useState<DiscoverFilterState>(DEFAULT_DISCOVER_FILTERS);
+  const [trending, setTrending] = useState<RankedPublicPlan[]>([]);
+  const [recommendations, setRecommendations] = useState<DiscoverRecommendationsResult | null>(null);
+  const [isRecommendationsLoading, setIsRecommendationsLoading] = useState(false);
+  const [popularCreatorIds, setPopularCreatorIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const displayedPlans = useMemo(
+    () => applyDiscoverFilters(allPlans, filters),
+    [allPlans, filters],
+  );
+
+  const hasActiveFilters = countActiveDiscoverFilters(filters) > 0;
+
+  const loadRecommendations = useCallback(
+    async (plans: PublicPlan[], trendingPlans: RankedPublicPlan[]) => {
+      setIsRecommendationsLoading(true);
+      try {
+        setRecommendations(
+          await buildDiscoverRecommendations({
+            plans,
+            trendingPlans,
+            currentUserId,
+            filters,
+            location,
+          }),
+        );
+      } catch {
+        setRecommendations(null);
+      } finally {
+        setIsRecommendationsLoading(false);
+      }
+    },
+    [currentUserId, filters, location],
+  );
+
+  const loadRankingMeta = useCallback(async (plans: PublicPlan[]) => {
+    const [trendingPlans, overallRanked] = await Promise.all([
+      buildTrendingPlans(plans),
+      buildRankedPlans(plans, 'overall', 'week'),
+    ]);
+    setTrending(trendingPlans);
+    setPopularCreatorIds(buildPopularCreatorIds(overallRanked));
+
+    if (currentUserId) {
+      void notifyRankingEntries(
+        trendingPlans.map((item) => ({ plan: item.plan, rank: item.rank })),
+      );
+    }
+  }, [currentUserId]);
+
   const loadPlans = useCallback(
     async (refresh = false) => {
       if (!isConfigured) {
-        setPlans([]);
+        setAllPlans([]);
+        setTrending([]);
+        setRecommendations(null);
+        setPopularCreatorIds(new Set());
         setIsLoading(false);
         return;
       }
@@ -47,39 +116,46 @@ export default function DiscoverScreen() {
       setError(null);
 
       try {
-        setPlans(await fetchPublicPlans(sort));
+        const plans = await fetchPublicPlans();
+        setAllPlans(plans);
+        await loadRankingMeta(plans);
       } catch (err) {
         setError(err instanceof Error ? err.message : '公開プランの取得に失敗しました');
-        setPlans([]);
+        setAllPlans([]);
+        setTrending([]);
+        setRecommendations(null);
+        setPopularCreatorIds(new Set());
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
       }
     },
-    [isConfigured, sort],
+    [isConfigured, loadRankingMeta],
   );
 
   useFocusEffect(
     useCallback(() => {
+      void fetchLocation();
       void loadPlans();
-    }, [loadPlans]),
+    }, [fetchLocation, loadPlans]),
   );
 
   useEffect(() => {
     if (isConfigured) {
       void loadPlans();
     }
-  }, [sort, isConfigured, loadPlans]);
+  }, [isConfigured, loadPlans]);
 
-  const handleSortChange = (next: DiscoverSortOption) => {
-    setSort(next);
-  };
+  useEffect(() => {
+    if (!isConfigured || allPlans.length === 0) return;
+    void loadRecommendations(allPlans, trending);
+  }, [filters, location, isConfigured, allPlans, trending, loadRecommendations]);
 
   const handleFollowChange = (
     planId: string,
     next: { isFollowing: boolean; followerCount: number },
   ) => {
-    setPlans((prev) =>
+    setAllPlans((prev) =>
       prev.map((plan) =>
         plan.id === planId
           ? {
@@ -103,6 +179,7 @@ export default function DiscoverScreen() {
         },
       ]}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
       refreshControl={
         <RefreshControl
           refreshing={isRefreshing}
@@ -126,38 +203,83 @@ export default function DiscoverScreen() {
             発見タブを使うには public_plans テーブルを作成してください。
           </Text>
         </PremiumCard>
+      ) : isLoading ? (
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator size="large" color={NS.colors.accent} />
+          <Text style={styles.loadingText}>プランを読み込み中...</Text>
+        </View>
+      ) : error ? (
+        <PremiumCard style={styles.noticeCard}>
+          <Text style={styles.noticeTitle}>読み込みに失敗しました</Text>
+          <Text style={styles.noticeText}>{error}</Text>
+          <PrimaryButton label="再試行" onPress={() => void loadPlans()} />
+        </PremiumCard>
+      ) : allPlans.length === 0 ? (
+        <PremiumCard variant="accent" style={styles.emptyCard}>
+          <Text style={styles.emptyIcon}>✨</Text>
+          <Text style={styles.emptyTitle}>まだ公開プランがありません</Text>
+          <Text style={styles.emptyText}>
+            保存済みプランから「このプランを公開する」で、最初のプランを投稿してみましょう。
+          </Text>
+          <PrimaryButton label="プランを作る" onPress={() => router.push('/')} />
+        </PremiumCard>
       ) : (
         <>
-          <DiscoverSortBar value={sort} onChange={handleSortChange} />
+          <DiscoverRecommendationsSection
+            recommendations={recommendations}
+            isLoading={isRecommendationsLoading}
+            allPlans={allPlans}
+            currentUserId={currentUserId}
+            filters={filters}
+            location={location}
+            popularCreatorIds={popularCreatorIds}
+            onFollowChange={handleFollowChange}
+            onRequireLogin={() => router.push('/login')}
+          />
 
-          {isLoading ? (
-            <View style={styles.loadingWrap}>
-              <ActivityIndicator size="large" color={NS.colors.accent} />
-              <Text style={styles.loadingText}>プランを読み込み中...</Text>
-            </View>
-          ) : error ? (
-            <PremiumCard style={styles.noticeCard}>
-              <Text style={styles.noticeTitle}>読み込みに失敗しました</Text>
-              <Text style={styles.noticeText}>{error}</Text>
-              <PrimaryButton label="再試行" onPress={() => void loadPlans()} />
-            </PremiumCard>
-          ) : plans.length === 0 ? (
-            <PremiumCard variant="accent" style={styles.emptyCard}>
-              <Text style={styles.emptyIcon}>✨</Text>
-              <Text style={styles.emptyTitle}>まだ公開プランがありません</Text>
-              <Text style={styles.emptyText}>
-                保存済みプランから「このプランを公開する」で、最初のプランを投稿してみましょう。
+          <DiscoverTrendingSection
+            trending={trending}
+            popularCreatorIds={popularCreatorIds}
+            currentUserId={currentUserId}
+            onFollowChange={handleFollowChange}
+            onRequireLogin={() => router.push('/login')}
+          />
+
+          <DiscoverRankingSection
+            plans={allPlans}
+            popularCreatorIds={popularCreatorIds}
+            currentUserId={currentUserId}
+            onFollowChange={handleFollowChange}
+            onRequireLogin={() => router.push('/login')}
+            onPressPlan={(planId) => router.push(`/public-plan/${planId}`)}
+          />
+
+          <DiscoverSearchFilters value={filters} onChange={setFilters} />
+
+          {displayedPlans.length === 0 ? (
+            <PremiumCard style={styles.emptyCard}>
+              <Text style={styles.emptyIcon}>🔍</Text>
+              <Text style={styles.emptyTitle}>
+                条件に合うプランが見つかりませんでした。条件を変えて探してみてください。
               </Text>
-              <PrimaryButton label="プランを作る" onPress={() => router.push('/')} />
+              {hasActiveFilters ? (
+                <PrimaryButton
+                  label="フィルターをリセット"
+                  variant="secondary"
+                  onPress={() => setFilters(DEFAULT_DISCOVER_FILTERS)}
+                />
+              ) : null}
             </PremiumCard>
           ) : (
             <View style={styles.feed}>
-              {plans.map((plan, index) => (
+              <Text style={styles.resultCount}>{displayedPlans.length}件のプラン</Text>
+              {displayedPlans.map((plan, index) => (
                 <PublicPlanCard
                   key={plan.id}
                   plan={plan}
                   index={index}
                   currentUserId={currentUserId}
+                  showPopularCreatorBadge={popularCreatorIds.has(plan.userId)}
                   onPress={() => router.push(`/public-plan/${plan.id}`)}
                   onFollowChange={handleFollowChange}
                   onRequireLogin={() => router.push('/login')}
@@ -228,6 +350,13 @@ const styles = StyleSheet.create({
   feed: {
     marginTop: Spacing.three,
   },
+  resultCount: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: Spacing.three,
+    letterSpacing: 0.4,
+  },
   noticeCard: {
     padding: Spacing.four,
     marginTop: Spacing.three,
@@ -257,10 +386,11 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     color: NS.colors.text,
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: Spacing.two,
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: Spacing.three,
     textAlign: 'center',
+    lineHeight: 24,
   },
   emptyText: {
     color: NS.colors.textSecondary,

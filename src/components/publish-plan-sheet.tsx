@@ -12,13 +12,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SuccessOverlay } from '@/components/success-overlay';
 import { PublishPlanImagePicker } from '@/components/publish-plan-image-picker';
+import { PublishPlanVideoLinks } from '@/components/publish-plan-video-links';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { draftsFromPublicPlanImages } from '@/lib/public-plan-images';
+import { draftsFromPublicPlanVideos, validateVideoDrafts } from '@/lib/public-plan-videos';
 import { getPublishedPlanForTrip, parseTagsInput, publishPublicPlan } from '@/lib/public-plans';
 import type { SavedTrip } from '@/types/trip';
 import type { PublishPlanImageDraft } from '@/types/public-plan-image';
+import type { PublishPlanVideoDraft } from '@/types/public-plan-video';
 import {
   companionToDefaultCategory,
   PUBLIC_PLAN_CATEGORIES,
@@ -72,6 +75,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
   const [showSuccess, setShowSuccess] = useState(false);
   const [isExisting, setIsExisting] = useState(false);
   const [imageDrafts, setImageDrafts] = useState<PublishPlanImageDraft[]>([]);
+  const [videoDrafts, setVideoDrafts] = useState<PublishPlanVideoDraft[]>([]);
 
   useEffect(() => {
     if (!visible) return;
@@ -83,6 +87,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
     setVisibility('public');
     setError(null);
     setImageDrafts([]);
+    setVideoDrafts([]);
 
     void getPublishedPlanForTrip(trip.id).then((existing) => {
       if (!existing) {
@@ -96,12 +101,19 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
       setTagsInput(existing.tags.join('、'));
       setVisibility(existing.visibility);
       setImageDrafts(draftsFromPublicPlanImages(existing.images ?? []));
+      setVideoDrafts(draftsFromPublicPlanVideos(existing.videos ?? []));
     });
   }, [visible, trip.id, trip.title, payload.companion]);
 
   const handlePublish = async () => {
     if (!title.trim()) {
       setError('公開タイトルを入力してください');
+      return;
+    }
+
+    const videoError = validateVideoDrafts(videoDrafts);
+    if (videoError) {
+      setError(videoError);
       return;
     }
 
@@ -117,6 +129,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
         visibility,
         payload,
         imageDrafts,
+        videoDrafts,
       });
       setShowSuccess(true);
       setTimeout(() => {
@@ -158,6 +171,8 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
           </Text>
 
           <PublishPlanImagePicker images={imageDrafts} onChange={setImageDrafts} />
+
+          <PublishPlanVideoLinks videos={videoDrafts} onChange={setVideoDrafts} />
 
           <Text style={styles.label}>公開タイトル</Text>
           <TextInput

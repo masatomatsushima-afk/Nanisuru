@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { NotificationEntryButton } from '@/components/notification-entry-button';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { PublicProfileEditor } from '@/components/public-profile-editor';
@@ -149,6 +150,10 @@ export default function ProfileScreen() {
         <Text style={styles.eyebrow}>PROFILE</Text>
         <Text style={styles.title}>マイページ</Text>
         <Text style={styles.subtitle}>アカウント情報と設定</Text>
+      </FadeInView>
+
+      <FadeInView delay={40}>
+        <NotificationEntryButton isConfigured={isConfigured} />
       </FadeInView>
 
       <FadeInView delay={60}>

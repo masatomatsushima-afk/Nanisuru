@@ -71,7 +71,7 @@ export function FollowButton({
           compact && styles.labelCompact,
           following && styles.labelFollowing,
         ]}>
-        {loading ? '...' : following ? 'フォロー中' : 'フォロー'}
+        {loading ? '処理中...' : following ? 'フォロー中' : 'フォロー'}
       </Text>
     </Pressable>
   );
