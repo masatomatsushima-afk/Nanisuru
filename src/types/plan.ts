@@ -14,6 +14,7 @@ export type ItineraryItem = {
   time: string;
   activity: string;
   placeAddress?: string;
+  placeCategory?: string;
   reason?: string;
   estimatedCost?: string;
   transportation?: string;

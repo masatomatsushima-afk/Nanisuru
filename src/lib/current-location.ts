@@ -1,6 +1,7 @@
 import * as Location from 'expo-location';
 
-export const LOCATION_PERMISSION_DENIED_MESSAGE = '現在地の取得が許可されていません';
+export const LOCATION_PERMISSION_DENIED_MESSAGE =
+  '現在地の取得が許可されていません。設定から位置情報を許可するか、エリアを手入力してください。';
 
 export type CurrentLocationResult = {
   city: string;

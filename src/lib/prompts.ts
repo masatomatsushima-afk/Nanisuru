@@ -17,6 +17,8 @@ import { buildRealPlacesPromptSection } from './location-places';
 import type { UserPreferences } from '@/types/user-memory';
 import type { TravelMemory } from '@/types/travel-memory';
 import type { NearbyPlacesContext } from '@/types/nearby-places';
+import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import { buildCustomPreferencesPromptSection, formatCombinedMood } from './custom-preferences';
 
 export type PlanInput = {
   location: string;
@@ -28,6 +30,7 @@ export type PlanInput = {
   tripDuration: TripDurationOption;
   tripDate: string;
   mood: string;
+  customPreferences?: PlanCustomPreferences;
   weather?: WeatherForecast;
   userPreferences?: UserPreferences;
   travelMemories?: TravelMemory[];
@@ -59,7 +62,7 @@ export function buildConciergePrompt(input: PlanInput): string {
   const location = input.location.trim() || '未指定';
   const budget = input.budget.trim() || '未指定';
   const people = input.people.trim() || '未指定';
-  const mood = input.mood.trim() || '未指定';
+  const mood = formatCombinedMood(input.mood, input.customPreferences?.customMood) || '未指定';
   const { symbol, label } = getCurrency(input.currency);
   const personalityGuide = PERSONALITY_GUIDE[input.personality];
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
@@ -249,6 +252,11 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
 
   const bestDaySection = input.bestDay ? buildBestDayPromptSection(input.bestDay) : '';
 
+  const customPreferencesSection = buildCustomPreferencesPromptSection(
+    input.customPreferences,
+    input.mood,
+  );
+
   const conciergeSection = `
 
 ## コンシェルジュモード（必須・各 items に設定）
@@ -310,7 +318,7 @@ ${personalityGuide}
     input.realPlaces ? '（実在スポットリスト内のみ）' : '（実在スポット名必須）'
   }
 13. 文体は丁寧で親しみやすい日本語。プロのコンシェルジュとして信頼感のあるトーン
-${budgetOptimizationSection}${currencySection}${weatherSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
+${budgetOptimizationSection}${currencySection}${weatherSection}${customPreferencesSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
 
 ## 出力JSON（この形式のみ、余計な文章は禁止）
 {

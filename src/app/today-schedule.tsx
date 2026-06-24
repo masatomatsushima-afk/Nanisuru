@@ -159,7 +159,7 @@ export default function TodayScheduleScreen() {
           </View>
         ) : null}
         <CurrentLocationButton compact />
-        <ItineraryDaysView days={days} variant="detail" />
+        <ItineraryDaysView days={days} variant="detail" location={location} />
       </View>
 
       <ConciergeAccessSection days={days} location={location} />

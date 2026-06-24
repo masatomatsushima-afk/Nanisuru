@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ItineraryMapActions } from '@/components/itinerary-map-actions';
+import { PlaceAtmosphereLinks } from '@/components/place-atmosphere-links';
 import { Colors, Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
 import type { ItineraryItem } from '@/types/plan';
@@ -34,6 +35,7 @@ type ItineraryTimelineCardProps = {
   index: number;
   isLast: boolean;
   variant?: 'timeline' | 'detail';
+  location?: string;
 };
 
 export function ItineraryTimelineCard({
@@ -41,6 +43,7 @@ export function ItineraryTimelineCard({
   index,
   isLast,
   variant = 'timeline',
+  location,
 }: ItineraryTimelineCardProps) {
   const showTimeline = variant === 'timeline';
   const showTransport =
@@ -84,6 +87,8 @@ export function ItineraryTimelineCard({
               <Text style={styles.metaText}>概算 {item.estimatedCost}</Text>
             </View>
           ) : null}
+
+          <PlaceAtmosphereLinks item={item} location={location} />
 
           <ItineraryMapActions item={item} />
 

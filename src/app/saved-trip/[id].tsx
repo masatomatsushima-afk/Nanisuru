@@ -16,15 +16,20 @@ import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { CurrentLocationButton } from '@/components/current-location-button';
-import { ShareTripSection } from '@/components/share-trip-section';
+import { PublishPlanSheet } from '@/components/publish-plan-sheet';
+import { PrimaryButton } from '@/components/ui/premium-card';
 import { WeatherSection } from '@/components/weather-section';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
-import { buildActiveTripContext, saveActiveTrip } from '@/lib/active-trip';
 import { formatSavedTripDate, formatTripSchedule, getTripById } from '@/lib/saved-trips';
+import { ShareTripSection } from '@/components/share-trip-section';
+import { getPublishedPlanForTrip } from '@/lib/public-plans';
+import { buildActiveTripContext, saveActiveTrip } from '@/lib/active-trip';
+
 import type { SavedTrip } from '@/types/trip';
+import type { PublicPlan } from '@/types/public-plan';
 
 const accent = NS.colors.accent;
 
@@ -42,6 +47,8 @@ export default function SavedTripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session, isLoading: authLoading } = useAuth();
   const [trip, setTrip] = useState<SavedTrip | null>(null);
+  const [publishedPlan, setPublishedPlan] = useState<PublicPlan | null>(null);
+  const [showPublishSheet, setShowPublishSheet] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +65,7 @@ export default function SavedTripDetailScreen() {
         return;
       }
       setTrip(loaded);
+      setPublishedPlan(await getPublishedPlanForTrip(loaded.id));
       await saveActiveTrip(
         buildActiveTripContext({
           location: loaded.payload.location,
@@ -208,7 +216,7 @@ export default function SavedTripDetailScreen() {
         {days.length > 0 ? (
           <>
             <CurrentLocationButton compact />
-            <ItineraryDaysView days={days} variant="detail" />
+            <ItineraryDaysView days={days} variant="detail" location={payload.location} />
           </>
         ) : (
           <Text style={styles.emptySectionText}>行程データがありません</Text>
@@ -229,6 +237,40 @@ export default function SavedTripDetailScreen() {
           <Text style={styles.emptySectionText}>予約・アクセス情報がありません</Text>
         )}
       </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>🌍 コミュニティ公開</Text>
+        <Text style={styles.publishLead}>
+          発見タブに投稿して、他のユーザーとプランを共有できます。
+        </Text>
+        {publishedPlan?.visibility === 'public' ? (
+          <Text style={styles.publishStatus}>公開中 · ♥ {publishedPlan.likeCount}</Text>
+        ) : publishedPlan ? (
+          <Text style={styles.publishStatusMuted}>
+            {publishedPlan.visibility === 'unlisted' ? 'リンクのみ公開中' : '非公開'}
+          </Text>
+        ) : null}
+        <PrimaryButton
+          label="このプランを公開する"
+          onPress={() => setShowPublishSheet(true)}
+        />
+        {publishedPlan?.visibility === 'public' ? (
+          <Pressable
+            style={styles.viewPublicLink}
+            onPress={() => router.push(`/public-plan/${publishedPlan.id}`)}>
+            <Text style={styles.viewPublicLinkText}>公開ページを見る →</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      <PublishPlanSheet
+        visible={showPublishSheet}
+        trip={trip}
+        onClose={() => setShowPublishSheet(false)}
+        onPublished={() => {
+          void getPublishedPlanForTrip(trip.id).then(setPublishedPlan);
+        }}
+      />
 
       <View style={styles.shareWrap}>
         <ShareTripSection
@@ -455,6 +497,33 @@ const styles = StyleSheet.create({
   },
   shareWrap: {
     marginBottom: Spacing.three,
+  },
+  publishLead: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+    marginBottom: Spacing.three,
+  },
+  publishStatus: {
+    color: NS.colors.accent,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: Spacing.two,
+  },
+  publishStatusMuted: {
+    color: NS.colors.textMuted,
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: Spacing.two,
+  },
+  viewPublicLink: {
+    marginTop: Spacing.three,
+    alignSelf: 'flex-start',
+  },
+  viewPublicLinkText: {
+    color: NS.colors.accent,
+    fontSize: 14,
+    fontWeight: '700',
   },
   footerMeta: {
     alignItems: 'center',

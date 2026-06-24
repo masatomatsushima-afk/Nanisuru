@@ -10,7 +10,7 @@ import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { WeatherSection } from '@/components/weather-section';
-import { ShareTripButton } from '@/components/share-trip-button';
+import { ShareTripSection } from '@/components/share-trip-section';
 import { SaveTripButton } from '@/components/save-trip-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { CurrentLocationButton } from '@/components/current-location-button';
@@ -193,7 +193,7 @@ export default function PlanDetailScreen() {
       <View style={styles.timelinePreview}>
         <Text style={styles.timelinePreviewTitle}>スケジュール</Text>
         <CurrentLocationButton compact />
-        <ItineraryDaysView days={days} variant="detail" />
+        <ItineraryDaysView days={days} variant="detail" location={location} />
       </View>
 
       <ConciergeAccessSection days={days} location={location} />
@@ -220,8 +220,12 @@ export default function PlanDetailScreen() {
             />
           </View>
           <View style={styles.shareButtonWrap}>
-            <ShareTripButton
+            <ShareTripSection
               location={location}
+              budget={budget}
+              currency={currency}
+              people={people}
+              mood={mood}
               companion={companion}
               personality={personality}
               tripDuration={tripDuration}

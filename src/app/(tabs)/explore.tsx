@@ -1,48 +1,96 @@
-import { router } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DiscoverSortBar } from '@/components/discover-sort-bar';
+import { PublicPlanCard } from '@/components/public-plan-card';
 import { FadeInView } from '@/components/ui/fade-in-view';
-import { PremiumCard } from '@/components/ui/premium-card';
+import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
+import { useAuth } from '@/contexts/auth-context';
+import { fetchPublicPlans } from '@/lib/public-plans';
+import type { DiscoverSortOption, PublicPlan } from '@/types/public-plan';
 
-const CATEGORIES = [
-  {
-    emoji: '💑',
-    title: 'デートプラン',
-    description: 'ふたりの時間を特別に。会話もスムーズに。',
-    tag: 'カップル',
-  },
-  {
-    emoji: '🍜',
-    title: 'グルメ巡り',
-    description: '食べ歩きで満喫する、週末のご褒美。',
-    tag: 'グルメ',
-  },
-  {
-    emoji: '🌿',
-    title: 'のんびり休日',
-    description: 'カフェと散歩で、心を整える1日。',
-    tag: 'のんびり',
-  },
-  {
-    emoji: '📸',
-    title: '映えスポット',
-    description: '写真映えする場所を厳選して巡る。',
-    tag: '映え重視',
-  },
-] as const;
-
-const INSPIRATIONS = [
-  { area: '渋谷', plan: 'カフェ → ショッピング → 夜景バー', mood: '初デート向け' },
-  { area: '京都', plan: '朝の散歩 → ランチ → 寺社巡り', mood: 'のんびり' },
-  { area: '大阪', plan: '道頓堀グルメ → 梅田スカイライン', mood: 'グルメ' },
-] as const;
-
-export default function ExploreScreen() {
+export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
+  const { isConfigured, session } = useAuth();
+  const currentUserId = session?.user.id ?? null;
+  const [sort, setSort] = useState<DiscoverSortOption>('popular');
+  const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadPlans = useCallback(
+    async (refresh = false) => {
+      if (!isConfigured) {
+        setPlans([]);
+        setIsLoading(false);
+        return;
+      }
+
+      if (refresh) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+      setError(null);
+
+      try {
+        setPlans(await fetchPublicPlans(sort));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '公開プランの取得に失敗しました');
+        setPlans([]);
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [isConfigured, sort],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadPlans();
+    }, [loadPlans]),
+  );
+
+  useEffect(() => {
+    if (isConfigured) {
+      void loadPlans();
+    }
+  }, [sort, isConfigured, loadPlans]);
+
+  const handleSortChange = (next: DiscoverSortOption) => {
+    setSort(next);
+  };
+
+  const handleFollowChange = (
+    planId: string,
+    next: { isFollowing: boolean; followerCount: number },
+  ) => {
+    setPlans((prev) =>
+      prev.map((plan) =>
+        plan.id === planId
+          ? {
+              ...plan,
+              isFollowingCreator: next.isFollowing,
+              creatorFollowerCount: next.followerCount,
+            }
+          : plan,
+      ),
+    );
+  };
 
   return (
     <ScrollView
@@ -54,61 +102,76 @@ export default function ExploreScreen() {
           paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
         },
       ]}
-      showsVerticalScrollIndicator={false}>
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={() => void loadPlans(true)}
+          tintColor={NS.colors.accent}
+        />
+      }>
       <FadeInView>
         <View style={styles.heroGlow} />
         <Text style={styles.eyebrow}>DISCOVER</Text>
         <Text style={styles.title}>発見</Text>
-        <Text style={styles.subtitle}>Nanisuruが提案する、お出かけのインスピレーション</Text>
+        <Text style={styles.subtitle}>
+          みんなが作ったデート・旅行プランから、次のお出かけのヒントを見つけよう。
+        </Text>
       </FadeInView>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>カテゴリー</Text>
-        <View style={styles.categoryGrid}>
-          {CATEGORIES.map((category, index) => (
-            <Animated.View
-              key={category.title}
-              entering={FadeInDown.delay(index * 70).duration(450).springify()}>
-              <Pressable
-                style={({ pressed }) => [styles.categoryCard, pressed && styles.pressed]}
-                onPress={() => router.push('/')}>
-                <View style={styles.categoryIconWrap}>
-                  <Text style={styles.categoryEmoji}>{category.emoji}</Text>
-                </View>
-                <Text style={styles.categoryTitle}>{category.title}</Text>
-                <Text style={styles.categoryDescription}>{category.description}</Text>
-                <View style={styles.categoryTag}>
-                  <Text style={styles.categoryTagText}>{category.tag}</Text>
-                </View>
-              </Pressable>
-            </Animated.View>
-          ))}
-        </View>
-      </View>
+      {!isConfigured ? (
+        <PremiumCard style={styles.noticeCard}>
+          <Text style={styles.noticeTitle}>Supabase の設定が必要です</Text>
+          <Text style={styles.noticeText}>
+            発見タブを使うには public_plans テーブルを作成してください。
+          </Text>
+        </PremiumCard>
+      ) : (
+        <>
+          <DiscoverSortBar value={sort} onChange={handleSortChange} />
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>人気エリアの1日</Text>
-        <View style={styles.inspirationList}>
-          {INSPIRATIONS.map((item, index) => (
-            <FadeInView key={item.area} delay={index * 80} direction="down">
-              <PremiumCard variant="flat" style={styles.inspirationCard}>
-                <View style={styles.inspirationHeader}>
-                  <Text style={styles.inspirationArea}>{item.area}</Text>
-                  <View style={styles.inspirationBadge}>
-                    <Text style={styles.inspirationBadgeText}>{item.mood}</Text>
-                  </View>
-                </View>
-                <Text style={styles.inspirationPlan}>{item.plan}</Text>
-              </PremiumCard>
-            </FadeInView>
-          ))}
-        </View>
-      </View>
+          {isLoading ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator size="large" color={NS.colors.accent} />
+              <Text style={styles.loadingText}>プランを読み込み中...</Text>
+            </View>
+          ) : error ? (
+            <PremiumCard style={styles.noticeCard}>
+              <Text style={styles.noticeTitle}>読み込みに失敗しました</Text>
+              <Text style={styles.noticeText}>{error}</Text>
+              <PrimaryButton label="再試行" onPress={() => void loadPlans()} />
+            </PremiumCard>
+          ) : plans.length === 0 ? (
+            <PremiumCard variant="accent" style={styles.emptyCard}>
+              <Text style={styles.emptyIcon}>✨</Text>
+              <Text style={styles.emptyTitle}>まだ公開プランがありません</Text>
+              <Text style={styles.emptyText}>
+                保存済みプランから「このプランを公開する」で、最初のプランを投稿してみましょう。
+              </Text>
+              <PrimaryButton label="プランを作る" onPress={() => router.push('/')} />
+            </PremiumCard>
+          ) : (
+            <View style={styles.feed}>
+              {plans.map((plan, index) => (
+                <PublicPlanCard
+                  key={plan.id}
+                  plan={plan}
+                  index={index}
+                  currentUserId={currentUserId}
+                  onPress={() => router.push(`/public-plan/${plan.id}`)}
+                  onFollowChange={handleFollowChange}
+                  onRequireLogin={() => router.push('/login')}
+                />
+              ))}
+            </View>
+          )}
+        </>
+      )}
 
-      <FadeInView delay={200}>
-        <PremiumCard variant="accent" style={styles.ctaCard} onPress={() => router.push('/')}>
-          <Text style={styles.ctaTitle}>あなただけのプランを作る</Text>
-          <Text style={styles.ctaText}>ホーム画面で条件を入力すると、AIが1日を提案します。</Text>
+      <FadeInView delay={180}>
+        <PremiumCard variant="flat" style={styles.ctaCard} onPress={() => router.push('/')}>
+          <Text style={styles.ctaTitle}>自分だけのプランを作る</Text>
+          <Text style={styles.ctaText}>AIがあなたの好みに合わせて、オリジナルプランを提案します。</Text>
           <Text style={styles.ctaLink}>プランを生成 →</Text>
         </PremiumCard>
       </FadeInView>
@@ -149,116 +212,66 @@ const styles = StyleSheet.create({
   subtitle: {
     color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
-    marginBottom: Spacing.five,
-    maxWidth: 320,
+    marginBottom: Spacing.four,
+    maxWidth: 340,
+    lineHeight: 22,
   },
-  section: {
-    marginBottom: Spacing.five,
-  },
-  sectionTitle: {
-    color: NS.colors.text,
-    ...NS.typography.headline,
-    marginBottom: Spacing.three,
-  },
-  categoryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: Spacing.two,
-  },
-  categoryCard: {
-    width: '48%',
-    backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.lg,
-    padding: Spacing.three,
-    borderWidth: 1,
-    borderColor: NS.colors.border,
-    minHeight: 168,
-    ...NS.shadow.card,
-  },
-  pressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.98 }],
-  },
-  categoryIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: NS.radius.sm + 2,
-    backgroundColor: NS.colors.accentSoft,
-    borderWidth: 1,
-    borderColor: NS.colors.accentBorder,
+  loadingWrap: {
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.two,
-  },
-  categoryEmoji: {
-    fontSize: 22,
-  },
-  categoryTitle: {
-    color: NS.colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  categoryDescription: {
-    color: NS.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-    flex: 1,
-  },
-  categoryTag: {
-    alignSelf: 'flex-start',
-    marginTop: Spacing.two,
-    backgroundColor: NS.colors.accentSoft,
-    borderRadius: NS.radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: NS.colors.accentBorder,
-  },
-  categoryTagText: {
-    color: NS.colors.accent,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  inspirationList: {
+    paddingVertical: Spacing.six,
     gap: Spacing.two,
   },
-  inspirationCard: {
-    padding: Spacing.three + 2,
+  loadingText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
   },
-  inspirationHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  feed: {
+    marginTop: Spacing.three,
+  },
+  noticeCard: {
+    padding: Spacing.four,
+    marginTop: Spacing.three,
+    marginBottom: Spacing.three,
+  },
+  noticeTitle: {
+    color: NS.colors.text,
+    fontSize: 16,
+    fontWeight: '800',
     marginBottom: Spacing.two,
   },
-  inspirationArea: {
+  noticeText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+    marginBottom: Spacing.three,
+  },
+  emptyCard: {
+    padding: Spacing.five,
+    alignItems: 'center',
+    marginTop: Spacing.three,
+    marginBottom: Spacing.three,
+  },
+  emptyIcon: {
+    fontSize: 36,
+    marginBottom: Spacing.two,
+  },
+  emptyTitle: {
     color: NS.colors.text,
     fontSize: 18,
     fontWeight: '800',
-    letterSpacing: -0.3,
+    marginBottom: Spacing.two,
+    textAlign: 'center',
   },
-  inspirationBadge: {
-    backgroundColor: NS.colors.accentSoft,
-    borderRadius: NS.radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: NS.colors.accentBorder,
-  },
-  inspirationBadgeText: {
-    color: NS.colors.accent,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  inspirationPlan: {
+  emptyText: {
     color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
+    fontSize: 14,
+    lineHeight: 22,
+    textAlign: 'center',
+    marginBottom: Spacing.four,
   },
   ctaCard: {
     padding: Spacing.four,
-    marginBottom: Spacing.two,
+    marginTop: Spacing.two,
   },
   ctaTitle: {
     color: NS.colors.text,

@@ -24,6 +24,10 @@ import { FadeInView } from '@/components/ui/fade-in-view';
 import { PrimaryButton, PremiumCard } from '@/components/ui/premium-card';
 import { Spacing } from '@/constants/theme';
 import { getBudgetPlaceholder, getBudgetPresets, getCurrency, type CurrencyCode } from '@/constants/currency';
+import { AppErrorBanner } from '@/components/app-error-banner';
+import { APP_MESSAGES, getErrorMessage } from '@/lib/app-errors';
+import { linkPlanRatingToTrip } from '@/lib/plan-rating';
+import { formatCombinedMood } from '@/lib/custom-preferences';
 import { buildLocationCurrencyHint, inferCurrencyFromLocation } from '@/lib/location-currency';
 import { NS } from '@/constants/nanisuru-ui';
 import { getCurrentCityLabel } from '@/lib/current-location';
@@ -34,7 +38,9 @@ import {
   IMA_HIMA_TIME_EMOJI,
   resolveMoodPreferences,
 } from '@/lib/imafima';
+import { PlanCustomPreferencesFields } from '@/components/plan-custom-preferences-fields';
 import { SaveTripButton } from '@/components/save-trip-button';
+import { PlanRatingSection } from '@/components/plan-rating-section';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { getItineraryEyebrow } from '@/lib/itineraries';
 import { getImaHimaTripDuration } from '@/lib/imafima';
@@ -47,6 +53,9 @@ import {
 } from '@/types/imafima';
 import type { CompanionOption, ItineraryDay, PersonalityOption, PlanDetails } from '@/types/plan';
 import { isDateRelatedCompanion } from '@/types/plan';
+import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import type { PlanRatingContext } from '@/types/plan-rating';
+import type { SavedTrip } from '@/types/trip';
 
 const accent = NS.colors.accent;
 
@@ -135,6 +144,9 @@ export default function ImaHimaScreen() {
   const [companion, setCompanion] = useState<CompanionOption>('一人');
   const [personality, setPersonality] = useState<PersonalityOption>('のんびり');
   const [currency, setCurrency] = useState<CurrencyCode>('JPY');
+  const [savedTripId, setSavedTripId] = useState<string | null>(null);
+  const [pendingRatingId, setPendingRatingId] = useState<string | null>(null);
+  const [customPreferences, setCustomPreferences] = useState<PlanCustomPreferences>({});
 
   const { symbol } = getCurrency(currency);
   const resolvedLocation = (locationLabel ?? manualLocation.trim()) || '';
@@ -176,11 +188,14 @@ export default function ImaHimaScreen() {
 
     const location = resolvedLocation;
     if (!location) {
-      setError('場所を入力するか、位置情報を許可してください');
+      setError(APP_MESSAGES.locationRequired);
       return;
     }
 
     setError(null);
+    setSavedTripId(null);
+    setPendingRatingId(null);
+    setCustomPreferences({});
     setIsLoading(true);
     setLoadingStep(0);
 
@@ -196,6 +211,7 @@ export default function ImaHimaScreen() {
           currency,
           availableTime,
           mood,
+          customPreferences,
         }),
         runLoadingAnimation(setLoadingStep),
       ]);
@@ -211,7 +227,7 @@ export default function ImaHimaScreen() {
           budget: budget.trim(),
           currency,
           people: moodPrefs.companion === '一人' ? '1' : '2',
-          mood,
+          mood: formatCombinedMood(mood, customPreferences.customMood),
           companion: moodPrefs.companion,
           personality: moodPrefs.personality,
           tripDuration,
@@ -220,8 +236,7 @@ export default function ImaHimaScreen() {
         }),
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
-      setError(message);
+      setError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
       setLoadingStep(0);
@@ -335,6 +350,13 @@ export default function ImaHimaScreen() {
         ))}
       </View>
 
+      <View style={styles.customPreferencesWrap}>
+        <PlanCustomPreferencesFields
+          value={customPreferences}
+          onChange={setCustomPreferences}
+        />
+      </View>
+
       {mood ? (
         <FadeInView delay={80}>
           <PremiumCard variant="accent" style={styles.readyCard}>
@@ -342,7 +364,8 @@ export default function ImaHimaScreen() {
             <Text style={styles.readyTitle}>準備OK！</Text>
             <Text style={styles.readySubtitle}>
               {availableTime}・{symbol}
-              {parseInt(budget, 10).toLocaleString('ja-JP')}・{mood}
+              {parseInt(budget, 10).toLocaleString('ja-JP')}・
+              {formatCombinedMood(mood, customPreferences.customMood)}
             </Text>
           </PremiumCard>
 
@@ -357,17 +380,39 @@ export default function ImaHimaScreen() {
       ) : null}
 
       {!isOpenAiConfigured() ? (
-        <Text style={styles.helperText}>
-          .env に EXPO_PUBLIC_OPENAI_API_KEY を設定してください
-        </Text>
+        <AppErrorBanner message={APP_MESSAGES.openAiNotConfigured} variant="info" />
       ) : null}
 
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {error ? (
+        <AppErrorBanner message={error} onRetry={handleGenerate} />
+      ) : null}
     </FadeInView>
   );
 
   const renderResult = () => {
     if (!planDetails || !availableTime || !mood) return null;
+
+    const handleTripSaved = (trip: SavedTrip) => {
+      setSavedTripId(trip.id);
+      if (pendingRatingId) {
+        void linkPlanRatingToTrip(pendingRatingId, trip.id);
+      }
+    };
+
+    const ratingContext: PlanRatingContext = {
+      source: 'imafima',
+      location: resolvedLocation,
+      budget,
+      currency,
+      people: companion === '一人' ? '1' : '2',
+      mood: formatCombinedMood(mood, customPreferences.customMood),
+      companion,
+      personality,
+      tripDuration: planDetails.tripDuration ?? getImaHimaTripDuration(availableTime),
+      days,
+      items: flattenItineraryDays(days),
+      details: planDetails,
+    };
 
     return (
       <FadeInView key="result">
@@ -420,13 +465,19 @@ export default function ImaHimaScreen() {
         {planDetails.weather ? <WeatherSection weather={planDetails.weather} /> : null}
 
         <CurrentLocationButton compact />
-        <ItineraryDaysView days={days} />
+        <ItineraryDaysView days={days} location={resolvedLocation} />
 
         <ConciergeAccessSection days={days} location={resolvedLocation} compact />
 
         {isDateRelatedCompanion(companion) && planDetails.aiAdvice ? (
           <AiAdviceSection advice={planDetails.aiAdvice} />
         ) : null}
+
+        <PlanRatingSection
+          context={ratingContext}
+          savedTripId={savedTripId}
+          onRated={setPendingRatingId}
+        />
 
         <View style={styles.saveButtonWrap}>
           <SaveTripButton
@@ -441,6 +492,7 @@ export default function ImaHimaScreen() {
             days={days}
             items={flattenItineraryDays(days)}
             details={planDetails}
+            onSaved={handleTripSaved}
           />
         </View>
 
@@ -451,6 +503,8 @@ export default function ImaHimaScreen() {
             setBudget('');
             setMood(null);
             setPlanDetails(null);
+            setSavedTripId(null);
+            setPendingRatingId(null);
             setError(null);
           }} />
           <Pressable style={styles.homeLink} onPress={() => router.replace('/')}>
@@ -631,6 +685,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: Spacing.two,
     justifyContent: 'space-between',
+  },
+  customPreferencesWrap: {
+    marginTop: Spacing.three,
+    marginBottom: Spacing.two,
   },
   locationBanner: {
     flexDirection: 'row',

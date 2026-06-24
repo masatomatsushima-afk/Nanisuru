@@ -3,6 +3,7 @@ import type { SpontaneousContext } from '@/types/imafima';
 import type { CompanionOption, PersonalityOption, TripDurationOption } from '@/types/plan';
 import type { UserPreferences } from '@/types/user-memory';
 import type { TravelMemory } from '@/types/travel-memory';
+import type { PlanCustomPreferences } from '@/types/plan-preferences';
 import type { BestDayContext } from '@/types/best-day';
 import type { WeatherForecast } from '@/lib/weather';
 
@@ -16,6 +17,7 @@ export type PlanAnalysisInput = {
   tripDuration: TripDurationOption;
   tripDate: string;
   mood: string;
+  customPreferences?: PlanCustomPreferences;
   weather?: WeatherForecast;
   userPreferences?: UserPreferences;
   travelMemories?: TravelMemory[];

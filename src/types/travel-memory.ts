@@ -3,7 +3,9 @@ export type TravelMemoryCategory =
   | 'travel_style'
   | 'budget'
   | 'activities'
-  | 'companion';
+  | 'dislikes'
+  | 'companion'
+  | 'destinations';
 
 export type TravelMemory = {
   id: string;
@@ -24,6 +26,7 @@ export type UpdateTravelMemoryInput = {
   content?: string;
 };
 
+/** @deprecated Use TRAVEL_PREFERENCE_CATEGORIES from travel-preferences.ts for editor UI */
 export const TRAVEL_MEMORY_CATEGORIES: ReadonlyArray<{
   value: TravelMemoryCategory;
   label: string;
@@ -50,15 +53,27 @@ export const TRAVEL_MEMORY_CATEGORIES: ReadonlyArray<{
   },
   {
     value: 'activities',
-    label: '好きなアクティビティ',
+    label: '好きな活動',
     icon: '📍',
     placeholder: '例: カフェ巡り、美術館、温泉',
   },
   {
+    value: 'dislikes',
+    label: '苦手なこと',
+    icon: '🚫',
+    placeholder: '例: 人混み、歩きすぎ、高い店',
+  },
+  {
     value: 'companion',
-    label: '同行者の傾向',
+    label: '同行者タイプ',
     icon: '👥',
     placeholder: '例: 子供連れ、カップル、友人との旅行が多い',
+  },
+  {
+    value: 'destinations',
+    label: '行きたい場所の傾向',
+    icon: '🗺',
+    placeholder: '例: 海、路地裏、ローカルエリア',
   },
 ];
 

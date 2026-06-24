@@ -5,7 +5,15 @@ create table if not exists public.travel_memories (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
   category text not null check (
-    category in ('food', 'travel_style', 'budget', 'activities', 'companion')
+    category in (
+      'food',
+      'travel_style',
+      'budget',
+      'activities',
+      'dislikes',
+      'companion',
+      'destinations'
+    )
   ),
   content text not null check (char_length(trim(content)) > 0),
   created_at timestamptz not null default now(),

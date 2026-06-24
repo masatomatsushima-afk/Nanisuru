@@ -79,6 +79,18 @@ export default function RootLayout() {
               animation: 'fade',
             }}
           />
+          <Stack.Screen
+            name="public-plan/[id]"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="creator/[id]"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
         </Stack>
       </ThemeProvider>
       </UserLocationProvider>

@@ -1,8 +1,10 @@
 import * as Linking from 'expo-linking';
+import { Platform } from 'react-native';
 
 import { buildFavoriteTitle } from '@/lib/favorites-storage';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { CreateSharedTripInput, SharedTrip, SharedTripPayload } from '@/types/share';
+import type { PlanDetails } from '@/types/plan';
 
 type SharedTripRow = {
   id: string;
@@ -19,11 +21,50 @@ function assertSharingConfigured(): void {
   }
 }
 
+/** Strip fields that should not appear on public share pages. */
+export function sanitizePlanDetailsForShare(details: PlanDetails): PlanDetails {
+  return {
+    totalBudget: details.totalBudget,
+    budgetBreakdown: details.budgetBreakdown,
+    duration: details.duration,
+    tripDuration: details.tripDuration,
+    weather: details.weather,
+    plannerMessage: details.plannerMessage,
+    conciergeAnalysis: details.conciergeAnalysis,
+    highlights: details.highlights ?? [],
+    rainyDayAlternatives: details.rainyDayAlternatives ?? [],
+    aiAdvice: details.aiAdvice,
+    placesNotice: details.placesNotice,
+    placesSource: details.placesSource,
+  };
+}
+
+export function sanitizeSharedTripInput(input: CreateSharedTripInput): CreateSharedTripInput {
+  return {
+    location: input.location.trim(),
+    budget: input.budget?.trim() || undefined,
+    currency: input.currency,
+    people: input.people?.trim() || undefined,
+    mood: input.mood?.trim() || undefined,
+    companion: input.companion,
+    personality: input.personality,
+    tripDuration: input.tripDuration,
+    days: input.days,
+    items: input.items,
+    details: sanitizePlanDetailsForShare(input.details),
+  };
+}
+
 export function buildShareUrl(shareId: string): string {
   const appUrl = process.env.EXPO_PUBLIC_APP_URL?.trim();
-  if (appUrl && !appUrl.includes('your-app-url')) {
+  if (appUrl && !appUrl.includes('your-app-url') && !appUrl.includes('your-domain')) {
     return `${appUrl.replace(/\/$/, '')}/share/${shareId}`;
   }
+
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/share/${shareId}`;
+  }
+
   return Linking.createURL(`share/${shareId}`);
 }
 
@@ -43,11 +84,12 @@ export async function createSharedTrip(input: CreateSharedTripInput): Promise<{
 }> {
   assertSharingConfigured();
 
+  const payload = sanitizeSharedTripInput(input);
   const title = buildFavoriteTitle(
-    input.location,
-    input.personality,
-    input.companion,
-    input.tripDuration,
+    payload.location,
+    payload.personality,
+    payload.companion,
+    payload.tripDuration,
   );
 
   const supabase = getSupabase();
@@ -55,7 +97,7 @@ export async function createSharedTrip(input: CreateSharedTripInput): Promise<{
     .from('shared_trips')
     .insert({
       title,
-      payload: input,
+      payload,
     })
     .select('id')
     .single();

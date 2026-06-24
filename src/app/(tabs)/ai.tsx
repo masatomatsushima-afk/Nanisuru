@@ -15,6 +15,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FadeInView } from '@/components/ui/fade-in-view';
+import { AppErrorBanner } from '@/components/app-error-banner';
 import { NearbyPlacesSection } from '@/components/nearby-places-section';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
@@ -23,6 +24,7 @@ import {
   buildSecretaryWelcomeMessageGeneric,
   getActiveTrip,
 } from '@/lib/active-trip';
+import { APP_MESSAGES, getErrorMessage } from '@/lib/app-errors';
 import { isGoogleMapsConfigured } from '@/lib/env';
 import { fetchNearbyFromCurrentLocation } from '@/lib/nearby-places';
 import { isOpenAiConfigured, sendSecretaryMessage } from '@/lib/travel-secretary';
@@ -162,6 +164,9 @@ export default function TravelSecretaryScreen() {
   const [nearbyPlaces, setNearbyPlaces] = useState<NearbyPlacesContext | null>(null);
   const [isSearchingNearby, setIsSearchingNearby] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastFailedPrompt, setLastFailedPrompt] = useState<string | null>(null);
+  const [lastFailedHistory, setLastFailedHistory] = useState<SecretaryMessage[] | null>(null);
+  const [retryAction, setRetryAction] = useState<'nearby' | 'message' | null>(null);
 
   const refreshActiveTrip = useCallback(async () => {
     const trip = await getActiveTrip();
@@ -187,13 +192,14 @@ export default function TravelSecretaryScreen() {
     if (isSearchingNearby) return;
 
     if (!isGoogleMapsConfigured()) {
-      setError(
-        'Google Maps APIキーが未設定です。\n.env に EXPO_PUBLIC_GOOGLE_MAPS_API_KEY を追加してください。',
-      );
+      setError(APP_MESSAGES.googleMapsNotConfigured);
+      setRetryAction(null);
       return;
     }
 
     setError(null);
+    setRetryAction(null);
+    setLastFailedPrompt(null);
     setIsSearchingNearby(true);
     scrollToEnd();
 
@@ -211,11 +217,42 @@ export default function TravelSecretaryScreen() {
       ]);
       scrollToEnd();
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : '周辺スポットの検索に失敗しました';
-      setError(message);
+      setError(getErrorMessage(err));
+      setRetryAction('nearby');
     } finally {
       setIsSearchingNearby(false);
+    }
+  };
+
+  const submitSecretaryMessage = async (trimmed: string, history: SecretaryMessage[]) => {
+    setError(null);
+    setRetryAction(null);
+    setLastFailedPrompt(null);
+    setLastFailedHistory(null);
+    setIsLoading(true);
+    scrollToEnd();
+
+    try {
+      const reply = await sendSecretaryMessage({
+        userMessage: trimmed,
+        history,
+        nearbyPlaces,
+      });
+      setMessages((prev) => [...prev, createMessage('assistant', reply)]);
+      scrollToEnd();
+    } catch (err) {
+      const message = getErrorMessage(err);
+      setError(message);
+      setLastFailedPrompt(trimmed);
+      setLastFailedHistory(history);
+      setRetryAction('message');
+      setMessages((prev) => [
+        ...prev,
+        createMessage('assistant', `申し訳ありません。${message}`),
+      ]);
+      scrollToEnd();
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -224,35 +261,32 @@ export default function TravelSecretaryScreen() {
     if (!trimmed || isLoading) return;
 
     if (!isOpenAiConfigured()) {
-      setError('OpenAI APIキーが未設定です。.env を確認してください。');
+      setError(APP_MESSAGES.openAiNotConfigured);
+      setRetryAction(null);
       return;
     }
 
-    setError(null);
     const userMessage = createMessage('user', trimmed);
-    setMessages((prev) => [...prev, userMessage]);
+    const nextHistory = [...messages, userMessage];
+    setMessages(nextHistory);
     setInput('');
-    setIsLoading(true);
-    scrollToEnd();
+    await submitSecretaryMessage(trimmed, nextHistory);
+  };
 
-    try {
-      const reply = await sendSecretaryMessage({
-        userMessage: trimmed,
-        history: [...messages, userMessage],
-        nearbyPlaces,
+  const handleRetry = () => {
+    if (retryAction === 'nearby') {
+      void searchNearbyFromCurrentLocation();
+      return;
+    }
+    if (retryAction === 'message' && lastFailedPrompt && lastFailedHistory && !isLoading) {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant' && last.content.startsWith('申し訳ありません。')) {
+          return prev.slice(0, -1);
+        }
+        return prev;
       });
-      setMessages((prev) => [...prev, createMessage('assistant', reply)]);
-      scrollToEnd();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'メッセージの送信に失敗しました';
-      setError(message);
-      setMessages((prev) => [
-        ...prev,
-        createMessage('assistant', `申し訳ありません。${message}\nもう一度お試しください。`),
-      ]);
-      scrollToEnd();
-    } finally {
-      setIsLoading(false);
+      void submitSecretaryMessage(lastFailedPrompt, lastFailedHistory);
     }
   };
 
@@ -291,9 +325,11 @@ export default function TravelSecretaryScreen() {
             <View style={styles.nearbyButtonTextWrap}>
               <Text style={styles.nearbyButtonTitle}>現在地から探す</Text>
               <Text style={styles.nearbyButtonSubtitle}>
-                {nearbyPlaces
-                  ? `${nearbyPlaces.locationLabel} · ${nearbyPlaces.places.length}件取得済み`
-                  : 'GPS + Google Places で周辺スポットを検索'}
+                {isSearchingNearby
+                  ? APP_MESSAGES.loadingSearchingPlaces
+                  : nearbyPlaces
+                    ? `${nearbyPlaces.locationLabel} · ${nearbyPlaces.places.length}件取得済み`
+                    : 'GPS + Google Places で周辺スポットを検索'}
               </Text>
             </View>
           </Pressable>
@@ -325,7 +361,12 @@ export default function TravelSecretaryScreen() {
             disabled={isLoading}
           />
 
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {error ? (
+            <AppErrorBanner
+              message={error}
+              onRetry={retryAction ? handleRetry : undefined}
+            />
+          ) : null}
 
           <View style={styles.inputWrap}>
             <TextInput

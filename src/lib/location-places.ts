@@ -1,20 +1,15 @@
 import { searchPlacesForPlan } from '@/lib/google-places';
 import { isGoogleMapsConfigured } from '@/lib/env';
+import { APP_MESSAGES, AppError } from '@/lib/app-errors';
 import { resolveCurrencyForLocation } from '@/lib/location-currency';
 import { getCachedPlaces, normalizeLocationKey, setCachedPlaces } from '@/lib/places-cache';
 import { groupNearbyPlacesByCategory } from '@/lib/nearby-places';
 import { buildStaticPlacesContext, findStaticCityPack } from '@/lib/static-places';
 import type { NearbyPlace, NearbyPlacesContext } from '@/types/nearby-places';
 
-export const REAL_PLACES_FETCH_ERROR = '実在スポットを取得できませんでした';
-
 export const PLACES_NOTICE = {
-  apiKeyMissing:
-    'Google Maps APIキーが未設定のため、定番スポットリストを使用しています。',
-  liveUnavailable:
-    'ライブのスポット情報は取得できませんでした。定番スポットリストを使用しています。',
-  unsupportedCity:
-    '実在スポットを取得できませんでした。この都市の定番リストは未対応です。',
+  apiKeyMissing: APP_MESSAGES.placesApiFailed,
+  liveUnavailable: APP_MESSAGES.placesApiFailed,
 } as const;
 
 const PLAN_MAX_PLACES = 8;
@@ -61,7 +56,7 @@ function buildFallbackContext(location: string, notice: string): NearbyPlacesCon
 export async function fetchRealPlacesForLocation(location: string): Promise<NearbyPlacesContext> {
   const trimmed = location.trim();
   if (!trimmed) {
-    throw new Error(REAL_PLACES_FETCH_ERROR);
+    throw new AppError(APP_MESSAGES.locationRequired, 'NO_PLACES_FOUND');
   }
 
   const locationKey = normalizeLocationKey(trimmed);
@@ -79,19 +74,21 @@ export async function fetchRealPlacesForLocation(location: string): Promise<Near
         return live;
       }
     } catch {
-      // fall through to static fallback
+      const fallback = buildFallbackContext(trimmed, PLACES_NOTICE.liveUnavailable);
+      if (fallback) return fallback;
+      throw new AppError(APP_MESSAGES.noPlacesFound, 'NO_PLACES_FOUND');
     }
 
     const fallback = buildFallbackContext(trimmed, PLACES_NOTICE.liveUnavailable);
     if (fallback) return fallback;
 
-    throw new Error(PLACES_NOTICE.unsupportedCity);
+    throw new AppError(APP_MESSAGES.noPlacesFound, 'NO_PLACES_FOUND');
   }
 
   const fallback = buildFallbackContext(trimmed, PLACES_NOTICE.apiKeyMissing);
   if (fallback) return fallback;
 
-  throw new Error(PLACES_NOTICE.unsupportedCity);
+  throw new AppError(APP_MESSAGES.noPlacesFound, 'NO_PLACES_FOUND');
 }
 
 export function buildRealPlacesPromptSection(context: NearbyPlacesContext): string {
@@ -172,6 +169,9 @@ export function enrichPlanWithRealPlaceLinks(
       return {
         ...item,
         placeAddress: item.placeAddress?.trim() ? item.placeAddress : match.address || undefined,
+        placeCategory: item.placeCategory?.trim()
+          ? item.placeCategory
+          : match.categoryLabel || undefined,
         websiteUrl: item.websiteUrl?.trim()
           ? item.websiteUrl
           : match.mapsUrl || undefined,

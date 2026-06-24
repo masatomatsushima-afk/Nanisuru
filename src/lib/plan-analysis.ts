@@ -9,6 +9,8 @@ import type { PlanAnalysisInput } from '@/types/plan-analysis';
 import type { UserPreferences } from '@/types/user-memory';
 import type { TravelMemory } from '@/types/travel-memory';
 import { summarizeTravelMemoriesForAnalysis } from '@/lib/travel-memory';
+import { formatCombinedMood } from '@/lib/custom-preferences';
+import type { PlanCustomPreferences } from '@/types/plan-preferences';
 
 const COMPANION_GUIDE: Record<CompanionOption, string> = {
   一人: '一人旅向け。自分のペースで、内省・発見・静かな時間を大切にした選定。',
@@ -139,7 +141,7 @@ ${analyzeBudget(budget, people, input.currency, input.tripDuration)}
 旅行タイプ **${input.personality}**: ${PERSONALITY_SUBTITLES[input.personality]}
 同行者 **${input.companion}**: ${COMPANION_GUIDE[input.companion]}
 ${COMPANION_SUBTITLES[input.companion]}
-気分: ${input.mood.trim() || '未指定'}
+気分: ${formatCombinedMood(input.mood, input.customPreferences?.customMood) || '未指定'}
 
 ### 総合戦略（overallStrategy）
 上記5項目を統合した**このプランの設計方針**を2〜4文で記載。エリアの選び方、1日の流れ、予算・天候・同行者への配慮を含める。

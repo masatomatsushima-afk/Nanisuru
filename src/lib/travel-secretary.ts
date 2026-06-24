@@ -1,4 +1,5 @@
 import { buildSecretaryTripBrief, getActiveTrip } from '@/lib/active-trip';
+import { APP_MESSAGES, AppError, isNetworkError } from '@/lib/app-errors';
 import { getOpenAiApiKey, isOpenAiConfigured } from '@/lib/env';
 import { buildNearbyPlacesBrief } from '@/lib/nearby-places';
 import { buildTravelMemoryPromptSection, getTravelMemories } from '@/lib/travel-memory';
@@ -111,18 +112,18 @@ function extractResponseText(data: unknown): string {
     }
   }
 
-  throw new Error('AIからの応答が空でした');
+  throw new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
 }
 
-function parseApiError(status: number, body: string): string {
+function parseApiError(status: number, body: string): AppError {
   try {
     const error = JSON.parse(body) as { error?: { message?: string } };
     const message = error.error?.message;
-    if (message) return `OpenAI APIエラー: ${message}`;
+    if (message) return new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
   } catch {
     // fall through
   }
-  return `OpenAI APIエラー (${status})`;
+  return new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
 }
 
 export async function sendSecretaryMessage(params: {
@@ -131,9 +132,7 @@ export async function sendSecretaryMessage(params: {
   nearbyPlaces?: NearbyPlacesContext | null;
 }): Promise<string> {
   if (!isOpenAiConfigured()) {
-    throw new Error(
-      'OpenAI APIキーが設定されていません。\n.env に EXPO_PUBLIC_OPENAI_API_KEY を追加してください。',
-    );
+    throw new AppError(APP_MESSAGES.openAiNotConfigured, 'OPENAI_FAILED');
   }
 
   const activeTrip = await getActiveTrip();
@@ -145,25 +144,33 @@ export async function sendSecretaryMessage(params: {
     content: message.content,
   }));
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      input: [
-        { role: 'system', content: systemPrompt },
-        ...recentHistory,
-        { role: 'user', content: params.userMessage },
-      ],
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        input: [
+          { role: 'system', content: systemPrompt },
+          ...recentHistory,
+          { role: 'user', content: params.userMessage },
+        ],
+      }),
+    });
+  } catch (error) {
+    if (isNetworkError(error)) {
+      throw new AppError(APP_MESSAGES.networkError, 'NETWORK_ERROR');
+    }
+    throw new AppError(APP_MESSAGES.secretaryFailed, 'UNKNOWN');
+  }
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(parseApiError(response.status, errorBody));
+    throw parseApiError(response.status, errorBody);
   }
 
   const data = await response.json();

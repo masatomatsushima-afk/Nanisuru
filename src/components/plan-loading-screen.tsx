@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { ActivityIndicator, Animated, Modal, StyleSheet, Text, View } from 'react-native';
 
+import { APP_MESSAGES } from '@/lib/app-errors';
 import { Colors, Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
 
@@ -8,12 +9,21 @@ const theme = Colors.dark;
 const accent = NS.colors.accent;
 
 export const LOADING_STEPS = [
-  { icon: '📍', label: '実在スポットを検索中' },
-  { icon: '👤', label: '好みを分析中' },
-  { icon: '☀️', label: '天気を確認中' },
-  { icon: '💰', label: '予算を最適化中' },
-  { icon: '🗓', label: '行程を設計中' },
+  { icon: '📍', label: APP_MESSAGES.loadingSearchingPlaces },
+  { icon: '🤖', label: APP_MESSAGES.loadingAiPlanning },
+  { icon: '☀️', label: '天気を確認しています…' },
+  { icon: '💰', label: '予算を最適化しています…' },
+  { icon: '🗺', label: APP_MESSAGES.loadingPreparingRoute },
   { icon: '✨', label: 'コンシェルジュプラン完成' },
+] as const;
+
+const STEP_SUBTITLES = [
+  'Google Places から実在スポットを取得中',
+  'あなたの条件に合わせてAIが設計中',
+  '天候に合わせた提案を準備中',
+  '現地通貨で予算を調整中',
+  '移動しやすいルートを組み立て中',
+  'もうすぐ完成です',
 ] as const;
 
 type StepStatus = 'pending' | 'active' | 'done';
@@ -72,6 +82,7 @@ type PlanLoadingScreenProps = {
 
 export function PlanLoadingScreen({ visible, currentStep }: PlanLoadingScreenProps) {
   const progress = useRef(new Animated.Value(0)).current;
+  const safeStep = Math.min(Math.max(currentStep, 0), LOADING_STEPS.length - 1);
 
   useEffect(() => {
     if (!visible) {
@@ -80,11 +91,11 @@ export function PlanLoadingScreen({ visible, currentStep }: PlanLoadingScreenPro
     }
 
     Animated.timing(progress, {
-      toValue: (currentStep + 1) / LOADING_STEPS.length,
+      toValue: (safeStep + 1) / LOADING_STEPS.length,
       duration: 400,
       useNativeDriver: false,
     }).start();
-  }, [currentStep, progress, visible]);
+  }, [safeStep, progress, visible]);
 
   const progressWidth = progress.interpolate({
     inputRange: [0, 1],
@@ -96,7 +107,8 @@ export function PlanLoadingScreen({ visible, currentStep }: PlanLoadingScreenPro
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <Text style={styles.title}>Nanisuru</Text>
-          <Text style={styles.subtitle}>あなたにぴったりの1日を準備しています</Text>
+          <Text style={styles.subtitle}>{LOADING_STEPS[safeStep].label}</Text>
+          <Text style={styles.subtitleHint}>{STEP_SUBTITLES[safeStep]}</Text>
 
           <View style={styles.progressTrack}>
             <Animated.View style={[styles.progressFill, { width: progressWidth }]} />
@@ -105,8 +117,8 @@ export function PlanLoadingScreen({ visible, currentStep }: PlanLoadingScreenPro
           <View style={styles.stepsList}>
             {LOADING_STEPS.map((step, index) => {
               let status: StepStatus = 'pending';
-              if (index < currentStep) status = 'done';
-              else if (index === currentStep) status = 'active';
+              if (index < safeStep) status = 'done';
+              else if (index === safeStep) status = 'active';
 
               return (
                 <LoadingStepRow key={step.label} icon={step.icon} label={step.label} status={status} />
@@ -159,11 +171,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   subtitle: {
-    color: theme.textSecondary,
-    fontSize: 14,
+    color: theme.text,
+    fontSize: 15,
     lineHeight: 22,
     textAlign: 'center',
     marginTop: Spacing.two,
+    fontWeight: '700',
+  },
+  subtitleHint: {
+    color: theme.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginTop: Spacing.one,
     marginBottom: Spacing.four,
   },
   progressTrack: {

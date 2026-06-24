@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { CurrentLocationButton } from '@/components/current-location-button';
+import { PlanRatingSection } from '@/components/plan-rating-section';
 import { SaveTripButton } from '@/components/save-trip-button';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { FadeInView } from '@/components/ui/fade-in-view';
@@ -14,8 +16,11 @@ import { Spacing } from '@/constants/theme';
 import { formatThemeQuote } from '@/lib/best-day-presentation';
 import type { BestDayPresentation } from '@/lib/best-day-presentation';
 import { getBestDayTripDuration } from '@/lib/best-day';
+import { linkPlanRatingToTrip } from '@/lib/plan-rating';
 import type { BestDayMoodOption, BestDayTimeOption } from '@/types/best-day';
 import type { CompanionOption, ItineraryDay, ItineraryItem, PersonalityOption, PlanDetails } from '@/types/plan';
+import type { PlanRatingContext } from '@/types/plan-rating';
+import type { SavedTrip } from '@/types/trip';
 import { BEST_DAY_MOOD_EMOJI, BEST_DAY_TIME_EMOJI } from '@/types/best-day';
 
 const fireAccent = '#F97316';
@@ -102,6 +107,30 @@ export function BestDayResultScreen({
 }: BestDayResultScreenProps) {
   const themeQuote = formatThemeQuote(presentation.theme);
   const tripDuration = planDetails.tripDuration ?? getBestDayTripDuration(availableTime);
+  const [savedTripId, setSavedTripId] = useState<string | null>(null);
+  const [pendingRatingId, setPendingRatingId] = useState<string | null>(null);
+
+  const ratingContext: PlanRatingContext = {
+    source: 'best-day',
+    location,
+    budget,
+    currency,
+    people,
+    mood,
+    companion,
+    personality,
+    tripDuration,
+    days,
+    items,
+    details: planDetails,
+  };
+
+  const handleTripSaved = (trip: SavedTrip) => {
+    setSavedTripId(trip.id);
+    if (pendingRatingId) {
+      void linkPlanRatingToTrip(pendingRatingId, trip.id);
+    }
+  };
 
   return (
     <View style={styles.wrap}>
@@ -174,7 +203,7 @@ export function BestDayResultScreen({
         {days.length > 0 ? (
           <>
             <CurrentLocationButton compact />
-            <ItineraryDaysView days={days} variant="detail" />
+            <ItineraryDaysView days={days} variant="detail" location={location} />
           </>
         ) : (
           <Text style={styles.emptyText}>タイムラインがありません</Text>
@@ -191,6 +220,14 @@ export function BestDayResultScreen({
         </SectionCard>
       ) : null}
 
+      <FadeInView delay={520}>
+        <PlanRatingSection
+          context={ratingContext}
+          savedTripId={savedTripId}
+          onRated={setPendingRatingId}
+        />
+      </FadeInView>
+
       <FadeInView delay={560}>
         <View style={styles.saveWrap}>
           <SaveTripButton
@@ -205,6 +242,7 @@ export function BestDayResultScreen({
             days={days}
             items={items}
             details={planDetails}
+            onSaved={handleTripSaved}
           />
         </View>
       </FadeInView>

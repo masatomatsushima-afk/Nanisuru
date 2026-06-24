@@ -7,8 +7,12 @@ import type {
 } from '@/types/travel-memory';
 import {
   getTravelMemoryCategoryLabel,
-  TRAVEL_MEMORY_CATEGORIES,
 } from '@/types/travel-memory';
+import {
+  formatPreferenceForPrompt,
+  parseStoredPreferenceContent,
+  TRAVEL_PREFERENCE_CATEGORIES,
+} from '@/types/travel-preferences';
 
 type TravelMemoryRow = {
   id: string;
@@ -152,26 +156,55 @@ export async function deleteTravelMemory(memoryId: string): Promise<void> {
 export function buildTravelMemoryPromptSection(memories: TravelMemory[]): string {
   if (memories.length === 0) return '';
 
-  const grouped = TRAVEL_MEMORY_CATEGORIES.map(({ value, label }) => {
+  const grouped = TRAVEL_PREFERENCE_CATEGORIES.map(({ value, label }) => {
     const items = memories.filter((memory) => memory.category === value);
     if (items.length === 0) return null;
-    const lines = items.map((memory) => `- ${memory.content}`).join('\n');
-    return `### ${label}\n${lines}`;
+
+    const chips = new Set<string>();
+    const customParts: string[] = [];
+    const legacyParts: string[] = [];
+
+    for (const memory of items) {
+      const parsed = parseStoredPreferenceContent(memory.content);
+      if (parsed) {
+        parsed.chips.forEach((chip) => chips.add(chip));
+        if (parsed.custom) customParts.push(parsed.custom);
+      } else {
+        legacyParts.push(memory.content);
+      }
+    }
+
+    const custom = [...customParts, ...legacyParts].filter(Boolean).join('、');
+    const line = formatPreferenceForPrompt(label, [...chips], custom);
+    return line ? `### ${label}\n${line}` : null;
   }).filter(Boolean);
 
   return `
 
 ## 旅行メモリー（ユーザー登録・最優先で反映）
-ユーザーがマイページで登録した旅行の好みです。**今回の入力条件と矛盾しない範囲で、必ずプランに反映**してください。
+ユーザーがマイページ「好みを編集」で保存した最新の好みです。**今回の入力条件と矛盾しない範囲で、必ずプランに反映**してください。
+**自由入力テキストはチップ選択より優先**してください（例: カフェ + 「人混みが少ない静かな場所」→ 静かなカフェを優先）。
 
 ${grouped.join('\n\n')}
 
 - 食の好み → レストラン・カフェ選定、食事の配分
 - 旅行スタイル → スポットの選び方、1日のペース
 - 予算感 → 費用配分、高級/リーズナブルのバランス
-- 好きなアクティビティ → 類似ジャンルのスポットを積極的に提案
-- 同行者の傾向 → 同行者向けの配慮（子供連れ、カップル等）
+- 好きな活動 → 類似ジャンルのスポットを積極的に提案
+- 苦手なこと → 該当する要素をプランから排除または最小化
+- 同行者タイプ → 同行者向けの配慮（子供連れ、カップル等）
+- 行きたい場所の傾向 → エリア・雰囲気・スポットタイプの選定
+- プラン評価から学習した好みも統合されています
 - plannerMessage で、旅行メモリーを理解していることが伝わる一言を添えること`;
+}
+
+export function summarizeTravelMemoryContent(content: string): string {
+  const parsed = parseStoredPreferenceContent(content);
+  if (!parsed) return content;
+
+  const parts = [...parsed.chips];
+  if (parsed.custom) parts.push(parsed.custom);
+  return parts.join('、') || content;
 }
 
 export function summarizeTravelMemoriesForAnalysis(memories: TravelMemory[]): string {
@@ -182,7 +215,7 @@ export function summarizeTravelMemoriesForAnalysis(memories: TravelMemory[]): st
   return memories
     .map(
       (memory) =>
-        `${getTravelMemoryCategoryLabel(memory.category)}: ${memory.content}`,
+        `${getTravelMemoryCategoryLabel(memory.category)}: ${summarizeTravelMemoryContent(memory.content)}`,
     )
     .join(' / ');
 }

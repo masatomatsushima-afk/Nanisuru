@@ -12,8 +12,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AiAdviceSection } from '@/components/ai-advice-section';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
+import { ConciergeAccessSection } from '@/components/concierge-access-section';
+import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
-import { CurrentLocationButton } from '@/components/current-location-button';
+import { SharedTripReactions } from '@/components/shared-trip-reactions';
+import { WeatherSection } from '@/components/weather-section';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard } from '@/components/ui/premium-card';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
@@ -29,6 +32,38 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
       <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function HighlightList({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <View style={styles.highlightList}>
+      {items.map((item, index) => (
+        <View key={`${item}-${index}`} style={styles.highlightRow}>
+          <View style={styles.highlightDot}>
+            <Text style={styles.highlightDotText}>✦</Text>
+          </View>
+          <Text style={styles.highlightText}>{item}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function BackupList({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <View style={styles.backupList}>
+      {items.map((item, index) => (
+        <View key={`${item}-${index}`} style={styles.backupRow}>
+          <Text style={styles.backupIcon}>☔</Text>
+          <Text style={styles.backupText}>{item}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -70,7 +105,8 @@ export default function SharedTripScreen() {
   if (notFound || !trip) {
     return (
       <View style={[styles.centered, styles.container, { paddingTop: insets.top + Spacing.four }]}>
-        <Text style={styles.errorTitle}>プランが見つかりません</Text>
+        <Text style={styles.notFoundIcon}>🔗</Text>
+        <Text style={styles.errorTitle}>共有プランが見つかりません</Text>
         <Text style={styles.errorText}>
           リンクが無効か、削除された可能性があります。
         </Text>
@@ -100,11 +136,12 @@ export default function SharedTripScreen() {
       ]}
       showsVerticalScrollIndicator={false}>
       <FadeInView>
+        <View style={styles.heroGlow} />
         <View style={styles.readOnlyBanner}>
           <Text style={styles.readOnlyBannerText}>閲覧専用 — このプランは編集できません</Text>
         </View>
 
-        <Text style={styles.eyebrow}>SHARED TRIP</Text>
+        <Text style={styles.eyebrow}>SHARED PLAN</Text>
         <Text style={styles.title}>{trip.title}</Text>
 
         <View style={styles.badgeRow}>
@@ -123,17 +160,27 @@ export default function SharedTripScreen() {
         <Text style={styles.companionSubnote}>{COMPANION_SUBTITLES[companion]}</Text>
       </FadeInView>
 
+      <FadeInView delay={20}>
+        <SharedTripReactions sharedPlanId={trip.id} />
+      </FadeInView>
+
       <FadeInView delay={40}>
         <PremiumCard style={styles.summaryCard}>
           <Text style={styles.sectionTitle}>📍 目的地</Text>
-          <Text style={styles.sectionBody}>{location.trim() || '未指定'}</Text>
-          {payload.mood ? (
-            <Text style={styles.moodText}>気分: {payload.mood}</Text>
-          ) : null}
+          <Text style={styles.locationValue}>{location.trim() || '未指定'}</Text>
+          {payload.mood ? <Text style={styles.moodText}>気分: {payload.mood}</Text> : null}
         </PremiumCard>
       </FadeInView>
 
       <FadeInView delay={60}>
+        <PremiumCard style={styles.summaryCard}>
+          <Text style={styles.sectionTitle}>📅 期間</Text>
+          <InfoRow label="旅行期間" value={tripDuration} />
+          <InfoRow label="所要時間" value={details.duration} />
+        </PremiumCard>
+      </FadeInView>
+
+      <FadeInView delay={80}>
         <PremiumCard style={styles.summaryCard}>
           <Text style={styles.sectionTitle}>💰 予算</Text>
           <View style={styles.budgetPill}>
@@ -150,35 +197,74 @@ export default function SharedTripScreen() {
         </PremiumCard>
       </FadeInView>
 
-      <FadeInView delay={80}>
-        <PremiumCard style={styles.summaryCard}>
-          <Text style={styles.sectionTitle}>📅 期間</Text>
-          <InfoRow label="旅行期間" value={tripDuration} />
-          <InfoRow label="所要時間" value={details.duration} />
-        </PremiumCard>
-      </FadeInView>
+      {details.weather ? (
+        <FadeInView delay={100}>
+          <WeatherSection weather={details.weather} />
+        </FadeInView>
+      ) : null}
 
-      <FadeInView delay={120}>
+      {details.plannerMessage ? (
+        <FadeInView delay={120}>
+          <PremiumCard style={styles.conciergeCard}>
+            <Text style={styles.conciergeLabel}>AIコンシェルジュから一言</Text>
+            <Text style={styles.conciergeMessage}>{details.plannerMessage}</Text>
+          </PremiumCard>
+        </FadeInView>
+      ) : null}
+
+      {details.conciergeAnalysis ? (
+        <FadeInView delay={140}>
+          <ConciergeAnalysisSection analysis={details.conciergeAnalysis} compact />
+        </FadeInView>
+      ) : null}
+
+      {details.highlights.length > 0 ? (
+        <FadeInView delay={160}>
+          <PremiumCard style={styles.summaryCard}>
+            <Text style={styles.sectionTitle}>⭐ ハイライト</Text>
+            <HighlightList items={details.highlights} />
+          </PremiumCard>
+        </FadeInView>
+      ) : null}
+
+      <FadeInView delay={180}>
         <PremiumCard style={styles.itineraryCard}>
-          <Text style={styles.sectionTitle}>🗓 行程</Text>
+          <Text style={styles.sectionTitle}>🗓 タイムライン</Text>
+          <Text style={styles.sectionHint}>各スポットから Google Maps で開けます</Text>
           {days.length > 0 ? (
-            <>
-              <CurrentLocationButton compact />
-              <ItineraryDaysView days={days} variant="detail" />
-            </>
+            <ItineraryDaysView days={days} variant="detail" location={location} />
           ) : (
             <Text style={styles.emptyText}>行程データがありません</Text>
           )}
         </PremiumCard>
       </FadeInView>
 
+      {days.length > 0 ? (
+        <FadeInView delay={200}>
+          <PremiumCard style={styles.summaryCard}>
+            <Text style={styles.sectionTitle}>🗺 アクセス・予約</Text>
+            <ConciergeAccessSection days={days} location={location} compact />
+          </PremiumCard>
+        </FadeInView>
+      ) : null}
+
+      {details.rainyDayAlternatives.length > 0 ? (
+        <FadeInView delay={220}>
+          <PremiumCard style={styles.summaryCard}>
+            <Text style={styles.sectionTitle}>☔ 天候バックアップ</Text>
+            <Text style={styles.sectionHint}>雨や天候変化時の代替案</Text>
+            <BackupList items={details.rainyDayAlternatives} />
+          </PremiumCard>
+        </FadeInView>
+      ) : null}
+
       {isDateRelatedCompanion(companion) && details.aiAdvice ? (
-        <FadeInView delay={180}>
+        <FadeInView delay={240}>
           <AiAdviceSection advice={details.aiAdvice} />
         </FadeInView>
       ) : null}
 
-      <FadeInView delay={220}>
+      <FadeInView delay={260}>
         <Text style={styles.sharedAt}>
           共有日:{' '}
           {new Date(trip.createdAt).toLocaleDateString('ja-JP', {
@@ -187,8 +273,8 @@ export default function SharedTripScreen() {
             day: 'numeric',
           })}
         </Text>
-        <Pressable style={styles.homeButton} onPress={() => router.replace('/')}>
-          <Text style={styles.homeButtonText}>Nanisuruでプランを作る</Text>
+        <Pressable style={styles.ctaButton} onPress={() => router.replace('/')}>
+          <Text style={styles.ctaButtonText}>Nanisuruで自分のプランを作る</Text>
         </Pressable>
       </FadeInView>
     </ScrollView>
@@ -217,6 +303,15 @@ const styles = StyleSheet.create({
     color: NS.colors.textSecondary,
     marginTop: Spacing.three,
     fontSize: 14,
+  },
+  heroGlow: {
+    position: 'absolute',
+    top: -40,
+    alignSelf: 'center',
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: NS.colors.accentGlow,
   },
   readOnlyBanner: {
     backgroundColor: NS.colors.bgCard,
@@ -293,18 +388,24 @@ const styles = StyleSheet.create({
   },
   itineraryCard: {
     padding: Spacing.four,
-    marginBottom: Spacing.four,
+    marginBottom: Spacing.three,
   },
   sectionTitle: {
     color: NS.colors.text,
     ...NS.typography.headline,
+    marginBottom: Spacing.two,
+  },
+  sectionHint: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
     marginBottom: Spacing.three,
   },
-  sectionBody: {
-    color: NS.colors.textSecondary,
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '600',
+  locationValue: {
+    color: NS.colors.text,
+    fontSize: 18,
+    lineHeight: 26,
+    fontWeight: '700',
   },
   moodText: {
     color: NS.colors.accent,
@@ -328,7 +429,7 @@ const styles = StyleSheet.create({
   },
   budgetValue: {
     color: NS.colors.text,
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
   },
   infoRow: {
@@ -351,6 +452,76 @@ const styles = StyleSheet.create({
   budgetBreakdownWrap: {
     marginTop: Spacing.two,
   },
+  conciergeCard: {
+    padding: Spacing.four,
+    marginBottom: Spacing.three,
+    backgroundColor: NS.colors.accentSoft,
+    borderColor: NS.colors.accentBorder,
+  },
+  conciergeLabel: {
+    color: NS.colors.accent,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    marginBottom: Spacing.two,
+  },
+  conciergeMessage: {
+    color: NS.colors.text,
+    fontSize: 16,
+    lineHeight: 26,
+    fontWeight: '600',
+  },
+  highlightList: {
+    gap: Spacing.two,
+  },
+  highlightRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+  },
+  highlightDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: NS.colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  highlightDotText: {
+    color: NS.colors.accent,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  highlightText: {
+    flex: 1,
+    color: NS.colors.textSecondary,
+    fontSize: 15,
+    lineHeight: 24,
+  },
+  backupList: {
+    gap: Spacing.two,
+  },
+  backupRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+    backgroundColor: NS.colors.bgInput,
+    borderRadius: NS.radius.md,
+    padding: Spacing.three,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+  },
+  backupIcon: {
+    fontSize: 16,
+    marginTop: 2,
+  },
+  backupText: {
+    flex: 1,
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+  },
   emptyText: {
     color: NS.colors.textMuted,
     fontSize: 14,
@@ -360,6 +531,10 @@ const styles = StyleSheet.create({
     color: NS.colors.textMuted,
     fontSize: 12,
     textAlign: 'center',
+    marginBottom: Spacing.three,
+  },
+  notFoundIcon: {
+    fontSize: 48,
     marginBottom: Spacing.three,
   },
   errorTitle: {
@@ -388,5 +563,18 @@ const styles = StyleSheet.create({
     color: NS.colors.accent,
     fontSize: 15,
     fontWeight: '700',
+  },
+  ctaButton: {
+    alignSelf: 'center',
+    backgroundColor: NS.colors.accent,
+    borderRadius: NS.radius.pill,
+    paddingHorizontal: Spacing.five,
+    paddingVertical: Spacing.three + 2,
+    marginBottom: Spacing.two,
+  },
+  ctaButtonText: {
+    color: NS.colors.text,
+    fontSize: 15,
+    fontWeight: '800',
   },
 });

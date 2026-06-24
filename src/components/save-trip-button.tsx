@@ -15,6 +15,7 @@ import type {
   PlanDetails,
   TripDurationOption,
 } from '@/types/plan';
+import type { SavedTrip } from '@/types/trip';
 
 type SaveTripButtonProps = {
   location: string;
@@ -28,6 +29,7 @@ type SaveTripButtonProps = {
   days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;
+  onSaved?: (trip: SavedTrip) => void;
 };
 
 export function SaveTripButton({
@@ -42,6 +44,7 @@ export function SaveTripButton({
   days,
   items,
   details,
+  onSaved,
 }: SaveTripButtonProps) {
   const { session, isConfigured } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
@@ -68,7 +71,7 @@ export function SaveTripButton({
 
     setIsSaving(true);
     try {
-      await saveTrip({
+      const saved = await saveTrip({
         location,
         budget,
         currency,
@@ -81,6 +84,7 @@ export function SaveTripButton({
         items,
         details,
       });
+      onSaved?.(saved);
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 1600);
     } catch (error) {

@@ -4,6 +4,8 @@ import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useUserLocation } from '@/contexts/user-location-context';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
+import { AppErrorBanner } from '@/components/app-error-banner';
+import { APP_MESSAGES } from '@/lib/app-errors';
 import { LOCATION_PERMISSION_DENIED_MESSAGE } from '@/lib/current-location';
 import { buildGoogleMapsDirectionsUrl } from '@/lib/geo';
 import { buildDirectionsDestination, getPlaceMapsUrl } from '@/lib/concierge-links';
@@ -57,7 +59,7 @@ export function ItineraryMapActions({ item }: ItineraryMapActionsProps) {
     try {
       await openGoogleMapsUrl(url);
     } catch {
-      setDirectionsError('Google Mapsを開けませんでした');
+      setDirectionsError(APP_MESSAGES.mapsOpenFailed);
     }
   };
 
@@ -83,7 +85,13 @@ export function ItineraryMapActions({ item }: ItineraryMapActionsProps) {
           </Text>
         </Pressable>
       </View>
-      {directionsError ? <Text style={styles.hint}>{directionsError}</Text> : null}
+      {directionsError ? (
+        <AppErrorBanner
+          message={directionsError}
+          variant="error"
+          onRetry={() => void handleDirections()}
+        />
+      ) : null}
     </View>
   );
 }
@@ -131,11 +139,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textAlign: 'center',
-  },
-  hint: {
-    color: NS.colors.danger,
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: '600',
   },
 });

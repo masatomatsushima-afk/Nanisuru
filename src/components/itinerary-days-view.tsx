@@ -8,9 +8,10 @@ import type { ItineraryDay } from '@/types/plan';
 type ItineraryDaysViewProps = {
   days: ItineraryDay[];
   variant?: 'timeline' | 'detail';
+  location?: string;
 };
 
-export function ItineraryDaysView({ days, variant = 'timeline' }: ItineraryDaysViewProps) {
+export function ItineraryDaysView({ days, variant = 'timeline', location }: ItineraryDaysViewProps) {
   let globalIndex = 0;
 
   return (
@@ -39,6 +40,7 @@ export function ItineraryDaysView({ days, variant = 'timeline' }: ItineraryDaysV
                   index={index}
                   isLast={isLastItem}
                   variant={variant}
+                  location={location}
                 />
               );
             })}

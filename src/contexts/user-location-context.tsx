@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { APP_MESSAGES } from '@/lib/app-errors';
 import {
   fetchCurrentLocation,
   LOCATION_PERMISSION_DENIED_MESSAGE,
@@ -55,7 +56,7 @@ export function UserLocationProvider({ children }: { children: ReactNode }) {
         return { location: null, errorMessage: LOCATION_PERMISSION_DENIED_MESSAGE };
       }
 
-      const message = '現在地を取得できませんでした';
+      const message = APP_MESSAGES.locationFetchFailed;
       setErrorMessage(message);
       return { location: null, errorMessage: message };
     } finally {

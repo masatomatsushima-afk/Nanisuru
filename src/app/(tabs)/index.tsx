@@ -20,6 +20,10 @@ import {
   getCurrency,
   type CurrencyCode,
 } from '@/constants/currency';
+import { AppErrorBanner } from '@/components/app-error-banner';
+import { APP_MESSAGES, getErrorMessage } from '@/lib/app-errors';
+import { linkPlanRatingToTrip } from '@/lib/plan-rating';
+import { formatCombinedMood } from '@/lib/custom-preferences';
 import { buildLocationCurrencyHint, inferCurrencyFromLocation } from '@/lib/location-currency';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { AiAdviceSection } from '@/components/ai-advice-section';
@@ -28,8 +32,10 @@ import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ShareTripButton } from '@/components/share-trip-button';
 import { SaveTripButton } from '@/components/save-trip-button';
+import { PlanRatingSection } from '@/components/plan-rating-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { CurrentLocationButton } from '@/components/current-location-button';
+import { PlanCustomPreferencesFields } from '@/components/plan-custom-preferences-fields';
 import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loading-screen';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { WeatherSection } from '@/components/weather-section';
@@ -50,6 +56,10 @@ import {
   recordPlanPreferences,
 } from '@/lib/user-memory';
 import type { UserPreferences } from '@/types/user-memory';
+import type { PlanRatingContext } from '@/types/plan-rating';
+import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import { HOME_MOOD_OPTIONS, type HomeMoodOption } from '@/types/plan-preferences';
+import type { SavedTrip } from '@/types/trip';
 import type {
   CompanionOption,
   ItineraryDay,
@@ -204,6 +214,30 @@ function ItineraryTimeline({
   isRegenerating: boolean;
 }) {
   const [showSuccess, setShowSuccess] = useState(false);
+  const [savedTripId, setSavedTripId] = useState<string | null>(null);
+  const [pendingRatingId, setPendingRatingId] = useState<string | null>(null);
+
+  const ratingContext: PlanRatingContext = {
+    source: 'home',
+    location,
+    budget,
+    currency,
+    people,
+    mood,
+    companion,
+    personality,
+    tripDuration,
+    days,
+    items,
+    details,
+  };
+
+  const handleTripSaved = (trip: SavedTrip) => {
+    setSavedTripId(trip.id);
+    if (pendingRatingId) {
+      void linkPlanRatingToTrip(pendingRatingId, trip.id);
+    }
+  };
 
   const planParams = {
     location,
@@ -294,7 +328,7 @@ function ItineraryTimeline({
 
           <View style={styles.timelineList}>
             <CurrentLocationButton compact />
-            <ItineraryDaysView days={days} variant="timeline" />
+            <ItineraryDaysView days={days} variant="timeline" location={location} />
           </View>
 
           <View style={styles.detailHint}>
@@ -309,6 +343,12 @@ function ItineraryTimeline({
         ) : null}
 
         <RecommendReasonsSection />
+
+        <PlanRatingSection
+          context={ratingContext}
+          savedTripId={savedTripId}
+          onRated={setPendingRatingId}
+        />
 
         <View style={styles.regenerateButtonWrap}>
           <PrimaryButton
@@ -332,6 +372,7 @@ function ItineraryTimeline({
             days={days}
             items={items}
             details={details}
+            onSaved={handleTripSaved}
           />
         </View>
 
@@ -534,6 +575,18 @@ function PersonalityCard({
   return <SelectChip label={label} selected={selected} onPress={onPress} />;
 }
 
+function MoodCard({
+  label,
+  selected,
+  onPress,
+}: {
+  label: HomeMoodOption;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return <SelectChip label={label} selected={selected} onPress={onPress} />;
+}
+
 function DurationCard({
   label,
   selected,
@@ -552,7 +605,8 @@ export default function HomeScreen() {
   const [budget, setBudget] = useState('');
   const [currency, setCurrency] = useState<CurrencyCode>('JPY');
   const [people, setPeople] = useState('');
-  const [mood, setMood] = useState('');
+  const [mood, setMood] = useState<HomeMoodOption | ''>('');
+  const [customPreferences, setCustomPreferences] = useState<PlanCustomPreferences>({});
   const [companion, setCompanion] = useState<CompanionOption | null>(null);
   const [personality, setPersonality] = useState<PersonalityOption | null>(null);
   const [tripDuration, setTripDuration] = useState<TripDurationOption>('1日');
@@ -630,6 +684,7 @@ export default function HomeScreen() {
       tripDuration,
       tripDate,
       mood,
+      customPreferences,
       avoidActivities,
     });
     return { days: plan.days, items: plan.items, details: plan.details };
@@ -647,7 +702,7 @@ export default function HomeScreen() {
         budget,
         currency,
         people,
-        mood,
+        mood: formatCombinedMood(mood, customPreferences.customMood),
         companion,
         personality,
         tripDuration,
@@ -690,8 +745,7 @@ export default function HomeScreen() {
       setShowItinerary(true);
       await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
-      setError(message);
+      setError(getErrorMessage(err));
       setShowItinerary(false);
     } finally {
       setIsLoading(false);
@@ -720,8 +774,7 @@ export default function HomeScreen() {
       setShowItinerary(true);
       await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
-      setError(message);
+      setError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
       setLoadingStep(0);
@@ -732,6 +785,9 @@ export default function HomeScreen() {
     setLocation(text);
     if (showItinerary) resetPlan();
   };
+
+  const resolvedMood = formatCombinedMood(mood, customPreferences.customMood);
+  const hasMoodSelection = Boolean(resolvedMood);
 
   return (
     <KeyboardAvoidingView
@@ -799,15 +855,32 @@ export default function HomeScreen() {
             placeholder="例）2"
             keyboardType="number-pad"
           />
-          <FormField
-            label="今日の気分"
-            value={mood}
-            onChangeText={(text) => {
-              setMood(text);
-              if (showItinerary) resetPlan();
-            }}
-            placeholder="例）穏やかに過ごしたい、少し刺激が欲しい"
-          />
+        </View>
+
+        <View style={styles.companionSection}>
+          <SectionHeader title="今日の気分は？" subtitle="ボタン選択に加え、自由入力もできます" />
+          <View style={styles.companionGrid}>
+            {HOME_MOOD_OPTIONS.map((option) => (
+              <MoodCard
+                key={option}
+                label={option}
+                selected={mood === option}
+                onPress={() => {
+                  setMood(option);
+                  if (showItinerary) resetPlan();
+                }}
+              />
+            ))}
+          </View>
+          <View style={styles.customPreferencesWrap}>
+            <PlanCustomPreferencesFields
+              value={customPreferences}
+              onChange={(next) => {
+                setCustomPreferences(next);
+                if (showItinerary) resetPlan();
+              }}
+            />
+          </View>
         </View>
 
         <View style={styles.companionSection}>
@@ -865,13 +938,17 @@ export default function HomeScreen() {
           <PrimaryButton
             label={isLoading ? '生成中...' : 'プランを生成'}
             onPress={handleGenerate}
-            disabled={!companion || !personality || isLoading}
+            disabled={!companion || !personality || !hasMoodSelection || isLoading}
           />
         </View>
 
-        {(!companion || !personality) && (
+        {(!companion || !personality || !hasMoodSelection) && (
           <Text style={styles.helperText}>
-            {!personality && !companion
+            {!personality && !companion && !hasMoodSelection
+              ? '旅行タイプ・同行者・気分を選んでからプランを生成してください'
+              : !hasMoodSelection
+                ? '気分ボタンを選ぶか、「その他の気分を入力」に記入してください'
+              : !personality && !companion
               ? '「旅行タイプ」と「誰と行く？」を選んでからプランを生成してください'
               : !personality
                 ? '「旅行タイプは？」を選んでからプランを生成してください'
@@ -879,13 +956,13 @@ export default function HomeScreen() {
           </Text>
         )}
 
-        {!isOpenAiConfigured() && (
-          <Text style={styles.helperText}>
-            .env に EXPO_PUBLIC_OPENAI_API_KEY を設定してください（設定後は npx expo start --clear）
-          </Text>
-        )}
+        {!isOpenAiConfigured() ? (
+          <AppErrorBanner message={APP_MESSAGES.openAiNotConfigured} variant="info" />
+        ) : null}
 
-        {error && <Text style={styles.errorText}>{error}</Text>}
+        {error ? (
+          <AppErrorBanner message={error} onRetry={handleGenerate} />
+        ) : null}
 
         {showItinerary && companion && personality && planDetails && (
           <FadeInView
@@ -899,7 +976,7 @@ export default function HomeScreen() {
               budget={budget}
               currency={currency}
               people={people}
-              mood={mood}
+              mood={resolvedMood}
               days={days}
               items={itinerary}
               details={planDetails}
@@ -1238,6 +1315,9 @@ const styles = StyleSheet.create({
   },
   companionSection: {
     marginTop: NS.layout.sectionGap,
+  },
+  customPreferencesWrap: {
+    marginTop: Spacing.three,
   },
   generateButtonWrap: {
     marginTop: NS.layout.sectionGap,

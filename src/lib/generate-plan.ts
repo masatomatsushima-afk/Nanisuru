@@ -30,9 +30,10 @@ import { getTravelMemories } from './travel-memory';
 import {
   enrichPlanWithRealPlaceLinks,
   fetchRealPlacesForLocation,
-  REAL_PLACES_FETCH_ERROR,
 } from './location-places';
 import { inferCurrencyFromLocation } from './location-currency';
+import { APP_MESSAGES, AppError, classifyError, isNetworkError } from './app-errors';
+import { learnFromCustomPreferences } from './custom-preferences';
 import type { CurrencyCode } from '@/constants/currency';
 
 export type GeneratedPlan = {
@@ -60,6 +61,11 @@ const ITINERARY_ITEM_SCHEMA = {
   properties: {
     time: { type: 'string', description: 'Start time HH:MM' },
     activity: { type: 'string', description: 'Real place name in Japanese — must match provided real places list when available' },
+    placeCategory: {
+      type: 'string',
+      description:
+        'Short category label for the place in Japanese or English e.g. カフェ cafe brunch 美術館 — used for social search',
+    },
     reason: {
       type: 'string',
       description:
@@ -320,6 +326,7 @@ export async function generateImaHimaPlan(params: {
   currency: CurrencyCode;
   availableTime: ImaHimaTimeOption;
   mood: ImaHimaMoodOption;
+  customPreferences?: import('@/types/plan-preferences').PlanCustomPreferences;
 }): Promise<GeneratedPlan> {
   const moodPrefs = resolveMoodPreferences(params.mood);
   const spontaneous = buildSpontaneousContext(params.availableTime, params.mood);
@@ -341,6 +348,7 @@ export async function generateImaHimaPlan(params: {
     tripDuration,
     tripDate: getTodayIsoDate(),
     mood: params.mood,
+    customPreferences: params.customPreferences,
     spontaneous,
   });
 }
@@ -352,6 +360,7 @@ export async function generateBestDayPlan(params: {
   people: string;
   availableTime: BestDayTimeOption;
   mood: BestDayMoodOption;
+  customPreferences?: import('@/types/plan-preferences').PlanCustomPreferences;
 }): Promise<GeneratedPlan> {
   const moodPrefs = resolveBestDayPreferences(params.mood, params.people);
   const bestDay = buildBestDayContext(
@@ -372,6 +381,7 @@ export async function generateBestDayPlan(params: {
     tripDuration,
     tripDate: getTodayIsoDate(),
     mood: params.mood,
+    customPreferences: params.customPreferences,
     bestDay,
   });
 }
@@ -451,29 +461,34 @@ function extractResponseText(data: unknown): string {
   throw new Error('AIからの応答が空でした');
 }
 
-function parseApiError(status: number, body: string): string {
+function parseApiError(status: number, body: string): never {
+  if (status === 0 || status >= 500) {
+    throw new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
+  }
+
   try {
     const error = JSON.parse(body) as { error?: { message?: string } };
     const message = error.error?.message;
-    if (message) return `OpenAI APIエラー: ${message}`;
-  } catch {
-    // fall through
+    if (message && /rate limit|timeout|overloaded|server/i.test(message)) {
+      throw new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
+    }
+  } catch (parseErr) {
+    if (parseErr instanceof AppError) throw parseErr;
   }
-  return `OpenAI APIエラー (${status})`;
+
+  throw new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
 }
 
 export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPlan> {
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
-    throw new Error(
-      'OpenAI APIキーが設定されていません。\nnanisuru/.env に EXPO_PUBLIC_OPENAI_API_KEY を追加して Expo を再起動してください。',
-    );
+    throw new AppError(APP_MESSAGES.openAiNotConfigured, 'OPENAI_FAILED');
   }
 
   let weather: WeatherForecast | undefined;
   const locationTrimmed = input.location.trim();
   if (!locationTrimmed) {
-    throw new Error('場所を入力してください');
+    throw new AppError(APP_MESSAGES.locationRequired, 'NO_PLACES_FOUND');
   }
 
   let realPlaces;
@@ -487,8 +502,10 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
       fetchRealPlacesForLocation(locationTrimmed),
     ]);
   } catch (err) {
-    const message = err instanceof Error ? err.message : REAL_PLACES_FETCH_ERROR;
-    throw new Error(message);
+    if (isNetworkError(err)) {
+      throw new AppError(APP_MESSAGES.networkError, 'NETWORK_ERROR');
+    }
+    throw classifyError(err);
   }
 
   const [userPreferences, travelMemories] = await Promise.all([
@@ -570,32 +587,40 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     systemPrompt = `${systemPrompt} 実在スポットリストが提供されています。リスト以外の店名・施設名を一切使用しないこと。activity にはリストの名称をそのまま使用し、架空のスポットは禁止。`;
   }
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      input: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: buildConciergePrompt(enrichedInput) },
-      ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: includeAiAdvice ? 'nanisuru_trip_plan_with_advice' : 'nanisuru_trip_plan',
-          strict: true,
-          schema: buildPlanJsonSchema(input.tripDuration, includeAiAdvice, schemaOverrides),
-        },
+  let response: Response;
+  try {
+    response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
       },
-    }),
-  });
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        input: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: buildConciergePrompt(enrichedInput) },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: includeAiAdvice ? 'nanisuru_trip_plan_with_advice' : 'nanisuru_trip_plan',
+            strict: true,
+            schema: buildPlanJsonSchema(input.tripDuration, includeAiAdvice, schemaOverrides),
+          },
+        },
+      }),
+    });
+  } catch (err) {
+    if (isNetworkError(err)) {
+      throw new AppError(APP_MESSAGES.networkError, 'NETWORK_ERROR');
+    }
+    throw classifyError(err);
+  }
 
   if (!response.ok) {
     const errorBody = await response.text();
-    throw new Error(parseApiError(response.status, errorBody));
+    parseApiError(response.status, errorBody);
   }
 
   const data = await response.json();
@@ -618,6 +643,8 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
       };
     }
   }
+
+  void learnFromCustomPreferences(input.customPreferences);
 
   return plan;
 }

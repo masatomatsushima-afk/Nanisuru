@@ -1,23 +1,37 @@
-import { getCurrentCoordinates } from '@/lib/current-location';
+import {
+  fetchCurrentLocation,
+  LOCATION_PERMISSION_DENIED_MESSAGE,
+} from '@/lib/current-location';
 import { searchNearbyPlaces } from '@/lib/google-places';
+import { APP_MESSAGES, AppError } from '@/lib/app-errors';
 import type { NearbyPlace, NearbyPlacesContext } from '@/types/nearby-places';
 import { NEARBY_PLACE_CATEGORIES } from '@/types/nearby-places';
 
 export async function fetchNearbyFromCurrentLocation(): Promise<NearbyPlacesContext> {
-  const location = await getCurrentCoordinates();
-  if (!location) {
-    throw new Error(
-      '現在地を取得できませんでした。位置情報の許可をオンにして、もう一度お試しください。',
-    );
+  const result = await fetchCurrentLocation();
+
+  if (result.status === 'denied') {
+    throw new AppError(LOCATION_PERMISSION_DENIED_MESSAGE, 'LOCATION_PERMISSION_DENIED');
+  }
+  if (result.status !== 'success') {
+    throw new AppError(APP_MESSAGES.locationFetchFailed, 'UNKNOWN');
   }
 
-  const places = await searchNearbyPlaces({
-    latitude: location.latitude,
-    longitude: location.longitude,
-  });
+  const location = result.data;
+
+  let places: NearbyPlace[];
+  try {
+    places = await searchNearbyPlaces({
+      latitude: location.latitude,
+      longitude: location.longitude,
+    });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError(APP_MESSAGES.placesApiFailed, 'PLACES_API_FAILED');
+  }
 
   if (places.length === 0) {
-    throw new Error('近くにスポットが見つかりませんでした。別の場所でお試しください。');
+    throw new AppError(APP_MESSAGES.noNearbyPlaces, 'NO_PLACES_FOUND');
   }
 
   return {

@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { AppErrorBanner } from '@/components/app-error-banner';
 import { useUserLocation } from '@/contexts/user-location-context';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
@@ -27,7 +28,7 @@ export function CurrentLocationButton({ compact = false }: CurrentLocationButton
           pressed && styles.buttonPressed,
           isLoading && styles.buttonDisabled,
         ]}
-        onPress={fetchLocation}
+        onPress={() => void fetchLocation()}
         disabled={isLoading}>
         <Text style={[styles.label, location && styles.labelActive]}>{label}</Text>
         {location ? (
@@ -36,7 +37,13 @@ export function CurrentLocationButton({ compact = false }: CurrentLocationButton
           </Text>
         ) : null}
       </Pressable>
-      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+      {errorMessage ? (
+        <AppErrorBanner
+          message={errorMessage}
+          variant="error"
+          onRetry={() => void fetchLocation()}
+        />
+      ) : null}
     </View>
   );
 }
@@ -83,13 +90,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 4,
     fontVariant: ['tabular-nums'],
-  },
-  error: {
-    color: NS.colors.danger,
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: Spacing.two,
-    textAlign: 'center',
-    fontWeight: '600',
   },
 });

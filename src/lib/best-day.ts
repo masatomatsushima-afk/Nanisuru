@@ -6,6 +6,7 @@ import type {
   BestDayTimeOption,
 } from '@/types/best-day';
 import type { CompanionOption, PersonalityOption, TripDurationOption } from '@/types/plan';
+import { APP_MESSAGES } from '@/lib/app-errors';
 
 export const BEST_DAY_TIME_CONFIG: Record<BestDayTimeOption, BestDayTimeConfig> = {
   '2時間': {
@@ -187,18 +188,18 @@ ${context.timeGuide}
 }
 
 export const BEST_DAY_LOADING_STEPS = [
-  { icon: '📍', label: '実在スポットを検索中...' },
-  { icon: '🔥', label: 'あなたの気分を読み取り中...' },
-  { icon: '💾', label: '旅行メモリーを反映中...' },
-  { icon: '🎭', label: '今日のテーマを設計中...' },
+  { icon: '📍', label: APP_MESSAGES.loadingSearchingPlaces },
+  { icon: '🔥', label: 'あなたの気分を読み取っています…' },
+  { icon: '💾', label: '旅行メモリーを反映しています…' },
+  { icon: '🤖', label: APP_MESSAGES.loadingAiPlanning },
   { icon: '✨', label: '最高の1日が完成' },
 ] as const;
 
 export const BEST_DAY_LOADING_STEPS_NO_MEMORY = [
-  { icon: '📍', label: '実在スポットを検索中...' },
-  { icon: '🔥', label: 'あなたの気分を読み取り中...' },
-  { icon: '🎭', label: '今日のテーマを設計中...' },
-  { icon: '📅', label: 'タイムラインを紡いでいます...' },
+  { icon: '📍', label: APP_MESSAGES.loadingSearchingPlaces },
+  { icon: '🔥', label: 'あなたの気分を読み取っています…' },
+  { icon: '🤖', label: APP_MESSAGES.loadingAiPlanning },
+  { icon: '🗺', label: APP_MESSAGES.loadingPreparingRoute },
   { icon: '✨', label: '最高の1日が完成' },
 ] as const;
 

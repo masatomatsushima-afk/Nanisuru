@@ -5,7 +5,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
-import { TravelMemorySection } from '@/components/travel-memory-section';
+import { PublicProfileEditor } from '@/components/public-profile-editor';
+import { TravelPreferencesEditor } from '@/components/travel-preferences-editor';
+import { RatingTendencySection } from '@/components/rating-tendency-section';
 import { UserPreferencesSection } from '@/components/user-preferences-section';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
@@ -100,7 +102,19 @@ export default function ProfileScreen() {
         ) : null}
 
         <FadeInView delay={140}>
-          <TravelMemorySection
+          <RatingTendencySection isLoggedIn={false} isConfigured={isConfigured} />
+        </FadeInView>
+
+        <FadeInView delay={150}>
+          <PublicProfileEditor
+            isLoggedIn={false}
+            isConfigured={isConfigured}
+            onRequireLogin={() => router.push('/login')}
+          />
+        </FadeInView>
+
+        <FadeInView delay={160}>
+          <TravelPreferencesEditor
             isLoggedIn={false}
             isConfigured={isConfigured}
             onRequireLogin={() => router.push('/login')}
@@ -166,8 +180,20 @@ export default function ProfileScreen() {
         </FadeInView>
       ) : null}
 
+      <FadeInView delay={155}>
+        <RatingTendencySection isLoggedIn isConfigured={isConfigured} />
+      </FadeInView>
+
+      <FadeInView delay={162}>
+        <PublicProfileEditor
+          isLoggedIn
+          isConfigured={isConfigured}
+          onRequireLogin={() => router.push('/login')}
+        />
+      </FadeInView>
+
       <FadeInView delay={165}>
-        <TravelMemorySection
+        <TravelPreferencesEditor
           isLoggedIn
           isConfigured={isConfigured}
           onRequireLogin={() => router.push('/login')}

@@ -28,6 +28,10 @@ import {
   resolveBestDayPreferences,
   runBestDayLoadingAnimation,
 } from '@/lib/best-day';
+import { AppErrorBanner } from '@/components/app-error-banner';
+import { PlanCustomPreferencesFields } from '@/components/plan-custom-preferences-fields';
+import { APP_MESSAGES, getErrorMessage } from '@/lib/app-errors';
+import { formatCombinedMood } from '@/lib/custom-preferences';
 import { buildBestDayPresentation } from '@/lib/best-day-presentation';
 import { getCurrentCityLabel } from '@/lib/current-location';
 import { generateBestDayPlan, isOpenAiConfigured } from '@/lib/generate-plan';
@@ -42,6 +46,7 @@ import {
   type BestDayMoodOption,
   type BestDayTimeOption,
 } from '@/types/best-day';
+import type { PlanCustomPreferences } from '@/types/plan-preferences';
 import type { CompanionOption, ItineraryDay, PersonalityOption, PlanDetails } from '@/types/plan';
 
 const fireAccent = '#F97316';
@@ -175,6 +180,7 @@ export default function BestDayScreen() {
   const [companion, setCompanion] = useState<CompanionOption>('一人');
   const [personality, setPersonality] = useState<PersonalityOption>('のんびり');
   const [currency, setCurrency] = useState<CurrencyCode>('JPY');
+  const [customPreferences, setCustomPreferences] = useState<PlanCustomPreferences>({});
 
   const { symbol } = getCurrency(currency);
   const resolvedLocation = location.trim() || locationHint || '';
@@ -228,7 +234,7 @@ export default function BestDayScreen() {
     if (!mood || !people || !availableTime || !budget.trim() || !resolvedLocation) return;
 
     if (!isOpenAiConfigured()) {
-      setError('OpenAI APIキーが未設定です。.env を確認してください。');
+      setError(APP_MESSAGES.openAiNotConfigured);
       return;
     }
 
@@ -253,6 +259,7 @@ export default function BestDayScreen() {
           people: moodPrefs.effectivePeople,
           availableTime,
           mood,
+          customPreferences,
         }),
         runBestDayLoadingAnimation(setLoadingStep, hasTravelMemory),
       ]);
@@ -268,7 +275,7 @@ export default function BestDayScreen() {
           budget: budget.trim(),
           currency,
           people: moodPrefs.effectivePeople,
-          mood,
+          mood: formatCombinedMood(mood, customPreferences.customMood),
           companion: moodPrefs.companion,
           personality: moodPrefs.personality,
           tripDuration,
@@ -277,8 +284,7 @@ export default function BestDayScreen() {
         }),
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'プランの生成に失敗しました';
-      setError(message);
+      setError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
       setLoadingStep(0);
@@ -403,7 +409,15 @@ export default function BestDayScreen() {
           />
         ))}
       </View>
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      <View style={styles.customPreferencesWrap}>
+        <PlanCustomPreferencesFields
+          value={customPreferences}
+          onChange={setCustomPreferences}
+        />
+      </View>
+      {error ? (
+        <AppErrorBanner message={error} onRetry={handleGenerate} />
+      ) : null}
       <PrimaryButton
         label={isLoading ? '最高の1日を設計中...' : '🔥 最高の1日をつくる'}
         onPress={handleGenerate}
@@ -598,6 +612,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.four,
   },
   moodGrid: { gap: Spacing.two, marginBottom: Spacing.four },
+  customPreferencesWrap: { marginBottom: Spacing.four },
   optionCard: {
     width: '44%',
     minWidth: 140,
