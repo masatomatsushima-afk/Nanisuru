@@ -1,6 +1,7 @@
 import { formatAmount, getCurrency, type CurrencyCode } from '@/constants/currency';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
-import { TRIP_DURATION_CONFIG } from '@/lib/trip-duration';
+import { resolveDurationConfig, getDurationDisplayLabel } from '@/lib/trip-duration';
+import { formatTripDateRangeLabel } from '@/lib/trip-schedule';
 import type { WeatherForecast } from '@/lib/weather';
 import { formatTripDateLabel } from '@/lib/weather';
 import type { SpontaneousContext } from '@/types/imafima';
@@ -112,10 +113,15 @@ function analyzePreferences(
 }
 
 export function buildPreAnalysisBriefing(input: PlanAnalysisInput): string {
-  const durationConfig = TRIP_DURATION_CONFIG[input.tripDuration];
+  const durationConfig = resolveDurationConfig(input.tripDuration, input.customDuration);
+  const durationLabel = getDurationDisplayLabel(input.tripDuration, input.customDuration);
+  const dateRange = formatTripDateRangeLabel(input.tripDate, input.tripEndDate);
   const { symbol } = getCurrency(input.currency);
   const people = input.people.trim() || '1';
   const budget = input.budget.trim() || '未指定';
+  const moodLine = input.travelIntent?.trim()
+    ? `旅行の目的: ${input.travelIntent}`
+    : `気分: ${formatCombinedMood(input.mood, input.customPreferences?.customMood) || '未指定'}`;
 
   return `## ステップ1: コンシェルジュ事前分析（必須・ itinerary 作成前に実施）
 
@@ -132,8 +138,8 @@ ${analyzeWeather(input.weather)}
 ${analyzeBudget(budget, people, input.currency, input.tripDuration)}
 
 ### 4. 期間・日程（tripDuration）
-期間: **${input.tripDuration}**（${durationConfig.dayCount > 1 ? `${durationConfig.dayCount}日構成` : '日帰り'}）
-出発日: **${formatTripDateLabel(input.tripDate)}**
+期間: **${durationLabel}**（${durationConfig.dayCount > 1 ? `${durationConfig.dayCount}日構成` : '日帰り'}）
+${dateRange ? `日程: **${dateRange}**` : `出発日: **${formatTripDateLabel(input.tripDate)}**`}
 方針: ${durationConfig.guide}
 スポット数: 各日 ${input.spontaneous?.itemsMin ?? durationConfig.itemsMin}〜${input.spontaneous?.itemsMax ?? durationConfig.itemsMax} 件。移動と滞在のバランスを期間に合わせる。
 
@@ -141,7 +147,7 @@ ${analyzeBudget(budget, people, input.currency, input.tripDuration)}
 旅行タイプ **${input.personality}**: ${PERSONALITY_SUBTITLES[input.personality]}
 同行者 **${input.companion}**: ${COMPANION_GUIDE[input.companion]}
 ${COMPANION_SUBTITLES[input.companion]}
-気分: ${formatCombinedMood(input.mood, input.customPreferences?.customMood) || '未指定'}
+${moodLine}
 
 ### 総合戦略（overallStrategy）
 上記5項目を統合した**このプランの設計方針**を2〜4文で記載。エリアの選び方、1日の流れ、予算・天候・同行者への配慮を含める。

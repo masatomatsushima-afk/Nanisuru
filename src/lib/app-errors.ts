@@ -6,6 +6,10 @@ export const APP_MESSAGES = {
   noPlacesFound:
     'このエリアではスポットが見つかりませんでした。エリア名をもう少し具体的に入力してください。',
   openAiFailed: 'AIプランの生成に失敗しました。少し時間をおいてもう一度お試しください。',
+  inputIncomplete: '入力が不足しています。必須項目を確認してください。',
+  openAiApiFailed: 'AI APIとの通信に失敗しました。しばらくしてからもう一度お試しください。',
+  placesFetchWarning: '実在スポットの取得に失敗しました。代替データでプランを作成します。',
+  planSaveWarning: 'プランは作成できましたが、保存に失敗しました。通信環境を確認してください。',
   networkError: '通信に失敗しました。インターネット接続を確認してください。',
   locationFetchFailed: '現在地を取得できませんでした',
   mapsOpenFailed: 'Google Mapsを開けませんでした',
@@ -34,6 +38,7 @@ export type AppErrorCode =
   | 'LOCATION_PERMISSION_DENIED'
   | 'PLACES_API_FAILED'
   | 'NO_PLACES_FOUND'
+  | 'INPUT_INCOMPLETE'
   | 'OPENAI_FAILED'
   | 'NETWORK_ERROR'
   | 'SUPABASE_FAILED'
@@ -76,6 +81,12 @@ export function classifyError(error: unknown): AppError {
 
   const message = error instanceof Error ? error.message : String(error);
 
+  if (message === APP_MESSAGES.locationRequired) {
+    return new AppError(message, 'NO_PLACES_FOUND');
+  }
+  if (message === APP_MESSAGES.inputIncomplete || /入力が不足|選んでから|記入してください/.test(message)) {
+    return new AppError(message, 'INPUT_INCOMPLETE');
+  }
   if (message === APP_MESSAGES.locationPermissionDenied) {
     return new AppError(message, 'LOCATION_PERMISSION_DENIED');
   }
@@ -105,7 +116,32 @@ export function classifyError(error: unknown): AppError {
 }
 
 export function getErrorMessage(error: unknown): string {
-  return classifyError(error).message;
+  return getPlanGenerationErrorMessage(error);
+}
+
+export function getPlanGenerationErrorMessage(error: unknown): string {
+  const classified = classifyError(error);
+
+  switch (classified.code) {
+    case 'INPUT_INCOMPLETE':
+      return classified.message || APP_MESSAGES.inputIncomplete;
+    case 'OPENAI_FAILED':
+      return APP_MESSAGES.openAiApiFailed;
+    case 'PLACES_API_FAILED':
+      return APP_MESSAGES.placesApiFailed;
+    case 'NO_PLACES_FOUND':
+      return classified.message || APP_MESSAGES.noPlacesFound;
+    case 'SUPABASE_FAILED':
+      return APP_MESSAGES.supabaseFailed;
+    case 'NETWORK_ERROR':
+      return APP_MESSAGES.networkError;
+    default:
+      return classified.message || APP_MESSAGES.genericActionFailed;
+  }
+}
+
+export function isSupabaseError(error: unknown): boolean {
+  return classifyError(error).code === 'SUPABASE_FAILED';
 }
 
 export function isRetryableError(error: unknown): boolean {

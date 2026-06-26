@@ -10,11 +10,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DiscoverLocalSpotsSection } from '@/components/discover-local-spots-section';
+import { DiscoverTripMemoriesSection } from '@/components/discover-trip-memories-section';
+import { DiscoverEmptyInspirationSection } from '@/components/discover-empty-inspiration-section';
 import { DiscoverRankingSection } from '@/components/discover-ranking-section';
 import { DiscoverRecommendationsSection } from '@/components/discover-recommendations-section';
 import { DiscoverSearchFilters } from '@/components/discover-search-filters';
 import { DiscoverTrendingSection } from '@/components/discover-trending-section';
 import { PublicPlanCard } from '@/components/public-plan-card';
+import { ScreenBackground } from '@/components/ui/screen-background';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
@@ -169,6 +173,7 @@ export default function DiscoverScreen() {
   };
 
   return (
+    <ScreenBackground>
     <ScrollView
       style={styles.container}
       contentContainerStyle={[
@@ -189,12 +194,33 @@ export default function DiscoverScreen() {
       }>
       <FadeInView>
         <View style={styles.heroGlow} />
-        <Text style={styles.eyebrow}>DISCOVER</Text>
-        <Text style={styles.title}>発見</Text>
+        <Text style={styles.eyebrow}>✨ DISCOVER</Text>
+        <Text style={styles.title}>次の行き先、見つけよう</Text>
         <Text style={styles.subtitle}>
-          みんなが作ったデート・旅行プランから、次のお出かけのヒントを見つけよう。
+          写真とタグで、みんなの旅行・お出かけプランからインスピレーションを。
         </Text>
       </FadeInView>
+
+      {isConfigured ? (
+        <FadeInView delay={25}>
+          <DiscoverTripMemoriesSection
+            isConfigured={isConfigured}
+            isLoggedIn={Boolean(session)}
+            onRequireLogin={() => router.push('/login')}
+          />
+        </FadeInView>
+      ) : null}
+
+      {isConfigured ? (
+        <FadeInView delay={30}>
+          <DiscoverLocalSpotsSection
+            isConfigured={isConfigured}
+            isLoggedIn={Boolean(session)}
+            areaHint={location?.city ?? location?.label}
+            onRequireLogin={() => router.push('/login')}
+          />
+        </FadeInView>
+      ) : null}
 
       {!isConfigured ? (
         <PremiumCard style={styles.noticeCard}>
@@ -212,17 +238,13 @@ export default function DiscoverScreen() {
         <PremiumCard style={styles.noticeCard}>
           <Text style={styles.noticeTitle}>読み込みに失敗しました</Text>
           <Text style={styles.noticeText}>{error}</Text>
-          <PrimaryButton label="再試行" onPress={() => void loadPlans()} />
+          <PrimaryButton label="もう一度試す" onPress={() => void loadPlans()} />
         </PremiumCard>
       ) : allPlans.length === 0 ? (
-        <PremiumCard variant="accent" style={styles.emptyCard}>
-          <Text style={styles.emptyIcon}>✨</Text>
-          <Text style={styles.emptyTitle}>まだ公開プランがありません</Text>
-          <Text style={styles.emptyText}>
-            保存済みプランから「このプランを公開する」で、最初のプランを投稿してみましょう。
-          </Text>
-          <PrimaryButton label="プランを作る" onPress={() => router.push('/')} />
-        </PremiumCard>
+        <DiscoverEmptyInspirationSection
+          isLoggedIn={Boolean(session)}
+          onRequireLogin={() => router.push('/login')}
+        />
       ) : (
         <>
           <DiscoverRecommendationsSection
@@ -298,13 +320,14 @@ export default function DiscoverScreen() {
         </PremiumCard>
       </FadeInView>
     </ScrollView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: NS.colors.bg,
+    backgroundColor: 'transparent',
   },
   content: {
     paddingHorizontal: NS.layout.screenPadding,

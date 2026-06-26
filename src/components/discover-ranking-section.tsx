@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { PublicPlanCard } from '@/components/public-plan-card';
-import { PremiumCard } from '@/components/ui/premium-card';
+import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { buildRankedPlans } from '@/lib/discover-ranking';
@@ -116,6 +116,15 @@ export function DiscoverRankingSection({
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyIcon}>📊</Text>
           <Text style={styles.emptyText}>まだランキングに表示できるプランがありません</Text>
+          <View style={styles.buttonWrap}>
+            <PrimaryButton
+              label="人気プランを見る"
+              onPress={() => {
+                setTab('overall');
+                setTimeFilter('all');
+              }}
+            />
+          </View>
         </View>
       ) : (
         <View style={styles.list}>
@@ -210,6 +219,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     textAlign: 'center',
+  },
+  buttonWrap: {
+    alignSelf: 'stretch',
+    width: '100%',
+    marginTop: Spacing.two,
   },
   list: {
     gap: 0,

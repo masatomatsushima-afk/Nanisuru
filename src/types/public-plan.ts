@@ -1,3 +1,5 @@
+import { getDurationDisplayLabel } from '@/lib/trip-duration';
+import { formatTripDateRangeLabel, getDurationLabelFromDates, isValidIsoDate } from '@/lib/trip-schedule';
 import type { SavedTripPayload } from '@/types/trip';
 import type { PublicPlanImage, PublishPlanImageDraft } from '@/types/public-plan-image';
 import type { PublicPlanVideo, PublishPlanVideoDraft } from '@/types/public-plan-video';
@@ -41,6 +43,7 @@ export type PublicPlan = {
   saveCount: number;
   copyCount?: number;
   commentCount?: number;
+  showOnProfile?: boolean;
   createdAt: string;
   updatedAt: string;
   likedByMe?: boolean;
@@ -77,7 +80,23 @@ export function formatPublicPlanBudget(plan: PublicPlan): string {
 }
 
 export function formatPublicPlanDuration(plan: PublicPlan): string {
-  return plan.payload.tripDuration || plan.payload.details?.duration || '1日';
+  const { payload } = plan;
+  const departureDate = payload.details.tripDate;
+  const returnDate = payload.details.tripEndDate;
+  if (
+    departureDate &&
+    returnDate &&
+    isValidIsoDate(departureDate) &&
+    isValidIsoDate(returnDate)
+  ) {
+    return getDurationLabelFromDates(departureDate, returnDate);
+  }
+  return getDurationDisplayLabel(payload.tripDuration, payload.customDuration);
+}
+
+export function formatPublicPlanSchedule(plan: PublicPlan): string | null {
+  const { payload } = plan;
+  return formatTripDateRangeLabel(payload.details.tripDate, payload.details.tripEndDate);
 }
 
 export function getPublicPlanDestination(plan: PublicPlan): string {

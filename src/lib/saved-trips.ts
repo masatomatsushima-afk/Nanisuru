@@ -1,4 +1,6 @@
 import { buildFavoriteTitle } from '@/lib/favorites-storage';
+import { getDurationDisplayLabel } from '@/lib/trip-duration';
+import { formatTripDateRangeLabel, formatTripScheduleSummary } from '@/lib/trip-schedule';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { CreateSavedTripInput, SavedTrip, SavedTripPayload } from '@/types/trip';
 
@@ -45,7 +47,7 @@ export async function saveTrip(input: CreateSavedTripInput): Promise<SavedTrip> 
     input.location,
     input.personality,
     input.companion,
-    input.tripDuration,
+    getDurationDisplayLabel(input.tripDuration, input.customDuration),
   );
 
   const { data, error } = await supabase
@@ -96,30 +98,15 @@ export async function getTripById(tripId: string): Promise<SavedTrip | null> {
 
 export function formatTripSchedule(trip: SavedTrip): string {
   const { payload, createdAt } = trip;
-  const parts: string[] = [];
-
-  if (payload.details.tripDate) {
-    parts.push(formatTripDateLabel(payload.details.tripDate));
-  }
-
-  parts.push(payload.tripDuration);
-
-  if (payload.details.duration) {
-    parts.push(payload.details.duration);
-  }
-
-  parts.push(`保存日: ${formatSavedTripDate(createdAt)}`);
-
-  return parts.filter(Boolean).join(' ／ ');
-}
-
-function formatTripDateLabel(isoDate: string): string {
-  return new Date(isoDate).toLocaleDateString('ja-JP', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'short',
+  const scheduleSummary = formatTripScheduleSummary({
+    location: payload.location,
+    departureDate: payload.details.tripDate,
+    returnDate: payload.details.tripEndDate,
+    tripDuration: payload.tripDuration,
+    customDuration: payload.customDuration,
   });
+
+  return `${scheduleSummary} ／ 保存日: ${formatSavedTripDate(createdAt)}`;
 }
 
 export async function getUserTrips(): Promise<SavedTrip[]> {
@@ -171,7 +158,7 @@ export async function updateTrip(
       input.location,
       input.personality,
       input.companion,
-      input.tripDuration,
+      getDurationDisplayLabel(input.tripDuration, input.customDuration),
     );
 
   const { data, error } = await supabase

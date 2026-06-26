@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
@@ -23,7 +23,9 @@ export function LoginPromptCard({
         <Text style={styles.icon}>{icon}</Text>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.description}>{description}</Text>
-        <PrimaryButton label="ログイン" onPress={() => router.push('/login')} />
+        <View style={styles.buttonWrap}>
+          <PrimaryButton label="ログイン" onPress={() => router.push('/login')} />
+        </View>
         <Pressable style={styles.signUpLink} onPress={() => router.push('/sign-up')}>
           <Text style={styles.signUpLinkText}>新規登録はこちら</Text>
         </Pressable>
@@ -53,6 +55,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: Spacing.one,
+  },
+  buttonWrap: {
+    alignSelf: 'stretch',
+    width: '100%',
   },
   signUpLink: {
     paddingVertical: Spacing.two,

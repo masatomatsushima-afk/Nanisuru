@@ -18,6 +18,7 @@ import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { draftsFromPublicPlanImages } from '@/lib/public-plan-images';
 import { draftsFromPublicPlanVideos, validateVideoDrafts } from '@/lib/public-plan-videos';
+import { formatTripScheduleSummary } from '@/lib/trip-schedule';
 import { getPublishedPlanForTrip, parseTagsInput, publishPublicPlan } from '@/lib/public-plans';
 import type { SavedTrip } from '@/types/trip';
 import type { PublishPlanImageDraft } from '@/types/public-plan-image';
@@ -170,6 +171,19 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
             コミュニティの「発見」タブに投稿して、他のユーザーとプランを共有できます。
           </Text>
 
+          <View style={styles.scheduleSummary}>
+            <Text style={styles.scheduleSummaryLabel}>旅行日程</Text>
+            <Text style={styles.scheduleSummaryText}>
+              {formatTripScheduleSummary({
+                location: payload.location,
+                departureDate: payload.details.tripDate,
+                returnDate: payload.details.tripEndDate,
+                tripDuration: payload.tripDuration,
+                customDuration: payload.customDuration,
+              })}
+            </Text>
+          </View>
+
           <PublishPlanImagePicker images={imageDrafts} onChange={setImageDrafts} />
 
           <PublishPlanVideoLinks videos={videoDrafts} onChange={setVideoDrafts} />
@@ -288,6 +302,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     marginBottom: Spacing.two,
+  },
+  scheduleSummary: {
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    gap: 4,
+    marginBottom: Spacing.two,
+  },
+  scheduleSummaryLabel: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  scheduleSummaryText: {
+    color: NS.colors.text,
+    fontSize: 14,
+    lineHeight: 22,
+    fontWeight: '600',
   },
   label: {
     color: NS.colors.text,

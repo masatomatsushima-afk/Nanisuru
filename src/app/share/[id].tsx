@@ -22,6 +22,7 @@ import { PremiumCard } from '@/components/ui/premium-card';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { getSharedTrip } from '@/lib/trip-sharing';
 import { getDurationBadgeLabel } from '@/lib/trip-duration';
+import { formatTripDateRangeLabel } from '@/lib/trip-schedule';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import type { SharedTrip } from '@/types/share';
@@ -118,7 +119,9 @@ export default function SharedTripScreen() {
   }
 
   const { payload } = trip;
-  const { location, companion, personality, tripDuration, days, details } = payload;
+  const { location, companion, personality, tripDuration, customDuration, days, details } = payload;
+  const scheduleLabel = formatTripDateRangeLabel(details.tripDate, details.tripEndDate);
+  const durationLabel = getDurationBadgeLabel(tripDuration, customDuration);
   const budgetInput =
     payload.budget && payload.currency
       ? `${payload.budget} ${payload.currency}`
@@ -152,7 +155,7 @@ export default function SharedTripScreen() {
             <Text style={styles.badgeMutedText}>{companion}</Text>
           </View>
           <View style={styles.badgeMuted}>
-            <Text style={styles.badgeMutedText}>{getDurationBadgeLabel(tripDuration)}</Text>
+            <Text style={styles.badgeMutedText}>{durationLabel}</Text>
           </View>
         </View>
 
@@ -175,7 +178,8 @@ export default function SharedTripScreen() {
       <FadeInView delay={60}>
         <PremiumCard style={styles.summaryCard}>
           <Text style={styles.sectionTitle}>📅 期間</Text>
-          <InfoRow label="旅行期間" value={tripDuration} />
+          {scheduleLabel ? <InfoRow label="日程" value={scheduleLabel} /> : null}
+          <InfoRow label="旅行期間" value={durationLabel} />
           <InfoRow label="所要時間" value={details.duration} />
         </PremiumCard>
       </FadeInView>
@@ -232,7 +236,18 @@ export default function SharedTripScreen() {
           <Text style={styles.sectionTitle}>🗓 タイムライン</Text>
           <Text style={styles.sectionHint}>各スポットから Google Maps で開けます</Text>
           {days.length > 0 ? (
-            <ItineraryDaysView days={days} variant="detail" location={location} />
+            <ItineraryDaysView
+              days={days}
+              variant="detail"
+              location={location}
+              transportContext={{
+                location,
+                weather: details.weather,
+                travelTiming: details.travelTiming,
+                companion,
+                budget: payload.budget,
+              }}
+            />
           ) : (
             <Text style={styles.emptyText}>行程データがありません</Text>
           )}
@@ -243,7 +258,18 @@ export default function SharedTripScreen() {
         <FadeInView delay={200}>
           <PremiumCard style={styles.summaryCard}>
             <Text style={styles.sectionTitle}>🗺 アクセス・予約</Text>
-            <ConciergeAccessSection days={days} location={location} compact />
+            <ConciergeAccessSection
+              days={days}
+              location={location}
+              compact
+              transportContext={{
+                location,
+                weather: details.weather,
+                travelTiming: details.travelTiming,
+                companion,
+                budget: payload.budget,
+              }}
+            />
           </PremiumCard>
         </FadeInView>
       ) : null}

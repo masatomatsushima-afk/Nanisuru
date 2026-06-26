@@ -4,6 +4,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LoginPromptCard } from '@/components/login-prompt-card';
+import { ScreenBackground } from '@/components/ui/screen-background';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { ErrorStateCard, LoadingState, EmptyStateCard } from '@/components/ui/state-cards';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
@@ -15,6 +16,7 @@ import {
   formatSavedTripDate,
   getUserTrips,
 } from '@/lib/saved-trips';
+import { getDurationDisplayLabel } from '@/lib/trip-duration';
 import type { SavedTrip } from '@/types/trip';
 
 function TripCard({
@@ -64,7 +66,9 @@ function TripCard({
         </View>
         {payload.tripDuration ? (
           <View style={styles.tagMuted}>
-            <Text style={styles.tagMutedText}>{payload.tripDuration}</Text>
+            <Text style={styles.tagMutedText}>
+              {getDurationDisplayLabel(payload.tripDuration, payload.customDuration)}
+            </Text>
           </View>
         ) : null}
         <Text style={styles.openHint}>タップして詳細を見る →</Text>
@@ -86,9 +90,9 @@ function LoginPrompt() {
 function EmptyState() {
   return (
     <EmptyStateCard
-      icon="📋"
-      title="保存済みプランはまだありません"
-      description="ホームでプランを生成し、「プランを保存」から追加できます。"
+      icon="🗺️"
+      title="保存したプランはまだありません"
+      description="ホームでプランを作って、「プランを保存」でここに追加できます。次のお出かけの準備、始めましょう！"
       actionLabel="プランを作る"
       onAction={() => router.push('/')}
     />
@@ -152,6 +156,7 @@ export default function SavedTripsScreen() {
   };
 
   return (
+    <ScreenBackground>
     <ScrollView
       style={styles.container}
       contentContainerStyle={[
@@ -163,9 +168,14 @@ export default function SavedTripsScreen() {
       ]}
       showsVerticalScrollIndicator={false}>
       <FadeInView>
-        <Text style={styles.eyebrow}>MY TRIPS</Text>
-        <Text style={styles.title}>保存済みプラン</Text>
-        <Text style={styles.subtitle}>クラウドに保存したプランをいつでも見返せます</Text>
+        <Text style={styles.eyebrow}>📌 MY TRIPS</Text>
+        <Text style={styles.title}>保存したプラン</Text>
+        <Text style={styles.subtitle}>いつでも見返せる、あなただけの旅のリスト</Text>
+        {session ? (
+          <Pressable style={styles.memoriesLink} onPress={() => router.push('/memories')}>
+            <Text style={styles.memoriesLinkText}>📔 思い出アルバムを見る</Text>
+          </Pressable>
+        ) : null}
       </FadeInView>
 
       {!session ? (
@@ -194,13 +204,14 @@ export default function SavedTripsScreen() {
         </View>
       )}
     </ScrollView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: NS.colors.bg,
+    backgroundColor: 'transparent',
   },
   content: {
     paddingHorizontal: NS.layout.screenPadding,
@@ -221,7 +232,15 @@ const styles = StyleSheet.create({
   subtitle: {
     color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
+    marginBottom: Spacing.two,
+  },
+  memoriesLink: {
     marginBottom: Spacing.five,
+  },
+  memoriesLinkText: {
+    color: NS.colors.accent,
+    fontSize: 14,
+    fontWeight: '700',
   },
   loadingText: {
     color: NS.colors.textSecondary,

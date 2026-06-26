@@ -1,10 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
 import type { AiAdvice } from '@/types/plan';
 
-const theme = Colors.dark;
 const accent = NS.colors.accent;
 
 type AdviceBlockProps = {
@@ -58,11 +57,11 @@ export function AiAdviceSection({ advice }: AiAdviceSectionProps) {
 const styles = StyleSheet.create({
   section: {
     marginTop: Spacing.four,
-    backgroundColor: NS.colors.bgElevated,
+    backgroundColor: NS.colors.purpleSoft,
     borderRadius: NS.radius.xl,
     padding: Spacing.four,
     borderWidth: 1,
-    borderColor: NS.colors.accentBorder,
+    borderColor: 'rgba(167, 139, 250, 0.28)',
     ...NS.shadow.cardLg,
     gap: Spacing.three,
   },
@@ -79,13 +78,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sectionTitle: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 20,
     fontWeight: '800',
     letterSpacing: -0.3,
   },
   sectionSubtitle: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 13,
     marginTop: 4,
     lineHeight: 18,
@@ -138,7 +137,7 @@ const styles = StyleSheet.create({
   },
   blockText: {
     flex: 1,
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 14,
     lineHeight: 22,
   },

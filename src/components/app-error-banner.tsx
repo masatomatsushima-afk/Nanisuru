@@ -49,7 +49,7 @@ export function AppErrorBanner({
     <View style={[styles.banner, { backgroundColor: palette.bg, borderColor: palette.border }]}>
       <Text style={styles.icon}>{palette.icon}</Text>
       <View style={styles.content}>
-        <Text style={[styles.message, { color: palette.text === NS.colors.danger ? '#FCA5A5' : NS.colors.textSecondary }]}>
+        <Text style={[styles.message, { color: palette.text === NS.colors.danger ? NS.colors.danger : NS.colors.textSecondary }]}>
           {message}
         </Text>
         {onRetry ? (

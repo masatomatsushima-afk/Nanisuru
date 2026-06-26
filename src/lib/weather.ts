@@ -1,6 +1,7 @@
 import type { TripDurationOption } from '@/types/plan';
+import type { CustomTripDuration } from '@/types/trip-schedule';
 
-import { TRIP_DURATION_CONFIG } from './trip-duration';
+import { getDayCountForDuration } from './trip-duration';
 
 export type WeatherCategory = 'sunny' | 'partly_cloudy' | 'cloudy' | 'rainy' | 'snow';
 
@@ -75,8 +76,17 @@ export function addDaysToIsoDate(isoDate: string, days: number): string {
 export function getTripDateRange(
   startDate: string,
   tripDuration: TripDurationOption,
+  options?: { endDate?: string; customDuration?: CustomTripDuration | null },
 ): { startDate: string; endDate: string; dayCount: number } {
-  const dayCount = TRIP_DURATION_CONFIG[tripDuration].dayCount;
+  if (options?.endDate) {
+    const start = new Date(`${startDate}T12:00:00`).getTime();
+    const end = new Date(`${options.endDate}T12:00:00`).getTime();
+    const diffDays = Math.round((end - start) / (24 * 60 * 60 * 1000));
+    const dayCount = Math.max(1, diffDays + 1);
+    return { startDate, endDate: options.endDate, dayCount };
+  }
+
+  const dayCount = getDayCountForDuration(tripDuration, options?.customDuration);
   const endDate = addDaysToIsoDate(startDate, dayCount - 1);
   return { startDate, endDate, dayCount };
 }
@@ -193,8 +203,13 @@ export async function fetchWeatherForecast(input: {
   location: string;
   startDate: string;
   tripDuration: TripDurationOption;
+  endDate?: string;
+  customDuration?: CustomTripDuration | null;
 }): Promise<WeatherForecast> {
-  const { startDate, endDate } = getTripDateRange(input.startDate, input.tripDuration);
+  const { startDate, endDate } = getTripDateRange(input.startDate, input.tripDuration, {
+    endDate: input.endDate,
+    customDuration: input.customDuration,
+  });
   const geocoded = await geocodeLocation(input.location);
   const daily = await fetchDailyForecast(geocoded.latitude, geocoded.longitude, startDate, endDate);
 

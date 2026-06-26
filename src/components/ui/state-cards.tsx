@@ -27,8 +27,10 @@ export function EmptyStateCard({
       <Text style={styles.icon}>{icon}</Text>
       <Text style={styles.title}>{title}</Text>
       {description ? <Text style={styles.description}>{description}</Text> : null}
-      {actionLabel && onAction ? (
-        <PrimaryButton label={actionLabel} onPress={onAction} variant="secondary" />
+      {actionLabel?.trim() && onAction ? (
+        <View style={styles.actionWrap}>
+          <PrimaryButton label={actionLabel.trim()} onPress={onAction} />
+        </View>
       ) : null}
     </PremiumCard>
   );
@@ -52,7 +54,11 @@ export function ErrorStateCard({
       <Text style={styles.errorIcon}>⚠️</Text>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.description}>{message}</Text>
-      {onRetry ? <PrimaryButton label={retryLabel} onPress={onRetry} /> : null}
+      {onRetry ? (
+        <View style={styles.actionWrap}>
+          <PrimaryButton label={retryLabel.trim() || 'もう一度試す'} onPress={onRetry} />
+        </View>
+      ) : null}
     </PremiumCard>
   );
 }
@@ -77,25 +83,30 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     marginTop: Spacing.three,
     marginBottom: Spacing.three,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
   },
   icon: {
-    fontSize: 40,
+    fontSize: 44,
   },
   errorIcon: {
     fontSize: 32,
   },
   title: {
     color: NS.colors.text,
-    fontSize: 16,
-    fontWeight: '800',
+    ...NS.typography.headline,
     textAlign: 'center',
-    lineHeight: 24,
   },
   description: {
     color: NS.colors.textSecondary,
     fontSize: 14,
     lineHeight: 22,
     textAlign: 'center',
+  },
+  actionWrap: {
+    alignSelf: 'stretch',
+    width: '100%',
+    marginTop: Spacing.one,
   },
   loadingWrap: {
     alignItems: 'center',

@@ -1,5 +1,11 @@
 import { getUserDisplayName } from '@/lib/auth';
+import { countLocalHiddenSpotsForUser } from '@/lib/local-hidden-spots';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
+import {
+  noteShowOnProfileColumnMissing,
+  shouldUseShowOnProfileColumn,
+} from '@/lib/supabase-schema-fallback';
+import { countProfilePublicMemoriesForUser } from '@/lib/trip-memories';
 import type { SaveUserProfileInput, UserProfile } from '@/types/user-profile';
 
 type UserProfileRow = {
@@ -7,11 +13,17 @@ type UserProfileRow = {
   display_name: string;
   bio: string;
   style_tags: string[] | null;
+  avatar_url?: string;
+  is_local_contributor?: boolean;
+  local_expert_areas?: string[] | null;
   follower_count: number;
   following_count: number;
   created_at: string;
   updated_at: string;
 };
+
+const USER_PROFILE_SELECT =
+  'user_id, display_name, bio, style_tags, avatar_url, is_local_contributor, local_expert_areas, follower_count, following_count, created_at, updated_at';
 
 function assertProfilesConfigured(): void {
   if (!isSupabaseConfigured()) {
@@ -30,6 +42,9 @@ function rowToUserProfile(
     displayName: row.display_name,
     bio: row.bio,
     styleTags: row.style_tags ?? [],
+    avatarUrl: row.avatar_url?.trim() || undefined,
+    isLocalContributor: row.is_local_contributor ?? false,
+    localExpertAreas: row.local_expert_areas ?? [],
     followerCount: row.follower_count,
     followingCount: row.following_count,
     createdAt: row.created_at,
@@ -48,7 +63,7 @@ async function getCurrentUserId(): Promise<string | null> {
 
 async function countPublicPlansForUser(userId: string): Promise<number> {
   const supabase = getSupabase();
-  const { count, error } = await supabase
+  let query = supabase
     .from('public_plans')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
@@ -57,8 +72,38 @@ async function countPublicPlansForUser(userId: string): Promise<number> {
     .eq('is_removed', false)
     .eq('moderation_status', 'active');
 
+  if (shouldUseShowOnProfileColumn()) {
+    query = query.eq('show_on_profile', true);
+  }
+
+  let { count, error } = await query;
+
+  if (error && noteShowOnProfileColumnMissing(error)) {
+    ({ count, error } = await supabase
+      .from('public_plans')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('visibility', 'public')
+      .eq('is_public', true)
+      .eq('is_removed', false)
+      .eq('moderation_status', 'active'));
+  }
+
   if (error) return 0;
   return count ?? 0;
+}
+
+async function attachProfileCounts(userId: string): Promise<{
+  publicPlanCount: number;
+  publicMemoryCount: number;
+  localSpotCount: number;
+}> {
+  const [publicPlanCount, publicMemoryCount, localSpotCount] = await Promise.all([
+    countPublicPlansForUser(userId),
+    countProfilePublicMemoriesForUser(userId),
+    countLocalHiddenSpotsForUser(userId),
+  ]);
+  return { publicPlanCount, publicMemoryCount, localSpotCount };
 }
 
 async function isFollowingUser(
@@ -87,9 +132,7 @@ export async function ensureProfileForUserId(
   const supabase = getSupabase();
   const { data: existing } = await supabase
     .from('user_profiles')
-    .select(
-      'user_id, display_name, bio, style_tags, follower_count, following_count, created_at, updated_at',
-    )
+    .select(USER_PROFILE_SELECT)
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -115,9 +158,7 @@ export async function ensureProfileForUserId(
       bio: '',
       style_tags: [],
     })
-    .select(
-      'user_id, display_name, bio, style_tags, follower_count, following_count, created_at, updated_at',
-    )
+    .select(USER_PROFILE_SELECT)
     .single();
 
   if (error || !data) {
@@ -141,10 +182,11 @@ export async function ensureUserProfile(): Promise<UserProfile> {
   }
 
   const profile = await ensureProfileForUserId(user.id, getUserDisplayName(user));
+  const counts = await attachProfileCounts(user.id);
   return {
     ...profile,
     isSelf: true,
-    publicPlanCount: await countPublicPlansForUser(user.id),
+    ...counts,
   };
 }
 
@@ -156,9 +198,7 @@ export async function getUserProfileById(userId: string): Promise<UserProfile | 
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('user_profiles')
-    .select(
-      'user_id, display_name, bio, style_tags, follower_count, following_count, created_at, updated_at',
-    )
+    .select(USER_PROFILE_SELECT)
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -180,9 +220,11 @@ export async function getUserProfileById(userId: string): Promise<UserProfile | 
       displayName: fallbackName,
       bio: '',
       styleTags: [],
+      isLocalContributor: false,
+      localExpertAreas: [],
       followerCount: 0,
       followingCount: 0,
-      publicPlanCount: await countPublicPlansForUser(userId),
+      ...(await attachProfileCounts(userId)),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isFollowing: await isFollowingUser(currentUserId, userId),
@@ -190,8 +232,9 @@ export async function getUserProfileById(userId: string): Promise<UserProfile | 
     };
   }
 
+  const counts = await attachProfileCounts(userId);
   const profile = rowToUserProfile(data as UserProfileRow, {
-    publicPlanCount: await countPublicPlansForUser(userId),
+    ...counts,
     isSelf: currentUserId === userId,
     isFollowing: await isFollowingUser(currentUserId, userId),
   });
@@ -225,12 +268,12 @@ export async function saveUserProfile(input: SaveUserProfileInput): Promise<User
       display_name: displayName,
       bio: input.bio.trim(),
       style_tags: input.styleTags,
+      is_local_contributor: input.isLocalContributor ?? false,
+      local_expert_areas: input.localExpertAreas ?? [],
       updated_at: new Date().toISOString(),
     })
     .eq('user_id', user.id)
-    .select(
-      'user_id, display_name, bio, style_tags, follower_count, following_count, created_at, updated_at',
-    )
+    .select(USER_PROFILE_SELECT)
     .single();
 
   if (error || !data) {
@@ -263,9 +306,7 @@ export async function fetchProfilesByUserIds(
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from('user_profiles')
-    .select(
-      'user_id, display_name, bio, style_tags, follower_count, following_count, created_at, updated_at',
-    )
+    .select(USER_PROFILE_SELECT)
     .in('user_id', uniqueIds);
 
   const map = new Map<string, UserProfile>();

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { NS } from '@/constants/nanisuru-ui';
+import { NS, getChipPalette, gradientStyle } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 
 type PremiumCardProps = {
@@ -24,7 +24,7 @@ export function PremiumCard({ children, variant = 'default', style, onPress }: P
       <Pressable
         style={({ pressed }) => [...cardStyles, pressed && styles.pressed]}
         onPress={onPress}>
-        <View style={styles.topGlow} />
+        <View style={styles.topAccent} />
         {children}
       </Pressable>
     );
@@ -32,7 +32,7 @@ export function PremiumCard({ children, variant = 'default', style, onPress }: P
 
   return (
     <View style={cardStyles}>
-      <View style={styles.topGlow} />
+      <View style={styles.topAccent} />
       {children}
     </View>
   );
@@ -41,7 +41,7 @@ export function PremiumCard({ children, variant = 'default', style, onPress }: P
 const styles = StyleSheet.create({
   card: {
     backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.lg,
+    borderRadius: NS.radius.xl,
     borderWidth: 1,
     borderColor: NS.colors.border,
     overflow: 'hidden',
@@ -49,21 +49,23 @@ const styles = StyleSheet.create({
   },
   cardAccent: {
     borderColor: NS.colors.accentBorder,
-    backgroundColor: NS.colors.bgCard,
+    backgroundColor: '#F8FBFF',
   },
   cardFlat: {
     backgroundColor: NS.colors.bgCard,
+    shadowOpacity: 0,
+    elevation: 0,
   },
-  topGlow: {
+  topAccent: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    height: 4,
+    backgroundColor: NS.colors.skySoft,
   },
   pressed: {
-    opacity: 0.92,
+    opacity: 0.94,
     transform: [{ scale: 0.995 }],
   },
 });
@@ -72,13 +74,21 @@ type SectionHeaderProps = {
   title: string;
   subtitle?: string;
   eyebrow?: string;
+  step?: number;
 };
 
-export function SectionHeader({ title, subtitle, eyebrow }: SectionHeaderProps) {
+export function SectionHeader({ title, subtitle, eyebrow, step }: SectionHeaderProps) {
   return (
     <View style={headerStyles.wrap}>
       {eyebrow ? <Text style={headerStyles.eyebrow}>{eyebrow}</Text> : null}
-      <Text style={headerStyles.title}>{title}</Text>
+      <View style={headerStyles.titleRow}>
+        {step != null ? (
+          <View style={headerStyles.stepBadge}>
+            <Text style={headerStyles.stepText}>{step}</Text>
+          </View>
+        ) : null}
+        <Text style={headerStyles.title}>{title}</Text>
+      </View>
       {subtitle ? <Text style={headerStyles.subtitle}>{subtitle}</Text> : null}
     </View>
   );
@@ -93,14 +103,36 @@ const headerStyles = StyleSheet.create({
     ...NS.typography.eyebrow,
     marginBottom: Spacing.one,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  stepBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: NS.colors.coralSoft,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 113, 133, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepText: {
+    color: NS.colors.coral,
+    fontSize: 14,
+    fontWeight: '900',
+  },
   title: {
     color: NS.colors.text,
     ...NS.typography.headline,
+    flex: 1,
   },
   subtitle: {
     color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
     marginTop: Spacing.one,
+    lineHeight: 22,
   },
 });
 
@@ -108,7 +140,14 @@ type PrimaryButtonProps = {
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  variant?: 'primary' | 'secondary';
+  variant?: 'primary' | 'secondary' | 'warm' | 'mint';
+};
+
+const VARIANT_SOLID_BACKGROUND: Record<NonNullable<PrimaryButtonProps['variant']>, string> = {
+  primary: NS.colors.accent,
+  secondary: NS.colors.bgElevated,
+  warm: NS.colors.orange,
+  mint: NS.colors.mint,
 };
 
 export function PrimaryButton({
@@ -117,23 +156,43 @@ export function PrimaryButton({
   disabled = false,
   variant = 'primary',
 }: PrimaryButtonProps) {
+  const trimmedLabel = label.trim();
+  if (!trimmedLabel) return null;
+
+  const gradientKey =
+    variant === 'warm'
+      ? 'warmButton'
+      : variant === 'mint'
+        ? 'mintButton'
+        : variant === 'primary'
+          ? 'primaryButton'
+          : null;
+
+  const isSecondary = variant === 'secondary';
+
   return (
     <Pressable
       style={({ pressed }) => [
         buttonStyles.base,
-        variant === 'secondary' && buttonStyles.secondary,
+        { backgroundColor: VARIANT_SOLID_BACKGROUND[variant] },
+        gradientKey ? gradientStyle(gradientKey) : null,
+        variant === 'warm' ? NS.shadow.pop : null,
+        isSecondary && buttonStyles.secondary,
+        !isSecondary && variant !== 'warm' && buttonStyles.primaryShadow,
         disabled && buttonStyles.disabled,
         pressed && !disabled && buttonStyles.pressed,
       ]}
       onPress={onPress}
-      disabled={disabled}>
-      <View style={buttonStyles.shine} />
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={trimmedLabel}>
+      <View style={buttonStyles.shine} pointerEvents="none" />
       <Text
         style={[
           buttonStyles.label,
-          variant === 'secondary' && buttonStyles.labelSecondary,
+          isSecondary && buttonStyles.labelSecondary,
         ]}>
-        {label}
+        {trimmedLabel}
       </Text>
     </Pressable>
   );
@@ -141,16 +200,20 @@ export function PrimaryButton({
 
 const buttonStyles = StyleSheet.create({
   base: {
-    backgroundColor: NS.colors.accent,
-    borderRadius: NS.radius.md + 2,
+    alignSelf: 'stretch',
+    borderRadius: NS.radius.lg,
     paddingVertical: 18,
+    paddingHorizontal: Spacing.four,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 54,
     overflow: 'hidden',
+  },
+  primaryShadow: {
     ...NS.shadow.accent,
   },
   secondary: {
-    backgroundColor: NS.colors.accentSoft,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: NS.colors.accentBorder,
     shadowOpacity: 0,
     elevation: 0,
@@ -169,14 +232,15 @@ const buttonStyles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    height: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
   },
   label: {
-    color: NS.colors.text,
-    fontSize: 17,
-    fontWeight: '700',
+    color: NS.colors.textOnAccent,
+    fontSize: 16,
+    fontWeight: '800',
     letterSpacing: 0.2,
+    textAlign: 'center',
   },
   labelSecondary: {
     color: NS.colors.accent,
@@ -188,39 +252,54 @@ type SelectChipProps = {
   selected: boolean;
   onPress: () => void;
   width?: `${number}%` | 'auto';
+  colorIndex?: number;
 };
 
-export function SelectChip({ label, selected, onPress, width = '48%' }: SelectChipProps) {
+export function SelectChip({
+  label,
+  selected,
+  onPress,
+  width = '48%',
+  colorIndex = 0,
+}: SelectChipProps) {
+  const palette = getChipPalette(colorIndex);
+
   return (
     <Pressable
       style={({ pressed }) => [
         chipStyles.chip,
         { width },
-        selected && chipStyles.chipSelected,
+        selected && {
+          backgroundColor: palette.bg,
+          borderColor: palette.border,
+        },
         pressed && chipStyles.chipPressed,
       ]}
       onPress={onPress}>
-      <Text style={[chipStyles.label, selected && chipStyles.labelSelected]}>{label}</Text>
-      {selected ? <View style={chipStyles.dot} /> : null}
+      <Text
+        style={[
+          chipStyles.label,
+          selected && { color: palette.text, fontWeight: '800' },
+        ]}>
+        {label}
+      </Text>
+      {selected ? <View style={[chipStyles.dot, { backgroundColor: palette.dot }]} /> : null}
     </Pressable>
   );
 }
 
 const chipStyles = StyleSheet.create({
   chip: {
-    backgroundColor: NS.colors.bgCard,
-    borderColor: NS.colors.borderStrong,
-    borderWidth: 1.5,
-    borderRadius: NS.radius.md,
+    backgroundColor: NS.colors.bgElevated,
+    borderColor: NS.colors.border,
+    borderWidth: 1,
+    borderRadius: NS.radius.pill,
     paddingHorizontal: Spacing.three,
-    paddingVertical: 16,
+    paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  chipSelected: {
-    backgroundColor: NS.colors.accentSoft,
-    borderColor: NS.colors.accent,
+    ...NS.shadow.card,
   },
   chipPressed: {
     opacity: 0.88,
@@ -230,15 +309,12 @@ const chipStyles = StyleSheet.create({
     color: NS.colors.textSecondary,
     fontSize: 15,
     fontWeight: '600',
-  },
-  labelSelected: {
-    color: NS.colors.text,
-    fontWeight: '700',
+    flex: 1,
   },
   dot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: NS.colors.accent,
+    marginLeft: Spacing.two,
   },
 });

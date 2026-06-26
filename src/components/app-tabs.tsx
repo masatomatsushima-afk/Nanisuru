@@ -8,8 +8,8 @@ export default function AppTabs() {
       backgroundColor={NS.colors.bgElevated}
       indicatorColor={NS.colors.accentSoft}
       labelStyle={{
-        default: { color: NS.colors.textMuted },
-        selected: { color: NS.colors.text },
+        default: { color: NS.colors.textMuted, fontWeight: '600' },
+        selected: { color: NS.colors.accent, fontWeight: '800' },
       }}>
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Label>ホーム</NativeTabs.Trigger.Label>

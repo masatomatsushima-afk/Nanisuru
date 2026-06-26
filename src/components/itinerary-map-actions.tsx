@@ -81,7 +81,7 @@ export function ItineraryMapActions({ item }: ItineraryMapActionsProps) {
           onPress={() => void handleDirections()}
           disabled={isDirectionsLoading}>
           <Text style={styles.buttonTextSecondary}>
-            {isDirectionsLoading ? '現在地を取得中...' : '🚶 現在地から道案内'}
+            {isDirectionsLoading ? '現在地を取得中...' : '📍 現在地から道案内'}
           </Text>
         </Pressable>
       </View>

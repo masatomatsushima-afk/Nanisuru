@@ -1,27 +1,36 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { buildPlanDetails } from '@/lib/plan-details';
 import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
+import { AddTripSecretaryFolderButton } from '@/components/add-trip-secretary-folder-button';
 import { AiAdviceSection } from '@/components/ai-advice-section';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
+import { TourExperienceSection } from '@/components/tour-experience-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { WeatherSection } from '@/components/weather-section';
+import { OutfitPackingSection } from '@/components/outfit-packing-section';
+import { generateOutfitPackingAdvice } from '@/lib/outfit-packing-advice';
 import { ShareTripSection } from '@/components/share-trip-section';
 import { SaveTripButton } from '@/components/save-trip-button';
+import { AfterPlanLaunchButton } from '@/components/after-plan-launch-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { ItineraryItemEditSheet } from '@/components/itinerary-item-edit-sheet';
 import { CurrentLocationButton } from '@/components/current-location-button';
-import { Colors, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
 import { parseCurrencyCode } from '@/constants/currency';
+import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import { parseItineraryDays, isTripDurationOption } from '@/lib/trip-duration';
-import type { CompanionOption, ItineraryItem, PersonalityOption, TripDurationOption } from '@/types/plan';
+import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
+import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
 import { COMPANION_OPTIONS, isDateRelatedCompanion, PERSONALITY_OPTIONS } from '@/types/plan';
+import type { SavedTripPayload } from '@/types/trip';
 
-const theme = Colors.dark;
 const accent = NS.colors.accent;
 
 function DetailCard({
@@ -101,10 +110,48 @@ export default function PlanDetailScreen() {
     details = null;
   }
 
-  const days = parseItineraryDays(params.days, items);
+  const parsedDays = parseItineraryDays(params.days, items);
+  const [days, setDays] = useState(parsedDays);
+  const [localItems, setLocalItems] = useState(items);
+  const [editTarget, setEditTarget] = useState<ItineraryEditTarget | null>(null);
+  const [showEditSheet, setShowEditSheet] = useState(false);
+  const [editDetails, setEditDetails] = useState<PlanDetails | null>(details);
   const tripDuration = isTripDurationOption(params.tripDuration ?? '')
     ? (params.tripDuration as TripDurationOption)
     : details?.tripDuration ?? '1日';
+
+  const planDetails =
+    editDetails ??
+    details ??
+    buildPlanDetails({
+      location,
+      budget,
+      currency,
+      people,
+      mood,
+      companion: companion ?? '一人',
+      items: localItems,
+    });
+
+  const handleApplyEdit = async (result: PartialItineraryEditResult, _editRequest: string) => {
+    const basePayload: SavedTripPayload = {
+      location,
+      budget,
+      currency,
+      people,
+      mood,
+      companion: companion!,
+      personality: personality ?? 'のんびり',
+      tripDuration,
+      days,
+      items: localItems,
+      details: planDetails,
+    };
+    const nextPayload = applyPartialEditResult(basePayload, result);
+    setDays(nextPayload.days);
+    setLocalItems(nextPayload.items);
+    setEditDetails(nextPayload.details);
+  };
 
   if (!companion || days.length === 0) {
     return (
@@ -117,9 +164,19 @@ export default function PlanDetailScreen() {
     );
   }
 
-  const planDetails =
-    details ??
-    buildPlanDetails({ location, budget, currency, people, mood, companion, items });
+  const planPayload: SavedTripPayload = {
+    location,
+    budget,
+    currency,
+    people,
+    mood,
+    companion,
+    personality: personality ?? 'のんびり',
+    tripDuration,
+    days,
+    items: localItems,
+    details: planDetails,
+  };
 
   return (
     <ScrollView
@@ -175,6 +232,21 @@ export default function PlanDetailScreen() {
 
       {planDetails.weather ? <WeatherSection weather={planDetails.weather} /> : null}
 
+      {planDetails.outfitAdvice ? (
+        <OutfitPackingSection advice={planDetails.outfitAdvice} />
+      ) : planDetails.weather ? (
+        <OutfitPackingSection
+          advice={generateOutfitPackingAdvice({
+            days,
+            weather: planDetails.weather,
+            location,
+            companion,
+            dayCount: days.length,
+            tripDate: planDetails.tripDate,
+          })}
+        />
+      ) : null}
+
       <DetailCard icon="✨" title="おすすめポイント">
         <BulletList items={planDetails.highlights} />
       </DetailCard>
@@ -192,11 +264,45 @@ export default function PlanDetailScreen() {
 
       <View style={styles.timelinePreview}>
         <Text style={styles.timelinePreviewTitle}>スケジュール</Text>
+        <AfterPlanLaunchButton location={location} />
         <CurrentLocationButton compact />
-        <ItineraryDaysView days={days} variant="detail" location={location} />
+        <ItineraryDaysView
+          days={days}
+          variant="detail"
+          location={location}
+          editable
+          onEditItem={(target) => {
+            setEditTarget(target);
+            setShowEditSheet(true);
+          }}
+          transportContext={{
+            location,
+            weather: planDetails.weather,
+            travelTiming: planDetails.travelTiming,
+            companion,
+            budget,
+          }}
+        />
       </View>
 
-      <ConciergeAccessSection days={days} location={location} />
+      <ConciergeAccessSection
+        days={days}
+        location={location}
+        transportContext={{
+          location,
+          weather: planDetails.weather,
+          travelTiming: planDetails.travelTiming,
+          companion,
+          budget,
+        }}
+      />
+
+      {days.length >= 2 ? (
+        <TourExperienceSection
+          destination={location}
+          tourSuggestions={planDetails.tourSuggestions}
+        />
+      ) : null}
 
       {isDateRelatedCompanion(companion) && planDetails.aiAdvice ? (
         <AiAdviceSection advice={planDetails.aiAdvice} />
@@ -215,9 +321,12 @@ export default function PlanDetailScreen() {
               personality={personality}
               tripDuration={tripDuration}
               days={days}
-              items={items}
+              items={localItems}
               details={planDetails}
             />
+          </View>
+          <View style={styles.shareButtonWrap}>
+            <AddTripSecretaryFolderButton variant="plan-payload" payload={planPayload} />
           </View>
           <View style={styles.shareButtonWrap}>
             <ShareTripSection
@@ -230,12 +339,23 @@ export default function PlanDetailScreen() {
               personality={personality}
               tripDuration={tripDuration}
               days={days}
-              items={items}
+              items={localItems}
               details={planDetails}
             />
           </View>
         </View>
       ) : null}
+
+      <ItineraryItemEditSheet
+        visible={showEditSheet}
+        target={editTarget}
+        payload={planPayload}
+        onClose={() => {
+          setShowEditSheet(false);
+          setEditTarget(null);
+        }}
+        onApply={handleApplyEdit}
+      />
     </ScrollView>
   );
 }
@@ -273,26 +393,26 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
   },
   title: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 32,
     fontWeight: '800',
     letterSpacing: -0.8,
   },
   subtitle: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 15,
     lineHeight: 24,
     marginTop: Spacing.two,
   },
   personalityBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(129, 140, 248, 0.15)',
-    borderRadius: 999,
+    backgroundColor: NS.colors.purpleSoft,
+    borderRadius: NS.radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 6,
     marginTop: Spacing.two,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.3)',
+    borderColor: 'rgba(167, 139, 250, 0.35)',
   },
   personalityBadgeText: {
     color: accent,
@@ -315,7 +435,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   companionNote: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 13,
     lineHeight: 20,
     marginTop: 4,
@@ -333,41 +453,33 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#121214',
-    borderRadius: 20,
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: NS.radius.lg,
     padding: Spacing.three,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.2)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 6,
+    borderColor: NS.colors.border,
+    ...NS.shadow.card,
   },
   statLabel: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 12,
     fontWeight: '600',
     marginBottom: Spacing.two,
   },
   statValue: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 16,
     fontWeight: '700',
     lineHeight: 24,
   },
   detailCard: {
-    backgroundColor: '#121214',
-    borderRadius: 24,
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: NS.radius.xl,
     padding: Spacing.four,
     marginBottom: Spacing.three,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.35,
-    shadowRadius: 24,
-    elevation: 8,
+    borderColor: NS.colors.border,
+    ...NS.shadow.card,
   },
   detailCardHeader: {
     flexDirection: 'row',
@@ -379,7 +491,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   detailCardTitle: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 18,
     fontWeight: '700',
   },
@@ -400,30 +512,30 @@ const styles = StyleSheet.create({
   },
   bulletText: {
     flex: 1,
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 15,
     lineHeight: 24,
   },
   timelinePreview: {
-    backgroundColor: '#161618',
-    borderRadius: 20,
+    backgroundColor: NS.colors.bgInput,
+    borderRadius: NS.radius.lg,
     padding: Spacing.four,
     borderWidth: 1,
-    borderColor: theme.backgroundSelected,
+    borderColor: NS.colors.border,
     marginTop: Spacing.one,
   },
   timelinePreviewTitle: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 16,
     fontWeight: '700',
     marginBottom: Spacing.three,
   },
   plannerCard: {
-    backgroundColor: 'rgba(129, 140, 248, 0.08)',
-    borderRadius: 16,
+    backgroundColor: NS.colors.skySoft,
+    borderRadius: NS.radius.md,
     padding: Spacing.four,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.18)',
+    borderColor: 'rgba(56, 189, 248, 0.28)',
     marginBottom: Spacing.three,
   },
   plannerCardLabel: {
@@ -434,12 +546,12 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
   },
   plannerCardText: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 15,
     lineHeight: 24,
   },
   errorText: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 16,
     textAlign: 'center',
     marginTop: Spacing.five,

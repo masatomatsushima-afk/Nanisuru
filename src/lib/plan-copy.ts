@@ -1,6 +1,6 @@
 import { buildFavoriteTitle } from '@/lib/favorites-storage';
 import { generatePlanWithAi } from '@/lib/generate-plan';
-import { flattenItineraryDays } from '@/lib/trip-duration';
+import { flattenItineraryDays, getDurationDisplayLabel } from '@/lib/trip-duration';
 import { recordPublicPlanCopy } from '@/lib/public-plan-activity';
 import { getPublicPlanById } from '@/lib/public-plans';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
@@ -83,6 +83,7 @@ export async function adjustCopiedPlanWithAi(
   instruction: string,
 ): Promise<SavedTripPayload> {
   const tripDate = payload.details.tripDate ?? getTodayIsoDate();
+  const tripEndDate = payload.details.tripEndDate;
   const generated = await generatePlanWithAi({
     location: payload.location,
     budget: payload.budget,
@@ -92,6 +93,8 @@ export async function adjustCopiedPlanWithAi(
     personality: payload.personality,
     tripDuration: payload.tripDuration,
     tripDate,
+    tripEndDate,
+    customDuration: payload.customDuration,
     mood: payload.mood,
     customPreferences: payload.customPreferences,
     planAdjustment: {
@@ -110,8 +113,11 @@ export async function adjustCopiedPlanWithAi(
       ...payload.details,
       ...generated.details,
       tripDate,
+      tripEndDate: generated.details.tripEndDate ?? tripEndDate,
       tripDuration: payload.tripDuration,
+      customDuration: payload.customDuration,
     },
+    customDuration: payload.customDuration,
   };
 }
 
@@ -127,6 +133,6 @@ export function buildUpdatedTripTitle(payload: SavedTripPayload): string {
     payload.location,
     payload.personality,
     payload.companion,
-    payload.tripDuration,
+    getDurationDisplayLabel(payload.tripDuration, payload.customDuration),
   );
 }

@@ -1,5 +1,6 @@
 export type PlanCustomPreferences = {
   customMood?: string;
+  customTravelIntent?: string;
   desiredPlaces?: string;
   avoidPreferences?: string;
 };

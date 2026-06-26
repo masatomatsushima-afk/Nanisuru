@@ -8,6 +8,8 @@ import type {
   TripDurationOption,
 } from '@/types/plan';
 
+import type { CustomTripDuration } from '@/types/trip-schedule';
+
 export type SharedTripPayload = {
   location: string;
   budget?: string;
@@ -17,6 +19,7 @@ export type SharedTripPayload = {
   companion: CompanionOption;
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
+  customDuration?: CustomTripDuration;
   days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;
@@ -40,6 +43,7 @@ export type ShareTripInput = {
   companion: CompanionOption;
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
+  customDuration?: CustomTripDuration;
   days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;

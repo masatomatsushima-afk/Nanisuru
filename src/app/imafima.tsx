@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -18,8 +18,16 @@ import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { CurrentLocationButton } from '@/components/current-location-button';
-import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loading-screen';
+import {
+  PlanLoadingScreen,
+  createPlanGenerationProgress,
+  isAbortError,
+  type PlanLoadingUiState,
+} from '@/components/plan-loading-screen';
+import { PLAN_LOADING_STAGES } from '@/lib/plan-generation-progress';
 import { WeatherSection } from '@/components/weather-section';
+import { OutfitPackingSection } from '@/components/outfit-packing-section';
+import { generateOutfitPackingAdvice } from '@/lib/outfit-packing-advice';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PrimaryButton, PremiumCard } from '@/components/ui/premium-card';
 import { Spacing } from '@/constants/theme';
@@ -37,13 +45,13 @@ import {
   IMA_HIMA_MOOD_EMOJI,
   IMA_HIMA_TIME_EMOJI,
   resolveMoodPreferences,
+  getImaHimaTripDuration,
 } from '@/lib/imafima';
 import { PlanCustomPreferencesFields } from '@/components/plan-custom-preferences-fields';
 import { SaveTripButton } from '@/components/save-trip-button';
 import { PlanRatingSection } from '@/components/plan-rating-section';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { getItineraryEyebrow } from '@/lib/itineraries';
-import { getImaHimaTripDuration } from '@/lib/imafima';
 import { flattenItineraryDays } from '@/lib/trip-duration';
 import {
   IMA_HIMA_MOOD_OPTIONS,
@@ -62,6 +70,18 @@ const accent = NS.colors.accent;
 type WizardStep = 'time' | 'budget' | 'mood' | 'result';
 
 const STEP_ORDER: WizardStep[] = ['time', 'budget', 'mood'];
+
+const INITIAL_LOADING_UI: PlanLoadingUiState = {
+  step: 0,
+  progress: 0,
+  headline: 'プランを作成中です',
+  estimateLabel: '完成まで約10〜25秒かかります',
+  remainingLabel: '準備中…',
+  statusHint: PLAN_LOADING_STAGES[0].hint,
+  isLongRunning: false,
+  showMultiDayNote: false,
+};
+
 const STEP_TITLES: Record<WizardStep, string> = {
   time: '今何時間空いてる？',
   budget: '予算は？',
@@ -136,8 +156,10 @@ export default function ImaHimaScreen() {
   const [isLocating, setIsLocating] = useState(true);
 
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState(0);
+  const [loadingUiState, setLoadingUiState] = useState<PlanLoadingUiState>(INITIAL_LOADING_UI);
   const [error, setError] = useState<string | null>(null);
+  const generationAbortRef = useRef<AbortController | null>(null);
+  const progressHandleRef = useRef<ReturnType<typeof createPlanGenerationProgress> | null>(null);
 
   const [days, setDays] = useState<ItineraryDay[]>([]);
   const [planDetails, setPlanDetails] = useState<PlanDetails | null>(null);
@@ -197,30 +219,42 @@ export default function ImaHimaScreen() {
     setPendingRatingId(null);
     setCustomPreferences({});
     setIsLoading(true);
-    setLoadingStep(0);
 
     const moodPrefs = resolveMoodPreferences(mood);
     setCompanion(moodPrefs.companion);
     setPersonality(moodPrefs.personality);
 
+    const tripDuration = getImaHimaTripDuration(availableTime);
+    const durationLabel = tripDuration === '半日' ? '半日' : '1日';
+    const abortController = new AbortController();
+    generationAbortRef.current = abortController;
+    const progress = createPlanGenerationProgress({
+      tripDuration,
+      durationLabel,
+      onUpdate: (state) => {
+        setLoadingUiState(state);
+      },
+    });
+    progressHandleRef.current = progress;
+    progress.start();
+
     try {
-      const [plan] = await Promise.all([
-        generateImaHimaPlan({
-          location,
-          budget: budget.trim(),
-          currency,
-          availableTime,
-          mood,
-          customPreferences,
-        }),
-        runLoadingAnimation(setLoadingStep),
-      ]);
+      const plan = await generateImaHimaPlan({
+        location,
+        budget: budget.trim(),
+        currency,
+        availableTime,
+        mood,
+        customPreferences,
+        abortSignal: abortController.signal,
+      });
+      progress.complete();
 
       setDays(plan.days);
       setPlanDetails(plan.details);
       setStep('result');
 
-      const tripDuration = plan.details.tripDuration ?? getImaHimaTripDuration(availableTime);
+      const savedTripDuration = plan.details.tripDuration ?? getImaHimaTripDuration(availableTime);
       await saveActiveTrip(
         buildActiveTripContext({
           location,
@@ -230,17 +264,32 @@ export default function ImaHimaScreen() {
           mood: formatCombinedMood(mood, customPreferences.customMood),
           companion: moodPrefs.companion,
           personality: moodPrefs.personality,
-          tripDuration,
+          tripDuration: savedTripDuration,
           days: plan.days,
           details: plan.details,
         }),
       );
     } catch (err) {
+      if (isAbortError(err)) {
+        return;
+      }
       setError(getErrorMessage(err));
     } finally {
+      progressHandleRef.current?.stop();
+      progressHandleRef.current = null;
+      generationAbortRef.current = null;
       setIsLoading(false);
-      setLoadingStep(0);
+      setLoadingUiState(INITIAL_LOADING_UI);
     }
+  };
+
+  const handleCancelGeneration = () => {
+    generationAbortRef.current?.abort();
+    progressHandleRef.current?.stop();
+    progressHandleRef.current = null;
+    generationAbortRef.current = null;
+    setIsLoading(false);
+    setLoadingUiState(INITIAL_LOADING_UI);
   };
 
   const renderTimeStep = () => (
@@ -464,10 +513,45 @@ export default function ImaHimaScreen() {
 
         {planDetails.weather ? <WeatherSection weather={planDetails.weather} /> : null}
 
-        <CurrentLocationButton compact />
-        <ItineraryDaysView days={days} location={resolvedLocation} />
+        {planDetails.outfitAdvice ? (
+          <OutfitPackingSection advice={planDetails.outfitAdvice} compact />
+        ) : planDetails.weather ? (
+          <OutfitPackingSection
+            advice={generateOutfitPackingAdvice({
+              days,
+              weather: planDetails.weather,
+              location: resolvedLocation,
+              companion,
+              dayCount: days.length,
+              tripDate: planDetails.tripDate,
+            })}
+            compact
+          />
+        ) : null}
 
-        <ConciergeAccessSection days={days} location={resolvedLocation} compact />
+        <CurrentLocationButton compact />
+        <ItineraryDaysView
+          days={days}
+          location={resolvedLocation}
+          transportContext={{
+            location: resolvedLocation,
+            weather: planDetails.weather,
+            companion,
+            budget,
+          }}
+        />
+
+        <ConciergeAccessSection
+          days={days}
+          location={resolvedLocation}
+          compact
+          transportContext={{
+            location: resolvedLocation,
+            weather: planDetails.weather,
+            companion,
+            budget,
+          }}
+        />
 
         {isDateRelatedCompanion(companion) && planDetails.aiAdvice ? (
           <AiAdviceSection advice={planDetails.aiAdvice} />
@@ -519,7 +603,11 @@ export default function ImaHimaScreen() {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <PlanLoadingScreen visible={isLoading} currentStep={loadingStep} />
+      <PlanLoadingScreen
+        visible={isLoading}
+        uiState={loadingUiState}
+        onCancel={handleCancelGeneration}
+      />
 
       <ScrollView
         contentContainerStyle={[

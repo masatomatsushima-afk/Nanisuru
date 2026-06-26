@@ -2,7 +2,7 @@ export const MODERATION_STATUSES = ['active', 'pending', 'hidden', 'removed'] as
 
 export type ModerationStatus = (typeof MODERATION_STATUSES)[number];
 
-export const REPORT_TARGET_TYPES = ['public_plan', 'comment', 'user'] as const;
+export const REPORT_TARGET_TYPES = ['public_plan', 'comment', 'user', 'local_hidden_spot'] as const;
 
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number];
 

@@ -1,32 +1,38 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
+import { getBudgetDisplayRows } from '@/lib/budget-scope';
+import type { BudgetScopeSettings } from '@/types/budget-scope';
 import type { BudgetBreakdown } from '@/types/plan';
 
-const theme = Colors.dark;
 const accent = NS.colors.accent;
-
-const CATEGORY_ROWS = [
-  { key: 'accommodation' as const, label: '宿泊費', icon: '🏨' },
-  { key: 'food' as const, label: '食事', icon: '🍽' },
-  { key: 'transportation' as const, label: '交通費', icon: '🚃' },
-  { key: 'activity' as const, label: 'アクティビティ', icon: '🎯' },
-];
+const concierge = NS.concierge.budget;
 
 type BudgetBreakdownSectionProps = {
   breakdown: BudgetBreakdown;
+  budgetScope?: BudgetScopeSettings;
   compact?: boolean;
 };
 
-export function BudgetBreakdownSection({ breakdown, compact = false }: BudgetBreakdownSectionProps) {
+export function BudgetBreakdownSection({
+  breakdown,
+  budgetScope,
+  compact = false,
+}: BudgetBreakdownSectionProps) {
+  const rows = getBudgetDisplayRows(breakdown, budgetScope);
+
   return (
     <View style={[styles.container, compact && styles.containerCompact]}>
       <View style={styles.header}>
         <Text style={styles.eyebrow}>BUDGET</Text>
         <Text style={styles.title}>予算内訳</Text>
         {!compact ? (
-          <Text style={styles.subtitle}>ご入力の予算に合わせた概算配分です</Text>
+          <Text style={styles.subtitle}>
+            {budgetScope
+              ? '選択した項目のみ表示しています'
+              : 'ご入力の予算に合わせた概算配分です'}
+          </Text>
         ) : null}
       </View>
 
@@ -35,17 +41,19 @@ export function BudgetBreakdownSection({ breakdown, compact = false }: BudgetBre
         <Text style={styles.totalValue}>{breakdown.total}</Text>
       </View>
 
-      <View style={styles.categoryList}>
-        {CATEGORY_ROWS.map((row) => (
-          <View key={row.key} style={styles.categoryRow}>
-            <View style={styles.categoryLeft}>
-              <Text style={styles.categoryIcon}>{row.icon}</Text>
-              <Text style={styles.categoryLabel}>{row.label}</Text>
+      {rows.length > 0 ? (
+        <View style={styles.categoryList}>
+          {rows.map((row) => (
+            <View key={row.key} style={styles.categoryRow}>
+              <View style={styles.categoryLeft}>
+                <Text style={styles.categoryIcon}>{row.icon}</Text>
+                <Text style={styles.categoryLabel}>{row.label}</Text>
+              </View>
+              <Text style={styles.categoryAmount}>{row.amount}</Text>
             </View>
-            <Text style={styles.categoryAmount}>{breakdown[row.key]}</Text>
-          </View>
-        ))}
-      </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -54,11 +62,12 @@ const styles = StyleSheet.create({
   container: {
     marginTop: Spacing.three,
     marginBottom: Spacing.four,
-    backgroundColor: NS.colors.bgCard,
-    borderRadius: NS.radius.lg,
+    backgroundColor: concierge.bg,
+    borderRadius: NS.radius.xl,
     padding: Spacing.four,
     borderWidth: 1,
-    borderColor: NS.colors.border,
+    borderColor: concierge.border,
+    ...NS.shadow.card,
   },
   containerCompact: {
     marginTop: Spacing.two,
@@ -74,11 +83,11 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.one,
   },
   title: {
-    color: theme.text,
+    color: NS.colors.text,
     ...NS.typography.headline,
   },
   subtitle: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
     marginTop: Spacing.one,
   },
@@ -91,13 +100,13 @@ const styles = StyleSheet.create({
     borderColor: NS.colors.accentBorder,
   },
   totalLabel: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 12,
     fontWeight: '600',
     marginBottom: 4,
   },
   totalValue: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: -0.5,
@@ -123,12 +132,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   categoryLabel: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 14,
     fontWeight: '600',
   },
   categoryAmount: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 15,
     fontWeight: '700',
     marginLeft: Spacing.two,

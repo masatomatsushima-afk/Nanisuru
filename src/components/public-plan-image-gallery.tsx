@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: NS.radius.lg,
     borderTopRightRadius: NS.radius.lg,
     overflow: 'hidden',
-    backgroundColor: '#1B2440',
+    backgroundColor: NS.colors.bgInput,
     borderBottomWidth: 1,
     borderBottomColor: NS.colors.border,
   },

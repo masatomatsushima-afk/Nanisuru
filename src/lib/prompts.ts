@@ -8,7 +8,8 @@ import type { BestDayContext } from '@/types/best-day';
 import { buildImaHimaPromptSection, resolveMoodPreferences } from './imafima';
 import { buildBestDayPromptSection } from './best-day';
 import { buildPreAnalysisBriefing } from './plan-analysis';
-import { TRIP_DURATION_CONFIG } from './trip-duration';
+import { getDurationDisplayLabel, resolveDurationConfig } from './trip-duration';
+import type { CustomTripDuration } from '@/types/trip-schedule';
 import type { WeatherForecast } from './weather';
 import { formatTripDateLabel } from './weather';
 import { buildUserMemoryPromptSection } from './user-memory';
@@ -16,9 +17,30 @@ import { buildTravelMemoryPromptSection } from './travel-memory';
 import { buildRealPlacesPromptSection } from './location-places';
 import type { UserPreferences } from '@/types/user-memory';
 import type { TravelMemory } from '@/types/travel-memory';
+import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
 import type { NearbyPlacesContext } from '@/types/nearby-places';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import type { PlanCreationType } from '@/types/plan-creation';
 import { buildCustomPreferencesPromptSection, formatCombinedMood } from './custom-preferences';
+import { buildPlanCreationPromptSection, formatCombinedTravelIntent } from './plan-creation';
+import { buildVagueLocationPromptSection } from './location-input-copy';
+import { buildLocalHiddenSpotsPromptSection } from './local-hidden-spots-prompt';
+import { resolveEffectiveMoodForPrompt } from './plan-generation-log';
+import {
+  buildFoodHeavyRebalanceInstruction,
+  buildHumanRhythmPromptSection,
+} from './itinerary-balance';
+import {
+  buildItineraryDiversityPromptSection,
+  buildItineraryQualityFixInstruction,
+  buildTourSuggestionPromptSection,
+  buildTravelTimingPromptSection,
+} from './itinerary-quality';
+import type { BudgetScopeSettings } from '@/types/budget-scope';
+import type { TravelTimingSettings } from '@/types/travel-timing';
+import type { OutfitStyleMode } from '@/types/outfit-advice';
+import { buildBudgetScopePromptSection } from './budget-scope';
+import { ITINERARY_ACTIVITY_CATEGORIES } from './itinerary-balance';
 
 export type PlanInput = {
   location: string;
@@ -29,11 +51,14 @@ export type PlanInput = {
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
   tripDate: string;
+  tripEndDate?: string;
+  customDuration?: CustomTripDuration;
   mood: string;
   customPreferences?: PlanCustomPreferences;
   weather?: WeatherForecast;
   userPreferences?: UserPreferences;
   travelMemories?: TravelMemory[];
+  localHiddenSpots?: LocalHiddenSpot[];
   realPlaces?: NearbyPlacesContext;
   avoidActivities?: string[];
   spontaneous?: SpontaneousContext;
@@ -44,6 +69,30 @@ export type PlanInput = {
     baseDetails: PlanDetails;
     notes?: string;
   };
+  itineraryBalanceFix?: {
+    baseDays: ItineraryDay[];
+    baseDetails: PlanDetails;
+  };
+  itineraryQualityFix?: {
+    baseDays: ItineraryDay[];
+    baseDetails: PlanDetails;
+    issues: string[];
+    targetDayNumbers?: number[];
+  };
+  travelTiming?: TravelTimingSettings;
+  planCreationType?: PlanCreationType;
+  travelIntent?: string;
+  travelPurpose?: string;
+  planType?: PlanCreationType;
+  departureDate?: string;
+  returnDate?: string;
+  durationLabel?: string;
+  companionType?: CompanionOption;
+  mustVisitPlaces?: string;
+  avoidPreferences?: string;
+  budgetScope?: BudgetScopeSettings;
+  abortSignal?: AbortSignal;
+  outfitStyleMode?: OutfitStyleMode;
 };
 
 const PERSONALITY_GUIDE: Record<PersonalityOption, string> = {
@@ -65,14 +114,61 @@ const PERSONALITY_GUIDE: Record<PersonalityOption, string> = {
 };
 
 export function buildConciergePrompt(input: PlanInput): string {
-  const location = input.location.trim() || '未指定';
-  const budget = input.budget.trim() || '未指定';
-  const people = input.people.trim() || '未指定';
+  const normalized = {
+    planType: input.planCreationType ?? input.planType,
+    location: input.location.trim() || '未指定',
+    departureDate: input.departureDate ?? input.tripDate,
+    returnDate: input.returnDate ?? input.tripEndDate ?? input.tripDate,
+    budget: input.budget.trim() || '未指定',
+    people: input.people.trim() || '未指定',
+    mood: input.mood?.trim() ?? '',
+    travelPurpose:
+      input.travelPurpose?.trim() ||
+      formatCombinedTravelIntent(
+        (input.travelIntent ?? '') as import('@/types/plan-creation').TravelIntentOption | '',
+        input.customPreferences?.customTravelIntent,
+      ),
+    mustVisitPlaces:
+      input.mustVisitPlaces?.trim() || input.customPreferences?.desiredPlaces?.trim() || '',
+    avoidPreferences:
+      input.avoidPreferences?.trim() || input.customPreferences?.avoidPreferences?.trim() || '',
+  };
+
+  const location = normalized.location;
+  const budget = normalized.budget;
+  const people = normalized.people;
   const mood = formatCombinedMood(input.mood, input.customPreferences?.customMood) || '未指定';
+  const travelIntent = normalized.travelPurpose || '未指定';
+  const isTravelPlan =
+    normalized.planType === '旅行プラン' || normalized.planType === '週末プラン';
+  const isOutingPlan =
+    normalized.planType === '今日のお出かけ' || normalized.planType === 'デートプラン';
+  const effectiveMood = resolveEffectiveMoodForPrompt({
+    planType: normalized.planType,
+    location: normalized.location,
+    departureDate: normalized.departureDate,
+    returnDate: normalized.returnDate,
+    durationLabel: input.durationLabel ?? '',
+    tripDuration: input.tripDuration,
+    customDuration: input.customDuration,
+    budget: normalized.budget,
+    currency: input.currency,
+    people: normalized.people,
+    companion: input.companion,
+    personality: input.personality,
+    mood: formatCombinedMood(input.mood, input.customPreferences?.customMood),
+    travelPurpose: normalized.travelPurpose,
+    mustVisitPlaces: normalized.mustVisitPlaces,
+    avoidPreferences: normalized.avoidPreferences,
+    customPreferences: input.customPreferences,
+  });
   const { symbol, label } = getCurrency(input.currency);
   const personalityGuide = PERSONALITY_GUIDE[input.personality];
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
-  const durationConfig = TRIP_DURATION_CONFIG[input.tripDuration];
+  const durationConfig = resolveDurationConfig(input.tripDuration, input.customDuration);
+  const durationLabel = getDurationDisplayLabel(input.tripDuration, input.customDuration);
+  const departureDate = input.tripDate;
+  const returnDate = input.tripEndDate ?? input.tripDate;
   const itemsMin = input.spontaneous?.itemsMin ?? durationConfig.itemsMin;
   const itemsMax = input.spontaneous?.itemsMax ?? durationConfig.itemsMax;
   const isMultiDay = durationConfig.dayCount > 1 && !input.spontaneous;
@@ -145,6 +241,53 @@ ${input.planAdjustment.notes?.trim() ? `### ユーザーメモ\n${input.planAdju
 - ベースプランの良い要素は残しつつ、指示に沿って改善すること`
     : '';
 
+  const balanceFixSection = input.itineraryBalanceFix
+    ? `\n\n${buildFoodHeavyRebalanceInstruction(input.itineraryBalanceFix.baseDays)}`
+    : '';
+
+  const qualityFixSection = input.itineraryQualityFix
+    ? `\n\n${buildItineraryQualityFixInstruction({
+        isValid: false,
+        duplicatePlaces: [],
+        categoryCounts: {},
+        areaDistribution: {},
+        balanceIssues: [],
+        arrivalDepartureIssues: [],
+        diversityIssues: [],
+        issues: input.itineraryQualityFix.issues,
+      })}${
+        input.itineraryQualityFix.targetDayNumbers?.length
+          ? `\n\n**重要**: Day ${input.itineraryQualityFix.targetDayNumbers.join(', Day ')} のみ修正し、他の日の timeline は baseDays をそのまま維持すること。`
+          : ''
+      }`
+    : '';
+
+  const diversitySection =
+    isMultiDay && isTravelPlan
+      ? `\n\n${buildItineraryDiversityPromptSection(durationConfig.dayCount)}`
+      : isMultiDay
+        ? `\n\n${buildItineraryDiversityPromptSection(durationConfig.dayCount)}`
+        : '';
+
+  const travelTimingSection =
+    isTravelPlan && durationConfig.dayCount >= 2
+      ? `\n\n${buildTravelTimingPromptSection(input.travelTiming, durationConfig.dayCount)}`
+      : '';
+
+  const tourSuggestionSection =
+    isTravelPlan && durationConfig.dayCount >= 3
+      ? `\n\n${buildTourSuggestionPromptSection(durationConfig.dayCount, location)}`
+      : '';
+
+  const humanRhythmSection = buildHumanRhythmPromptSection({
+    personality: input.personality,
+    companion: input.companion,
+    mood: input.mood,
+    customPreferences: input.customPreferences,
+  });
+
+  const activityCategoryGuide = ITINERARY_ACTIVITY_CATEGORIES.join(' / ');
+
   const daysJsonExample = isMultiDay
     ? `"days": [
     {
@@ -155,6 +298,8 @@ ${input.planAdjustment.notes?.trim() ? `### ユーザーメモ\n${input.planAdju
         {
           "time": "10:00",
           "activity": "実在店名・施設名",
+          "activityCategory": "散歩",
+          "placeCategory": "観光スポット",
           "reason": "選定理由（2〜3文・分析反映）",
           "estimatedCost": "概算（${symbol}・人数考慮）",
           "transportation": "具体的な移動手段（路線・駅名・料金目安）",
@@ -175,6 +320,8 @@ ${input.planAdjustment.notes?.trim() ? `### ユーザーメモ\n${input.planAdju
         {
           "time": "10:00",
           "activity": "実在店名・施設名",
+          "activityCategory": "散歩",
+          "placeCategory": "観光スポット",
           "reason": "選定理由（2〜3文・分析反映）",
           "estimatedCost": "概算（${symbol}・人数考慮）",
           "transportation": "具体的な移動手段（路線・駅名・料金目安）",
@@ -188,24 +335,36 @@ ${input.planAdjustment.notes?.trim() ? `### ユーザーメモ\n${input.planAdju
   ]`;
 
   const durationRules = isMultiDay
-    ? `- **days配列は必ず${durationConfig.dayCount}件**（${input.tripDuration}）
+    ? `- **days配列は必ず${durationConfig.dayCount}件**（${durationLabel}）
 - 各日は独立した itinerary を持つ（label: "1日目"〜"${durationConfig.dayCount}日目"）
 - 各日の theme にその日のコンセプトを日本語で記載
 - 各日の items は${durationConfig.itemsMin}〜${durationConfig.itemsMax}件
 - 日を跨ぐ移動（新幹線・宿泊等）も該当日の items / transportation に含める
 - 合計予算は旅行全体（宿泊・交通・食事・体験）の概算`
-    : `- days配列は1件（${input.spontaneous ? input.spontaneous.availableTime : input.tripDuration}）
+    : `- days配列は1件（${input.spontaneous ? input.spontaneous.availableTime : durationLabel}）
 - itemsは${itemsMin}〜${itemsMax}件
-- 合計予算は${input.spontaneous || input.tripDuration === '半日' ? 'この時間帯' : '1日'}の概算`;
+- ${input.tripDuration === '半日' ? '半日プランは午前または午後の短い行程（朝・昼・夜のうち該当時間帯）' : input.tripDuration === '1日' ? '1日プランは朝・昼・夜の流れで組む' : '合計予算はこの期間の概算'}`;
 
   const accommodationRule = isMultiDay
     ? '- **宿泊費**: 泊数・人数・エリア相場に合わせて配分（旅行タイプ「' + input.personality + '」も反映）'
     : `- **宿泊費**: 半日・日帰りのため「${symbol}0（不要）」と記載`;
 
-  const budgetOptimizationSection = `
+  const budgetScopeSection = input.budgetScope
+    ? buildBudgetScopePromptSection(
+        input.budgetScope,
+        budget,
+        input.currency,
+        people,
+        durationLabel,
+      )
+    : '';
+
+  const budgetOptimizationSection = input.budgetScope
+    ? `${budgetScopeSection}`
+    : `
 ## 予算の最適配分（必須）
 お客様の予算「${budget} ${input.currency}」をもとに、budgetBreakdown でカテゴリ別の概算を作成してください。
-人数${people}人・期間「${input.tripDuration}」・旅行タイプ「${input.personality}」を考慮し、無理のない配分にすること。
+人数${people}人・期間「${durationLabel}」・旅行タイプ「${input.personality}」を考慮し、無理のない配分にすること。
 
 - **total（合計予算）**: 旅行全体の概算合計（${symbol}付き）。お客様予算を超えないよう調整
 ${accommodationRule}
@@ -224,6 +383,13 @@ ${accommodationRule}
 - highlights や rainyDayAlternatives に金額を含める場合も ${symbol} を使用すること`;
 
   const tripDateLabel = formatTripDateLabel(input.tripDate);
+  const tripEndDateLabel = input.tripEndDate
+    ? formatTripDateLabel(input.tripEndDate)
+    : tripDateLabel;
+  const dateRangeLabel =
+    input.tripEndDate && input.tripEndDate !== input.tripDate
+      ? `${tripDateLabel}〜${tripEndDateLabel}`
+      : tripDateLabel;
 
   const weatherSection = input.weather
     ? `
@@ -275,9 +441,16 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
     ? buildTravelMemoryPromptSection(input.travelMemories)
     : '';
 
-  const realPlacesSection = input.realPlaces
-    ? `\n\n${buildRealPlacesPromptSection(input.realPlaces)}`
+  const localHiddenSpotsSection = input.localHiddenSpots?.length
+    ? buildLocalHiddenSpotsPromptSection(input.localHiddenSpots)
     : '';
+
+  const realPlacesSection =
+    input.realPlaces && input.realPlaces.places.length > 0
+      ? `\n\n${buildRealPlacesPromptSection(input.realPlaces)}`
+      : input.realPlaces?.notice
+        ? `\n\n${buildRealPlacesPromptSection(input.realPlaces)}`
+        : '';
 
   const spontaneousSection = input.spontaneous
     ? buildImaHimaPromptSection(
@@ -290,7 +463,7 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
 
   const customPreferencesSection = buildCustomPreferencesPromptSection(
     input.customPreferences,
-    input.mood,
+    isTravelPlan ? normalized.travelPurpose : input.mood,
   );
 
   const conciergeSection = `
@@ -306,25 +479,65 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
 
   const preAnalysisSection = buildPreAnalysisBriefing(input);
 
+  const planCreationSection = normalized.planType
+    ? buildPlanCreationPromptSection({
+        planType: normalized.planType,
+        mood: input.mood,
+        travelIntent: normalized.travelPurpose,
+        customPreferences: input.customPreferences,
+      })
+    : '';
+
+  const vagueLocationSection =
+    normalized.planType && location.trim()
+      ? buildVagueLocationPromptSection({
+          location,
+          planType: normalized.planType,
+          companion: input.companion,
+          spotInterests: normalized.mustVisitPlaces,
+        })
+      : '';
+
+  const intentConditionLine = isTravelPlan
+    ? `- 旅行の目的: ${travelIntent}`
+    : isOutingPlan
+      ? `- 今日の気分: ${effectiveMood}`
+      : `- 気分・目的: ${effectiveMood !== '未指定' ? effectiveMood : travelIntent}`;
+
+  const mustVisitLine = normalized.mustVisitPlaces
+    ? `- 行きたい場所: ${normalized.mustVisitPlaces}`
+    : '';
+  const avoidLine = normalized.avoidPreferences
+    ? `- 避けたいこと: ${normalized.avoidPreferences}`
+    : '';
+
   return `あなたは日本トップクラスの旅行コンシェルジュ兼プランナーです。
 高級ホテルの専属コンシェルジュのように、分析に基づいた説得力のある提案を、温かみのある自然な日本語で作成してください。
+**感情的に満たされ、現実的な「物語のある1日（または旅）」を設計すること。効率だけの詰め込みプランにしない。**
 ${input.spontaneous ? '\n**⚡ 今暇モード**: ユーザーは今すぐ出かけたい。近場・今すぐ行けるスポットを最優先に。' : ''}
 ${input.bestDay ? '\n**🔥 最高の1日**: ユーザーは計画を任せた。プレミアムコンシェルジュとして最高の体験を設計すること。' : ''}
 
 ${preAnalysisSection}
+${planCreationSection}
+${vagueLocationSection}
 
 ## お客様の条件
-- 場所: ${location}
-- 出発日: ${tripDateLabel}（${input.tripDate}）
-- 期間: ${input.tripDuration}
+- プラン種別: ${normalized.planType ?? '未指定'}
+- 行きたいエリア・都市: ${location}
+- departureDate（出発日）: ${tripDateLabel}（${departureDate}）
+- returnDate（帰宅日 / 最終日）: ${tripEndDateLabel}（${returnDate}）
+- 日程: ${dateRangeLabel}
+- durationLabel（旅行期間）: ${durationLabel}
 - 予算: ${budget} ${input.currency}（${symbol}）※${isMultiDay ? '旅行全体' : 'この期間'}の目安
 - 通貨: ${input.currency}（${label}）
 - 人数: ${people}人
 - 誰と: ${input.companion}
 - 旅行タイプ: ${input.personality}
-- 今日の気分: ${mood}
+${intentConditionLine}
+${mustVisitLine}
+${avoidLine}
 
-## 期間「${input.tripDuration}」の方針
+## 期間「${durationLabel}」の方針
 ${durationConfig.guide}
 
 ${durationRules}
@@ -350,11 +563,15 @@ ${personalityGuide}
 9. **budgetBreakdown** でカテゴリ別概算を${symbol}付きで記載
 10. **合計予算（totalBudget）**は budgetBreakdown.total と一致
 11. 地理的に近い順に並べ、移動が不自然にならないルートにする
-12. rainyDayAlternatives は**3〜5件**の具体的な代替案${
+12. **同じスポット名を旅全体で2回以上使わない**（ユーザーが明示的に希望した場合のみ例外）
+13. rainyDayAlternatives は**3〜5件**の具体的な代替案${
     input.realPlaces ? '（実在スポットリスト内のみ）' : '（実在スポット名必須）'
   }
-13. 文体は丁寧で親しみやすい日本語。プロのコンシェルジュとして信頼感のあるトーン
-${budgetOptimizationSection}${currencySection}${weatherSection}${customPreferencesSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
+14. 各 item に **activityCategory** を必ず付ける（${activityCategoryGuide}）
+15. 文体は丁寧で親しみやすい日本語。プロのコンシェルジュとして信頼感のあるトーン
+
+${humanRhythmSection}${diversitySection}${travelTimingSection}${tourSuggestionSection}
+${budgetOptimizationSection}${currencySection}${weatherSection}${customPreferencesSection}${localHiddenSpotsSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
 
 ## 出力JSON（この形式のみ、余計な文章は禁止）
 {
@@ -376,10 +593,10 @@ ${budgetOptimizationSection}${currencySection}${weatherSection}${customPreferenc
     "activity": "アクティビティ費概算（${symbol}）"
   },
   "totalBudget": "合計概算（budgetBreakdown.total と同じ）",
-  "duration": "期間・所要時間（例：${input.tripDuration}・約8時間 / ${input.tripDuration}）",
+  "duration": "期間・所要時間（例：${durationLabel}・約8時間 / ${durationLabel}）",
   "highlights": ["このプランの魅力1", "魅力2", "魅力3"],
   "rainyDayAlternatives": ["雨の場合: ○○の代わりに△△（屋内）", "代替案2", "代替案3", "代替案4"]${aiAdviceJson}
 }
 
-totalBudget・budgetBreakdown・estimatedCostには必ず${symbol}を使用してください。${dateAdviceSection}${variationSection}${adjustmentSection}`;
+totalBudget・budgetBreakdown・estimatedCostには必ず${symbol}を使用してください。${dateAdviceSection}${variationSection}${adjustmentSection}${balanceFixSection}${qualityFixSection}`;
 }

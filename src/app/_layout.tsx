@@ -1,19 +1,32 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+import { DefaultTheme, ThemeProvider } from 'expo-router';
 import { Stack } from 'expo-router';
-import { useColorScheme } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider } from '@/contexts/auth-context';
 import { UserLocationProvider } from '@/contexts/user-location-context';
 import { NS } from '@/constants/nanisuru-ui';
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
+const NanisuruTheme = {
+  ...DefaultTheme,
+  dark: false,
+  colors: {
+    ...DefaultTheme.colors,
+    primary: NS.colors.accent,
+    background: NS.colors.bg,
+    card: NS.colors.bgElevated,
+    text: NS.colors.text,
+    border: NS.colors.border,
+    notification: NS.colors.coral,
+  },
+};
 
+export default function RootLayout() {
   return (
     <AuthProvider>
       <UserLocationProvider>
-        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+        <ThemeProvider value={NanisuruTheme}>
+        <StatusBar style="dark" />
         <AnimatedSplashOverlay />
         <Stack
           screenOptions={{
@@ -62,6 +75,12 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="after-plan"
+            options={{
+              animation: 'slide_from_bottom',
+            }}
+          />
+          <Stack.Screen
             name="today-schedule"
             options={{
               animation: 'fade_from_bottom',
@@ -105,6 +124,24 @@ export default function RootLayout() {
           />
           <Stack.Screen
             name="notifications"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="beta-test"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="memories/index"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="memory/[id]"
             options={{
               animation: 'slide_from_right',
             }}

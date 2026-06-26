@@ -1,5 +1,13 @@
 import type { CurrencyCode } from '@/constants/currency';
 import type { PlacesDataSource } from '@/types/nearby-places';
+import type { BudgetScopeSettings } from '@/types/budget-scope';
+import type { PreTripPlanningData } from '@/types/pre-trip';
+import type { CustomTripDuration } from '@/types/trip-schedule';
+import type { TourSuggestion, TravelTimingSettings } from '@/types/travel-timing';
+import type { OutfitPackingAdvice, OutfitStyleMode } from '@/types/outfit-advice';
+
+export type { TourSuggestion, TravelTimingSettings } from '@/types/travel-timing';
+export type { OutfitPackingAdvice, OutfitStyleMode } from '@/types/outfit-advice';
 
 export type ConciergeAnalysis = {
   userPreferences: string;
@@ -13,6 +21,7 @@ export type ConciergeAnalysis = {
 export type ItineraryItem = {
   time: string;
   activity: string;
+  activityCategory?: string;
   placeAddress?: string;
   placeCategory?: string;
   reason?: string;
@@ -38,7 +47,15 @@ export function isDateRelatedCompanion(
 export const PERSONALITY_OPTIONS = ['冒険家', 'グルメ', 'のんびり', '映え重視', '穴場好き'] as const;
 export type PersonalityOption = (typeof PERSONALITY_OPTIONS)[number];
 
-export const TRIP_DURATION_OPTIONS = ['半日', '1日', '2泊3日', '3泊4日', '1週間'] as const;
+export const TRIP_DURATION_OPTIONS = [
+  '半日',
+  '1日',
+  '1泊2日',
+  '2泊3日',
+  '3泊4日',
+  '1週間',
+  'その他',
+] as const;
 export type TripDurationOption = (typeof TRIP_DURATION_OPTIONS)[number];
 
 export type ItineraryDay = {
@@ -56,12 +73,25 @@ export type AiAdvice = {
   topicsToAvoid: string[];
 };
 
+export type BudgetCustomLineItem = {
+  label: string;
+  amount: string;
+};
+
 export type BudgetBreakdown = {
   total: string;
-  accommodation: string;
-  food: string;
-  transportation: string;
-  activity: string;
+  food?: string;
+  cafe?: string;
+  activity?: string;
+  transportation?: string;
+  accommodation?: string;
+  flight?: string;
+  rail?: string;
+  rentalCar?: string;
+  shopping?: string;
+  souvenirs?: string;
+  contingency?: string;
+  customItems?: BudgetCustomLineItem[];
 };
 
 export type WeatherDayForecast = {
@@ -91,6 +121,8 @@ export type PlanDetails = {
   duration: string;
   tripDuration?: TripDurationOption;
   tripDate?: string;
+  tripEndDate?: string;
+  customDuration?: CustomTripDuration;
   weather?: WeatherForecast;
   plannerMessage?: string;
   conciergeAnalysis?: ConciergeAnalysis;
@@ -99,6 +131,11 @@ export type PlanDetails = {
   aiAdvice?: AiAdvice;
   placesNotice?: string;
   placesSource?: PlacesDataSource;
+  budgetScope?: BudgetScopeSettings;
+  preTripPlanning?: PreTripPlanningData;
+  travelTiming?: TravelTimingSettings;
+  tourSuggestions?: TourSuggestion[];
+  outfitAdvice?: OutfitPackingAdvice;
 };
 
 export type PlanParams = {

@@ -6,7 +6,7 @@ import {
 } from '@/lib/geo';
 import { getGoogleMapsApiKey, isGoogleMapsConfigured } from '@/lib/env';
 import type { GeoCoordinates, NearbyPlace, NearbyPlaceCategory } from '@/types/nearby-places';
-import { NEARBY_PLACE_CATEGORIES } from '@/types/nearby-places';
+import { NEARBY_PLACE_CATEGORIES, PLAN_PLACE_SEARCH_QUOTAS } from '@/types/nearby-places';
 
 const PLACES_NEARBY_URL = 'https://places.googleapis.com/v1/places:searchNearby';
 const PLACES_TEXT_URL = 'https://places.googleapis.com/v1/places:searchText';
@@ -117,12 +117,12 @@ async function searchPlacesByType(
   origin: GeoCoordinates,
   category: NearbyPlaceCategory,
   categoryLabel: string,
-  options?: { radiusMeters?: number; maxResults?: number },
+  options?: { radiusMeters?: number; maxResults?: number; openNow?: boolean },
 ): Promise<NearbyPlace[]> {
   const radiusMeters = options?.radiusMeters ?? DEFAULT_SEARCH_RADIUS_METERS;
   const maxResultCount = options?.maxResults ?? DEFAULT_MAX_RESULTS_PER_CATEGORY;
 
-  const places = await postPlacesRequest(PLACES_NEARBY_URL, {
+  const requestBody: Record<string, unknown> = {
     includedTypes: [category],
     maxResultCount,
     languageCode: 'ja',
@@ -135,7 +135,13 @@ async function searchPlacesByType(
         radius: radiusMeters,
       },
     },
-  });
+  };
+
+  if (options?.openNow) {
+    requestBody.openNow = true;
+  }
+
+  const places = await postPlacesRequest(PLACES_NEARBY_URL, requestBody);
 
   const results: NearbyPlace[] = [];
   for (const place of places) {
@@ -160,6 +166,18 @@ function mapPrimaryTypeToCategory(primaryType?: string): {
   if (type.includes('park') || type.includes('garden')) {
     return { category: 'park', categoryLabel: '公園' };
   }
+  if (type.includes('museum')) {
+    return { category: 'museum', categoryLabel: '博物館' };
+  }
+  if (type.includes('art_gallery') || type.includes('gallery')) {
+    return { category: 'art_gallery', categoryLabel: '美術館' };
+  }
+  if (type.includes('shopping_mall') || type.includes('shopping')) {
+    return { category: 'shopping_mall', categoryLabel: 'ショッピング' };
+  }
+  if (type.includes('book_store') || type.includes('bookshop')) {
+    return { category: 'book_store', categoryLabel: '書店' };
+  }
   if (type.includes('bar') || type.includes('night_club')) {
     return { category: 'bar', categoryLabel: 'バー' };
   }
@@ -175,47 +193,69 @@ export type PlanPlacesSearchResult = {
 
 export async function searchPlacesForPlan(
   location: string,
-  maxResults = 8,
+  maxResults = 16,
 ): Promise<PlanPlacesSearchResult | null> {
   const trimmed = location.trim();
   if (!trimmed) return null;
 
-  const places = await postPlacesRequest(PLACES_TEXT_URL, {
-    textQuery: `${trimmed} 観光 レストラン カフェ`,
-    languageCode: 'ja',
-    maxResultCount: maxResults,
-  });
+  const geocoded = await geocodeLocationQuery(trimmed);
+  if (!geocoded) return null;
 
-  if (places.length === 0) return null;
+  const center: GeoCoordinates = {
+    latitude: geocoded.latitude,
+    longitude: geocoded.longitude,
+  };
 
-  const first = places[0];
-  const centerLat = first?.location?.latitude;
-  const centerLng = first?.location?.longitude;
-  if (centerLat == null || centerLng == null) return null;
+  const groups = await Promise.all(
+    PLAN_PLACE_SEARCH_QUOTAS.map(({ type, label, maxResults: perTypeMax }) =>
+      searchPlacesByType(center, type, label, {
+        radiusMeters: 5_000,
+        maxResults: perTypeMax,
+      }).catch(() => [] as NearbyPlace[]),
+    ),
+  );
 
-  const center: GeoCoordinates = { latitude: centerLat, longitude: centerLng };
-  const mapped: NearbyPlace[] = [];
+  const seen = new Set<string>();
+  const merged: NearbyPlace[] = [];
 
-  for (const place of places) {
-    const latitude = place.location?.latitude;
-    const longitude = place.location?.longitude;
-    const name = place.displayName?.text?.trim();
-    if (latitude == null || longitude == null || !name) continue;
-
-    const { category, categoryLabel } = mapPrimaryTypeToCategory(place.primaryType);
-    const item = mapPlacesApiPlace(place, center, category, categoryLabel);
-    if (item) mapped.push(item);
+  for (const group of groups) {
+    for (const place of group) {
+      const key = place.id || place.name;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(place);
+    }
   }
 
-  if (mapped.length === 0) return null;
+  if (merged.length === 0) {
+    const fallbackPlaces = await postPlacesRequest(PLACES_TEXT_URL, {
+      textQuery: `${trimmed} 観光 公園 美術館`,
+      languageCode: 'ja',
+      maxResultCount: maxResults,
+    });
 
-  const locationLabel = first.displayName?.text?.trim() || trimmed;
+    for (const place of fallbackPlaces) {
+      const latitude = place.location?.latitude;
+      const longitude = place.location?.longitude;
+      const name = place.displayName?.text?.trim();
+      if (latitude == null || longitude == null || !name) continue;
+
+      const { category, categoryLabel } = mapPrimaryTypeToCategory(place.primaryType);
+      const item = mapPlacesApiPlace(place, center, category, categoryLabel);
+      if (item && !seen.has(item.id)) {
+        seen.add(item.id);
+        merged.push(item);
+      }
+    }
+  }
+
+  if (merged.length === 0) return null;
 
   return {
-    places: mapped.slice(0, maxResults),
+    places: merged.slice(0, maxResults),
     center,
-    locationLabel,
-    address: first.formattedAddress ?? '',
+    locationLabel: geocoded.label,
+    address: geocoded.address,
   };
 }
 
@@ -312,4 +352,93 @@ export async function searchNearbyPlaces(origin: GeoCoordinates): Promise<Nearby
     radiusMeters: DEFAULT_SEARCH_RADIUS_METERS,
     maxPerCategory: DEFAULT_MAX_RESULTS_PER_CATEGORY,
   });
+}
+
+async function searchPlacesByGoogleType(
+  origin: GeoCoordinates,
+  includedType: string,
+  category: NearbyPlaceCategory,
+  categoryLabel: string,
+  options?: { radiusMeters?: number; maxResults?: number; openNow?: boolean },
+): Promise<NearbyPlace[]> {
+  const radiusMeters = options?.radiusMeters ?? DEFAULT_SEARCH_RADIUS_METERS;
+  const maxResultCount = options?.maxResults ?? DEFAULT_MAX_RESULTS_PER_CATEGORY;
+
+  const requestBody: Record<string, unknown> = {
+    includedTypes: [includedType],
+    maxResultCount,
+    languageCode: 'ja',
+    locationRestriction: {
+      circle: {
+        center: {
+          latitude: origin.latitude,
+          longitude: origin.longitude,
+        },
+        radius: radiusMeters,
+      },
+    },
+  };
+
+  if (options?.openNow) {
+    requestBody.openNow = true;
+  }
+
+  const places = await postPlacesRequest(PLACES_NEARBY_URL, requestBody);
+  const results: NearbyPlace[] = [];
+  for (const place of places) {
+    const mapped = mapPlacesApiPlace(place, origin, category, categoryLabel);
+    if (mapped) results.push(mapped);
+  }
+  return results.sort((a, b) => a.distanceMeters - b.distanceMeters);
+}
+
+export async function searchAfterPlanPlaces(
+  origin: GeoCoordinates,
+  options?: { radiusMeters?: number; openNow?: boolean },
+): Promise<NearbyPlace[]> {
+  if (!isGoogleMapsConfigured()) return [];
+
+  const radiusMeters = options?.radiusMeters ?? 1_500;
+  const openNow = options?.openNow ?? true;
+  const searchOpts = { radiusMeters, maxResults: 4, openNow };
+
+  const groups = await Promise.all([
+    searchPlacesByType(origin, 'bar', 'バー', searchOpts).catch(() => [] as NearbyPlace[]),
+    searchPlacesByGoogleType(origin, 'night_club', 'bar', 'ナイトクラブ', searchOpts).catch(
+      () => [] as NearbyPlace[],
+    ),
+    searchPlacesByType(origin, 'cafe', '夜カフェ', searchOpts).catch(() => [] as NearbyPlace[]),
+    searchPlacesByType(origin, 'restaurant', 'レストラン', searchOpts).catch(
+      () => [] as NearbyPlace[],
+    ),
+    searchPlacesByTextQuery('カラオケ', origin, 'bar', 'カラオケ', 3).catch(
+      () => [] as NearbyPlace[],
+    ),
+    searchPlacesByTextQuery('ラーメン 深夜', origin, 'restaurant', '締めラーメン', 3).catch(
+      () => [] as NearbyPlace[],
+    ),
+    searchPlacesByTextQuery('コンビニ', origin, 'restaurant', 'コンビニ', 2).catch(
+      () => [] as NearbyPlace[],
+    ),
+    searchPlacesByTextQuery('夜景 展望', origin, 'tourist_attraction', '夜景', 3).catch(
+      () => [] as NearbyPlace[],
+    ),
+  ]);
+
+  const seen = new Set<string>();
+  const merged: NearbyPlace[] = [];
+  for (const group of groups) {
+    for (const place of group) {
+      const key = place.id || place.name;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(place);
+    }
+  }
+
+  if (merged.length === 0 && openNow) {
+    return searchAfterPlanPlaces(origin, { radiusMeters, openNow: false });
+  }
+
+  return merged.sort((a, b) => a.distanceMeters - b.distanceMeters);
 }

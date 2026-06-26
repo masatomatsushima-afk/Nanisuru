@@ -88,6 +88,7 @@ export function hasCustomPreferences(prefs?: PlanCustomPreferences): boolean {
   if (!prefs) return false;
   return Boolean(
     prefs.customMood?.trim() ||
+      prefs.customTravelIntent?.trim() ||
       parseCommaList(prefs.desiredPlaces).length > 0 ||
       parseCommaList(prefs.avoidPreferences).length > 0,
   );
@@ -100,11 +101,17 @@ export function buildCustomPreferencesPromptSection(
   if (!hasCustomPreferences(prefs)) return '';
 
   const customMood = prefs?.customMood?.trim() ?? '';
+  const customTravelIntent = prefs?.customTravelIntent?.trim() ?? '';
   const desired = parseCommaList(prefs?.desiredPlaces);
   const avoid = parseCommaList(prefs?.avoidPreferences);
   const lines: string[] = [];
 
-  if (customMood) {
+  if (customTravelIntent) {
+    lines.push(`- **自由入力の旅行目的（最優先）**: ${customTravelIntent}`);
+    if (selectedMood?.trim()) {
+      lines.push(`- 選択した旅行目的: ${selectedMood.trim()}`);
+    }
+  } else if (customMood) {
     lines.push(`- **自由入力の気分（最優先）**: ${customMood}`);
     if (selectedMood?.trim()) {
       lines.push(
@@ -240,6 +247,7 @@ export async function learnFromCustomPreferences(
 
   const phrases = [
     prefs.customMood?.trim(),
+    prefs.customTravelIntent?.trim(),
     ...parseCommaList(prefs.desiredPlaces),
     ...parseCommaList(prefs.avoidPreferences),
   ].filter(Boolean) as string[];

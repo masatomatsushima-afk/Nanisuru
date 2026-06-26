@@ -26,6 +26,7 @@ type SaveTripButtonProps = {
   companion: CompanionOption;
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
+  customDuration?: import('@/types/trip-schedule').CustomTripDuration;
   days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;
@@ -41,6 +42,7 @@ export function SaveTripButton({
   companion,
   personality,
   tripDuration,
+  customDuration,
   days,
   items,
   details,
@@ -80,6 +82,7 @@ export function SaveTripButton({
         companion,
         personality,
         tripDuration,
+        customDuration,
         days,
         items,
         details,

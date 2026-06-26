@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#121214',
+    backgroundColor: NS.colors.bgElevated,
     borderRadius: 20,
     padding: Spacing.three,
     borderWidth: 1,
@@ -316,11 +316,11 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   planCard: {
-    backgroundColor: '#121214',
+    backgroundColor: NS.colors.bgElevated,
     borderRadius: 24,
     padding: Spacing.four,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: NS.colors.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.35,

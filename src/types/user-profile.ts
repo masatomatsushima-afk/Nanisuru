@@ -15,9 +15,14 @@ export type UserProfile = {
   displayName: string;
   bio: string;
   styleTags: string[];
+  isLocalContributor: boolean;
+  localExpertAreas: string[];
   followerCount: number;
   followingCount: number;
+  avatarUrl?: string;
   publicPlanCount?: number;
+  publicMemoryCount?: number;
+  localSpotCount?: number;
   createdAt: string;
   updatedAt: string;
   isFollowing?: boolean;
@@ -28,6 +33,8 @@ export type SaveUserProfileInput = {
   displayName: string;
   bio: string;
   styleTags: string[];
+  isLocalContributor?: boolean;
+  localExpertAreas?: string[];
 };
 
 export function getProfileInitial(displayName: string): string {

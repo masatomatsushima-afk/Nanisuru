@@ -1,12 +1,12 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Colors, Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
+import { Spacing } from '@/constants/theme';
 import { getWeatherIcon } from '@/lib/weather';
 import type { WeatherForecast } from '@/types/plan';
 
-const theme = Colors.dark;
 const accent = NS.colors.accent;
+const concierge = NS.concierge.weather;
 
 type WeatherSectionProps = {
   weather: WeatherForecast;
@@ -50,11 +50,12 @@ export function WeatherSection({ weather, compact = false }: WeatherSectionProps
 const styles = StyleSheet.create({
   container: {
     marginTop: Spacing.three,
-    backgroundColor: NS.colors.bgCard,
-    borderRadius: NS.radius.lg,
+    backgroundColor: concierge.bg,
+    borderRadius: NS.radius.xl,
     padding: Spacing.four,
     borderWidth: 1,
-    borderColor: NS.colors.border,
+    borderColor: concierge.border,
+    ...NS.shadow.card,
   },
   containerCompact: {
     marginTop: Spacing.two,
@@ -69,22 +70,22 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.one,
   },
   title: {
-    color: theme.text,
+    color: NS.colors.text,
     ...NS.typography.headline,
   },
   location: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
     marginTop: Spacing.one,
   },
   summary: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
     marginTop: Spacing.two,
     lineHeight: 22,
   },
   compactSummary: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     marginTop: Spacing.two,
@@ -109,12 +110,12 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   dayLabel: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 14,
     fontWeight: '700',
   },
   dayCondition: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 13,
     lineHeight: 20,
   },

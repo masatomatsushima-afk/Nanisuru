@@ -3,7 +3,9 @@ import { useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BetaTestEntryButton } from '@/components/beta-test-entry-button';
 import { NotificationEntryButton } from '@/components/notification-entry-button';
+import { ScreenBackground } from '@/components/ui/screen-background';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { PublicProfileEditor } from '@/components/public-profile-editor';
@@ -67,6 +69,7 @@ export default function ProfileScreen() {
 
   if (!user) {
     return (
+      <ScreenBackground>
       <ScrollView
         style={styles.container}
         contentContainerStyle={[
@@ -77,9 +80,9 @@ export default function ProfileScreen() {
           },
         ]}>
         <FadeInView>
-          <Text style={styles.eyebrow}>PROFILE</Text>
-          <Text style={styles.title}>マイページ</Text>
-          <Text style={styles.subtitle}>ログインしてプロフィールを表示</Text>
+        <Text style={styles.eyebrow}>👤 MY PAGE</Text>
+        <Text style={styles.title}>マイページ</Text>
+        <Text style={styles.subtitle}>あなたの旅の設定と保存プラン</Text>
         </FadeInView>
 
         <FadeInView delay={80}>
@@ -94,6 +97,10 @@ export default function ProfileScreen() {
               <Text style={styles.signUpLinkText}>新規登録はこちら</Text>
             </Pressable>
           </PremiumCard>
+        </FadeInView>
+
+        <FadeInView delay={105}>
+          <BetaTestEntryButton />
         </FadeInView>
 
         {userPreferences ? (
@@ -122,6 +129,7 @@ export default function ProfileScreen() {
           />
         </FadeInView>
       </ScrollView>
+      </ScreenBackground>
     );
   }
 
@@ -136,6 +144,7 @@ export default function ProfileScreen() {
     : '—';
 
   return (
+    <ScreenBackground>
     <ScrollView
       style={styles.container}
       contentContainerStyle={[
@@ -147,9 +156,13 @@ export default function ProfileScreen() {
       ]}
       showsVerticalScrollIndicator={false}>
       <FadeInView>
-        <Text style={styles.eyebrow}>PROFILE</Text>
+        <Text style={styles.eyebrow}>👤 MY PAGE</Text>
         <Text style={styles.title}>マイページ</Text>
-        <Text style={styles.subtitle}>アカウント情報と設定</Text>
+        <Text style={styles.subtitle}>プロフィール・設定・旅の好みを管理</Text>
+      </FadeInView>
+
+      <FadeInView delay={50}>
+        <BetaTestEntryButton />
       </FadeInView>
 
       <FadeInView delay={40}>
@@ -205,6 +218,31 @@ export default function ProfileScreen() {
         />
       </FadeInView>
 
+      <FadeInView delay={168}>
+        <PremiumCard style={styles.memoriesCard}>
+          <Text style={styles.memoriesEmoji}>📔</Text>
+          <Text style={styles.sectionTitle}>思い出</Text>
+          <Text style={styles.memoriesText}>
+            旅の写真・動画・メモをアルバム形式で残せます。2026年の思い出もここから振り返れます。
+          </Text>
+          <PrimaryButton label="思い出アルバムを見る" onPress={() => router.push('/memories')} />
+        </PremiumCard>
+      </FadeInView>
+
+      <FadeInView delay={170}>
+        <PremiumCard style={styles.memoriesCard}>
+          <Text style={styles.memoriesEmoji}>✨</Text>
+          <Text style={styles.sectionTitle}>公開プロフィール</Text>
+          <Text style={styles.memoriesText}>
+            あなたの公開プラン・思い出・穴場が、他のユーザーからどう見えるか確認できます。
+          </Text>
+          <PrimaryButton
+            label="公開プロフィールを見る"
+            onPress={() => router.push(`/creator/${user.id}`)}
+          />
+        </PremiumCard>
+      </FadeInView>
+
       {!isConfigured ? (
         <FadeInView delay={160}>
           <View style={styles.notice}>
@@ -224,13 +262,14 @@ export default function ProfileScreen() {
         </View>
       </FadeInView>
     </ScrollView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: NS.colors.bg,
+    backgroundColor: 'transparent',
   },
   content: {
     paddingHorizontal: NS.layout.screenPadding,
@@ -364,6 +403,19 @@ const styles = StyleSheet.create({
     color: NS.colors.textSecondary,
     fontSize: 13,
     textAlign: 'center',
+  },
+  memoriesCard: {
+    padding: Spacing.four,
+    marginBottom: Spacing.four,
+    gap: Spacing.two,
+  },
+  memoriesEmoji: {
+    fontSize: 28,
+  },
+  memoriesText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
   },
   signOutWrap: {
     marginTop: Spacing.two,

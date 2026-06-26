@@ -2,7 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { buildFavoriteTitle } from '@/lib/favorites-storage';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
-import { flattenItineraryDays } from '@/lib/trip-duration';
+import { flattenItineraryDays, getDurationDisplayLabel } from '@/lib/trip-duration';
+import { formatTripDateRangeLabel } from '@/lib/trip-schedule';
 import { formatTripDateLabel } from '@/lib/weather';
 import type { CurrencyCode } from '@/constants/currency';
 import type {
@@ -33,7 +34,7 @@ export function buildActiveTripContext(input: {
       input.location,
       input.personality,
       input.companion,
-      input.tripDuration,
+      getDurationDisplayLabel(input.tripDuration, input.details.customDuration),
     ),
     location: input.location.trim() || '未指定',
     budget: input.budget,
@@ -131,7 +132,11 @@ export function buildSecretaryTripBrief(trip: ActiveTripContext): string {
       ? `\nプランの魅力:\n${details.highlights.map((h) => `- ${h}`).join('\n')}`
       : '';
 
-  const tripDate = details.tripDate ? formatTripDateLabel(details.tripDate) : null;
+  const tripDateRange = formatTripDateRangeLabel(details.tripDate, details.tripEndDate);
+  const durationLabel = getDurationDisplayLabel(
+    trip.tripDuration,
+    details.customDuration,
+  );
 
   return `
 === 現在アクティブな旅行プラン（把握済み・ユーザーに再確認しない） ===
@@ -143,9 +148,9 @@ export function buildSecretaryTripBrief(trip: ActiveTripContext): string {
 ${budgetSection}
 
 【旅行期間】
-期間: ${trip.tripDuration}
-${tripDate ? `出発日: ${tripDate}` : ''}
-所要: ${details.duration ?? trip.tripDuration}
+期間: ${durationLabel}
+${tripDateRange ? `日程: ${tripDateRange}` : details.tripDate ? `出発日: ${formatTripDateLabel(details.tripDate)}` : ''}
+所要: ${details.duration ?? durationLabel}
 
 【旅行スタイル】
 タイプ: ${trip.personality}（${PERSONALITY_SUBTITLES[trip.personality]}）

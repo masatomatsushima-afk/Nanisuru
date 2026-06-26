@@ -410,11 +410,11 @@ const styles = StyleSheet.create({
   featureCard: {
     flexDirection: 'row',
     gap: Spacing.three,
-    backgroundColor: '#121214',
+    backgroundColor: NS.colors.bgElevated,
     borderRadius: 20,
     padding: Spacing.three + 2,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: NS.colors.border,
   },
   featureIconWrap: {
     width: 52,
@@ -455,11 +455,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
-    backgroundColor: '#121214',
+    backgroundColor: NS.colors.bgElevated,
     borderRadius: 18,
     padding: Spacing.three,
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: NS.colors.border,
   },
   personalityCardSelected: {
     backgroundColor: 'rgba(129, 140, 248, 0.1)',
@@ -538,7 +538,7 @@ const styles = StyleSheet.create({
   readyStyleCard: {
     width: '100%',
     maxWidth: 320,
-    backgroundColor: '#121214',
+    backgroundColor: NS.colors.bgElevated,
     borderRadius: 20,
     padding: Spacing.four,
     borderWidth: 1,

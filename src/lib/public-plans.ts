@@ -24,12 +24,32 @@ import {
   validateVideoDrafts,
 } from '@/lib/public-plan-videos';
 import { notifyPlanLiked, notifyPlanSaved } from '@/lib/notifications';
+import {
+  noteShowOnProfileColumnMissing,
+  shouldUseShowOnProfileColumn,
+} from '@/lib/supabase-schema-fallback';
 import { getBlockedUserIds, filterPlansByBlockedUsers } from '@/lib/user-blocks';
 import type { PublicPlanModerationStatus } from '@/types/public-plan';
 import { isDiscoverablePublicPlan } from '@/types/public-plan';
 
-const PUBLIC_PLAN_SELECT =
+const PUBLIC_PLAN_SELECT_BASE =
   'id, user_id, source_trip_id, title, description, category, tags, visibility, is_public, is_removed, moderation_status, creator_display_name, payload, like_count, save_count, copy_count, comment_count, created_at, updated_at';
+
+const PUBLIC_PLAN_SELECT = `${PUBLIC_PLAN_SELECT_BASE}, show_on_profile`;
+
+function resolvePublicPlanSelect(): string {
+  return shouldUseShowOnProfileColumn() ? PUBLIC_PLAN_SELECT : PUBLIC_PLAN_SELECT_BASE;
+}
+
+async function selectPublicPlans(
+  queryFn: (select: string) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+): Promise<{ data: unknown; error: { message?: string } | null }> {
+  const first = await queryFn(resolvePublicPlanSelect());
+  if (first.error && noteShowOnProfileColumnMissing(first.error)) {
+    return queryFn(PUBLIC_PLAN_SELECT_BASE);
+  }
+  return first;
+}
 
 type PublicPlanRow = {
   id: string;
@@ -49,6 +69,7 @@ type PublicPlanRow = {
   save_count: number;
   copy_count?: number;
   comment_count?: number;
+  show_on_profile?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -80,6 +101,7 @@ function rowToPublicPlan(row: PublicPlanRow, extras?: Partial<PublicPlan>): Publ
     saveCount: row.save_count,
     copyCount: row.copy_count ?? 0,
     commentCount: row.comment_count ?? 0,
+    showOnProfile: row.show_on_profile ?? true,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...extras,
@@ -178,15 +200,17 @@ export async function fetchPublicPlans(): Promise<PublicPlan[]> {
   assertPublicPlansConfigured();
 
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('public_plans')
-    .select(PUBLIC_PLAN_SELECT)
-    .eq('visibility', 'public')
-    .eq('is_public', true)
-    .eq('is_removed', false)
-    .eq('moderation_status', 'active')
-    .order('created_at', { ascending: false })
-    .limit(100);
+  const { data, error } = await selectPublicPlans((select) =>
+    supabase
+      .from('public_plans')
+      .select(select)
+      .eq('visibility', 'public')
+      .eq('is_public', true)
+      .eq('is_removed', false)
+      .eq('moderation_status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(100),
+  );
 
   if (error) {
     throw new Error(error.message ?? '公開プランの取得に失敗しました');
@@ -204,15 +228,22 @@ export async function fetchPublicPlansByUserId(userId: string): Promise<PublicPl
   if (!userId.trim()) return [];
 
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('public_plans')
-    .select(PUBLIC_PLAN_SELECT)
-    .eq('user_id', userId)
-    .eq('visibility', 'public')
-    .eq('is_public', true)
-    .eq('is_removed', false)
-    .eq('moderation_status', 'active')
-    .order('created_at', { ascending: false });
+  const { data, error } = await selectPublicPlans((select) => {
+    let query = supabase
+      .from('public_plans')
+      .select(select)
+      .eq('user_id', userId)
+      .eq('visibility', 'public')
+      .eq('is_public', true)
+      .eq('is_removed', false)
+      .eq('moderation_status', 'active');
+
+    if (shouldUseShowOnProfileColumn()) {
+      query = query.eq('show_on_profile', true);
+    }
+
+    return query.order('created_at', { ascending: false });
+  });
 
   if (error) {
     throw new Error(error.message ?? '公開プランの取得に失敗しました');
@@ -228,11 +259,9 @@ export async function getPublicPlanById(planId: string): Promise<PublicPlan | nu
   if (!planId.trim()) return null;
 
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('public_plans')
-    .select(PUBLIC_PLAN_SELECT)
-    .eq('id', planId)
-    .maybeSingle();
+  const { data, error } = await selectPublicPlans((select) =>
+    supabase.from('public_plans').select(select).eq('id', planId).maybeSingle(),
+  );
 
   if (error || !data) return null;
 
@@ -261,12 +290,14 @@ export async function getPublishedPlanForTrip(tripId: string): Promise<PublicPla
   if (!userId) return null;
 
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('public_plans')
-    .select(PUBLIC_PLAN_SELECT)
-    .eq('source_trip_id', tripId)
-    .eq('user_id', userId)
-    .maybeSingle();
+  const { data, error } = await selectPublicPlans((select) =>
+    supabase
+      .from('public_plans')
+      .select(select)
+      .eq('source_trip_id', tripId)
+      .eq('user_id', userId)
+      .maybeSingle(),
+  );
 
   if (error || !data) return null;
   const plan = rowToPublicPlan(data as PublicPlanRow);
@@ -318,13 +349,15 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
   };
 
   if (existing) {
-    const { data, error } = await supabase
-      .from('public_plans')
-      .update(row)
-      .eq('id', existing.id)
-      .eq('user_id', user.id)
-      .select(PUBLIC_PLAN_SELECT)
-      .single();
+    const { data, error } = await selectPublicPlans((select) =>
+      supabase
+        .from('public_plans')
+        .update(row)
+        .eq('id', existing.id)
+        .eq('user_id', user.id)
+        .select(select)
+        .single(),
+    );
 
     if (error || !data) {
       throw new Error(error?.message ?? '公開プランの更新に失敗しました');
@@ -342,11 +375,9 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
     return { ...plan, images, videos };
   }
 
-  const { data, error } = await supabase
-    .from('public_plans')
-    .insert(row)
-    .select(PUBLIC_PLAN_SELECT)
-    .single();
+  const { data, error } = await selectPublicPlans((select) =>
+    supabase.from('public_plans').insert(row).select(select).single(),
+  );
 
   if (error || !data) {
     throw new Error(error?.message ?? '公開プランの作成に失敗しました');
@@ -491,17 +522,19 @@ export async function stopPublicPlan(planId: string): Promise<PublicPlan> {
     throw new Error('ログインが必要です');
   }
 
-  const { data, error } = await supabase
-    .from('public_plans')
-    .update({
-      visibility: 'private',
-      is_public: false,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', planId)
-    .eq('user_id', user.id)
-    .select(PUBLIC_PLAN_SELECT)
-    .single();
+  const { data, error } = await selectPublicPlans((select) =>
+    supabase
+      .from('public_plans')
+      .update({
+        visibility: 'private',
+        is_public: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', planId)
+      .eq('user_id', user.id)
+      .select(select)
+      .single(),
+  );
 
   if (error || !data) {
     throw new Error(error?.message ?? '公開の停止に失敗しました');
@@ -546,4 +579,38 @@ export function parseTagsInput(value: string): string[] {
     .map((tag) => tag.trim())
     .filter(Boolean)
     .slice(0, 8);
+}
+
+export async function togglePublicPlanShowOnProfile(
+  planId: string,
+  showOnProfile: boolean,
+): Promise<PublicPlan> {
+  assertPublicPlansConfigured();
+
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error('ログインが必要です');
+
+  const supabase = getSupabase();
+  const { data, error } = await selectPublicPlans((select) =>
+    supabase
+      .from('public_plans')
+      .update({ show_on_profile: showOnProfile, updated_at: new Date().toISOString() })
+      .eq('id', planId)
+      .eq('user_id', userId)
+      .select(select)
+      .single(),
+  );
+
+  if (error && noteShowOnProfileColumnMissing(error)) {
+    throw new Error(
+      'プロフィール表示の設定には show_on_profile カラムが必要です。Supabase で add_show_on_profile.sql を実行してください。',
+    );
+  }
+
+  if (error || !data) {
+    throw new Error(error?.message ?? 'プロフィール表示の更新に失敗しました');
+  }
+
+  const [plan] = await finalizePlans([rowToPublicPlan(data as PublicPlanRow)]);
+  return plan;
 }

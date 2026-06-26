@@ -52,6 +52,8 @@ export function PublicProfileEditor({
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState('');
   const [styleTags, setStyleTags] = useState<string[]>([]);
+  const [isLocalContributor, setIsLocalContributor] = useState(false);
+  const [localExpertAreas, setLocalExpertAreas] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +74,8 @@ export function PublicProfileEditor({
       setDisplayName(profile.displayName);
       setBio(profile.bio);
       setStyleTags(profile.styleTags);
+      setIsLocalContributor(profile.isLocalContributor);
+      setLocalExpertAreas(profile.localExpertAreas.join('、'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'プロフィールの取得に失敗しました');
     } finally {
@@ -100,7 +104,17 @@ export function PublicProfileEditor({
     setIsSaving(true);
     setError(null);
     try {
-      await saveUserProfile({ displayName, bio, styleTags });
+      await saveUserProfile({
+        displayName,
+        bio,
+        styleTags,
+        isLocalContributor,
+        localExpertAreas: localExpertAreas
+          .split(/[,、/／]+/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .slice(0, 5),
+      });
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 1600);
       await loadProfile();
@@ -190,6 +204,28 @@ export function PublicProfileEditor({
                 />
               ))}
             </View>
+
+            <Pressable
+              style={[styles.localToggle, isLocalContributor && styles.localToggleActive]}
+              onPress={() => setIsLocalContributor((prev) => !prev)}>
+              <Text style={styles.localToggleTitle}>🌟 このエリアに詳しい（ローカル投稿者）</Text>
+              <Text style={styles.localToggleHint}>
+                穴場投稿に「ローカル投稿者」バッジが付きます
+              </Text>
+            </Pressable>
+
+            {isLocalContributor ? (
+              <>
+                <Text style={styles.label}>詳しいエリア（カンマ区切り）</Text>
+                <TextInput
+                  style={styles.input}
+                  value={localExpertAreas}
+                  onChangeText={setLocalExpertAreas}
+                  placeholder="例）大阪、心斎橋、中崎町"
+                  placeholderTextColor={NS.colors.textMuted}
+                />
+              </>
+            ) : null}
           </>
         )}
 
@@ -308,6 +344,29 @@ const styles = StyleSheet.create({
   },
   chipLabelSelected: {
     color: NS.colors.accent,
+  },
+  localToggle: {
+    marginTop: Spacing.two,
+    backgroundColor: NS.colors.bgInput,
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.borderStrong,
+    padding: Spacing.three,
+    gap: 4,
+  },
+  localToggleActive: {
+    backgroundColor: NS.colors.yellowSoft,
+    borderColor: NS.colors.yellow,
+  },
+  localToggleTitle: {
+    color: NS.colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  localToggleHint: {
+    color: NS.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   saveWrap: {
     marginTop: Spacing.four,

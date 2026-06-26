@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --font-display:
     Spline Sans, Inter, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji, Segoe UI Emoji,
     Segoe UI Symbol, Noto Color Emoji;
@@ -6,4 +7,18 @@
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
+  --nanisuru-bg: #fff9f3;
+  --nanisuru-bg-gradient: linear-gradient(180deg, #bae6fd 0%, #fff9f3 38%, #fef3c7 100%);
+}
+
+html,
+body,
+#root {
+  background: var(--nanisuru-bg-gradient);
+  background-color: var(--nanisuru-bg);
+  min-height: 100%;
+}
+
+body {
+  color: #0f172a;
 }

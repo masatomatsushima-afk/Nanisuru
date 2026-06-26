@@ -1,5 +1,5 @@
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -10,10 +10,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { TripScheduleEditor } from '@/components/trip-schedule-editor';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BottomTabInset, Colors, Spacing } from '@/constants/theme';
+import { BottomTabInset, Spacing } from '@/constants/theme';
 import {
   CURRENCY_OPTIONS,
   getBudgetPlaceholder,
@@ -21,25 +21,63 @@ import {
   type CurrencyCode,
 } from '@/constants/currency';
 import { AppErrorBanner } from '@/components/app-error-banner';
-import { APP_MESSAGES, getErrorMessage } from '@/lib/app-errors';
+import { APP_MESSAGES, getPlanGenerationErrorMessage, isSupabaseError } from '@/lib/app-errors';
 import { linkPlanRatingToTrip } from '@/lib/plan-rating';
 import { formatCombinedMood } from '@/lib/custom-preferences';
+import {
+  applyPlanTypeDefaults,
+  canGeneratePlan,
+  formatCombinedTravelIntent,
+  getGenerateHelperText,
+  isCompactSchedule,
+  resolveCompanionHint,
+  resolvePersonalityForPlan,
+  showsMoodQuestion,
+  showsPersonalityQuestion,
+  showsTravelIntentQuestion,
+} from '@/lib/plan-creation';
+import {
+  getLocationPlaceholder,
+  LOCATION_FIELD_HELPER,
+  LOCATION_FIELD_LABEL,
+  SPOT_INTERESTS_LABEL,
+  SPOT_INTERESTS_PLACEHOLDER,
+} from '@/lib/location-input-copy';
+import { createDefaultBudgetScope } from '@/lib/budget-scope';
 import { buildLocationCurrencyHint, inferCurrencyFromLocation } from '@/lib/location-currency';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { AiAdviceSection } from '@/components/ai-advice-section';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
+import { BudgetScopeEditor } from '@/components/budget-scope-editor';
+import { PreTripPlanningSection } from '@/components/pre-trip-planning-section';
+import { TravelTimingEditor } from '@/components/travel-timing-editor';
+import { TourExperienceSection } from '@/components/tour-experience-section';
+import { OutfitPackingSection } from '@/components/outfit-packing-section';
+import { OutfitStyleModePicker } from '@/components/outfit-style-mode-picker';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ShareTripButton } from '@/components/share-trip-button';
 import { SaveTripButton } from '@/components/save-trip-button';
 import { PlanRatingSection } from '@/components/plan-rating-section';
+import { AfterPlanLaunchButton } from '@/components/after-plan-launch-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { ItineraryItemEditSheet } from '@/components/itinerary-item-edit-sheet';
 import { CurrentLocationButton } from '@/components/current-location-button';
 import { PlanCustomPreferencesFields } from '@/components/plan-custom-preferences-fields';
-import { PlanLoadingScreen, runLoadingAnimation } from '@/components/plan-loading-screen';
+import {
+  PlanLoadingScreen,
+  createPlanGenerationProgress,
+  isAbortError,
+  type PlanGenerationProgressHandle,
+  type PlanLoadingUiState,
+} from '@/components/plan-loading-screen';
+import { PLAN_LOADING_STAGES } from '@/lib/plan-generation-progress';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { WeatherSection } from '@/components/weather-section';
-import { UserPreferencesSection } from '@/components/user-preferences-section';
+import { TravelMemoryHomeCard } from '@/components/travel-memory-home-card';
+import { buildTravelMemoryDisplayData } from '@/lib/travel-memory-display';
+import { consumePendingLocalSpotForPlan } from '@/lib/plan-local-spot-intent';
+import { getTravelMemories } from '@/lib/travel-memory';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { PrimaryButton, PremiumCard, SectionHeader, SelectChip } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
@@ -47,9 +85,13 @@ import { generatePlanWithAi, isOpenAiConfigured } from '@/lib/generate-plan';
 import { buildActiveTripContext, saveActiveTrip } from '@/lib/active-trip';
 import { COMPANION_SUBTITLES, getItineraryEyebrow, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
 import { getPreferredPersonality } from '@/lib/onboarding-storage';
-import { getAllActivities } from '@/lib/trip-duration';
-import { getDurationBadgeLabel } from '@/lib/trip-duration';
-import { formatIsoDate, formatTripDateLabel, getTodayIsoDate } from '@/lib/weather';
+import { getAllActivities, getDurationBadgeLabel } from '@/lib/trip-duration';
+import {
+  createDefaultTripSchedule,
+  resolveTripSchedule,
+  syncScheduleOnPresetChange,
+  validateTripSchedule,
+} from '@/lib/trip-schedule';
 import {
   getAverageBudgetAmount,
   getUserPreferences,
@@ -59,7 +101,15 @@ import type { UserPreferences } from '@/types/user-memory';
 import type { PlanRatingContext } from '@/types/plan-rating';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
 import { HOME_MOOD_OPTIONS, type HomeMoodOption } from '@/types/plan-preferences';
-import type { SavedTrip } from '@/types/trip';
+import {
+  PLAN_CREATION_TYPES,
+  TRAVEL_INTENT_OPTIONS,
+  type PlanCreationType,
+  type TravelIntentOption,
+} from '@/types/plan-creation';
+import type { SavedTrip, SavedTripPayload } from '@/types/trip';
+import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
+import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import type {
   CompanionOption,
   ItineraryDay,
@@ -72,10 +122,16 @@ import {
   COMPANION_OPTIONS,
   isDateRelatedCompanion,
   PERSONALITY_OPTIONS,
-  TRIP_DURATION_OPTIONS,
 } from '@/types/plan';
+import { logPlanGenerationError } from '@/lib/plan-generation-log';
+import type { BudgetScopeSettings } from '@/types/budget-scope';
+import type { TripScheduleEditorValue } from '@/types/trip-schedule';
+import { createDefaultTravelTiming, type TravelTimingSettings } from '@/types/travel-timing';
+import type { OutfitStyleMode } from '@/types/outfit-advice';
+import { generateOutfitPackingAdvice } from '@/lib/outfit-packing-advice';
+import { ScreenBackground } from '@/components/ui/screen-background';
+import { HomeHeroSection } from '@/components/home-hero-section';
 
-const theme = Colors.dark;
 const accent = NS.colors.accent;
 
 const RECOMMEND_REASONS = [
@@ -84,81 +140,6 @@ const RECOMMEND_REASONS = [
   '予算内に収まる',
   '移動時間が少ない',
 ] as const;
-
-const FEATURE_CARDS = [
-  { icon: '📍', title: '場所選び不要', description: 'エリアを入力するだけ' },
-  { icon: '🗓️', title: '1日まるごと提案', description: '朝から夜まで完結' },
-  { icon: '🤖', title: 'AIコンシェルジュ付き', description: '天気変更にも対応' },
-] as const;
-
-function FeatureCard({ icon, title, description }: (typeof FEATURE_CARDS)[number]) {
-  return (
-    <View style={styles.featureCard}>
-      <View style={styles.featureIconWrap}>
-        <Text style={styles.featureIcon}>{icon}</Text>
-      </View>
-      <View style={styles.featureTextWrap}>
-        <Text style={styles.featureTitle}>{title}</Text>
-        <Text style={styles.featureDescription}>{description}</Text>
-      </View>
-    </View>
-  );
-}
-
-function HeroSection() {
-  return (
-    <FadeInView>
-      <View style={styles.hero}>
-        <View style={styles.heroGlow} />
-        <Text style={styles.heroEyebrow}>AI DAY PLANNER</Text>
-        <Text style={styles.title}>Nanisuru</Text>
-        <Text style={styles.tagline}>考えなくていい。</Text>
-        <Text style={styles.taglineAccent}>最高の1日をAIが作る。</Text>
-
-        <View style={styles.featureList}>
-          {FEATURE_CARDS.map((feature, index) => (
-            <FadeInView key={feature.title} delay={index * 80} direction="down">
-              <FeatureCard {...feature} />
-            </FadeInView>
-          ))}
-        </View>
-
-        <FadeInView delay={280}>
-          <PremiumCard
-            variant="accent"
-            style={styles.imafimaCard}
-            onPress={() => router.push('/imafima')}>
-            <View style={styles.imafimaGlow} />
-            <View style={styles.imafimaContent}>
-              <Text style={styles.imafimaEmoji}>⚡</Text>
-              <View style={styles.imafimaTextWrap}>
-                <Text style={styles.imafimaTitle}>今暇</Text>
-                <Text style={styles.imafimaSubtitle}>今から出かける！即興プランをAIが作成</Text>
-              </View>
-              <Text style={styles.imafimaArrow}>→</Text>
-            </View>
-          </PremiumCard>
-        </FadeInView>
-
-        <FadeInView delay={320}>
-          <PremiumCard style={styles.bestDayCard} onPress={() => router.push('/best-day')}>
-            <View style={styles.bestDayGlow} />
-            <View style={styles.bestDayContent}>
-              <Text style={styles.bestDayEmoji}>🔥</Text>
-              <View style={styles.bestDayTextWrap}>
-                <Text style={styles.bestDayTitle}>最高の1日</Text>
-                <Text style={styles.bestDaySubtitle}>
-                  計画は不要。AIコンシェルジュが最高の1日を設計
-                </Text>
-              </View>
-              <Text style={styles.bestDayArrow}>→</Text>
-            </View>
-          </PremiumCard>
-        </FadeInView>
-      </View>
-    </FadeInView>
-  );
-}
 
 function ReasonCard({ label }: { label: string }) {
   return (
@@ -188,6 +169,7 @@ function ItineraryTimeline({
   companion,
   personality,
   tripDuration,
+  customDuration,
   location,
   budget,
   currency,
@@ -198,10 +180,13 @@ function ItineraryTimeline({
   details,
   onRegenerate,
   isRegenerating,
+  planType,
+  onPlanUpdated,
 }: {
   companion: CompanionOption;
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
+  customDuration?: import('@/types/trip-schedule').CustomTripDuration;
   location: string;
   budget: string;
   currency: CurrencyCode;
@@ -212,10 +197,34 @@ function ItineraryTimeline({
   details: PlanDetails;
   onRegenerate: () => void;
   isRegenerating: boolean;
+  planType: PlanCreationType;
+  onPlanUpdated?: (days: ItineraryDay[], items: ItineraryItem[], details: PlanDetails) => void;
 }) {
   const [showSuccess, setShowSuccess] = useState(false);
   const [savedTripId, setSavedTripId] = useState<string | null>(null);
   const [pendingRatingId, setPendingRatingId] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<ItineraryEditTarget | null>(null);
+  const [showEditSheet, setShowEditSheet] = useState(false);
+
+  const editPayload: SavedTripPayload = {
+    location,
+    budget,
+    currency,
+    people,
+    mood,
+    companion,
+    personality,
+    tripDuration,
+    customDuration,
+    days,
+    items,
+    details,
+  };
+
+  const handleApplyEdit = async (result: PartialItineraryEditResult, _editRequest: string) => {
+    const nextPayload = applyPartialEditResult(editPayload, result);
+    onPlanUpdated?.(nextPayload.days, nextPayload.items, nextPayload.details);
+  };
 
   const ratingContext: PlanRatingContext = {
     source: 'home',
@@ -230,6 +239,28 @@ function ItineraryTimeline({
     days,
     items,
     details,
+  };
+
+  const outfitAdvice =
+    details.outfitAdvice ??
+    (details.weather
+      ? generateOutfitPackingAdvice({
+          days,
+          weather: details.weather,
+          location,
+          planType,
+          companion,
+          dayCount: days.length,
+          tripDate: details.tripDate,
+        })
+      : undefined);
+
+  const transportContext = {
+    location,
+    weather: details.weather,
+    travelTiming: details.travelTiming,
+    companion,
+    budget,
   };
 
   const handleTripSaved = (trip: SavedTrip) => {
@@ -290,7 +321,9 @@ function ItineraryTimeline({
                   <Text style={styles.personalityBadgeText}>{personality}</Text>
                 </View>
                 <View style={styles.durationBadge}>
-                  <Text style={styles.durationBadgeText}>{getDurationBadgeLabel(tripDuration)}</Text>
+                  <Text style={styles.durationBadgeText}>
+                    {getDurationBadgeLabel(tripDuration, customDuration)}
+                  </Text>
                 </View>
               </View>
               <Text style={styles.itinerarySubtitle}>{PERSONALITY_SUBTITLES[personality]}</Text>
@@ -298,11 +331,16 @@ function ItineraryTimeline({
               {details.weather ? (
                 <WeatherSection weather={details.weather} compact />
               ) : null}
+              {outfitAdvice ? <OutfitPackingSection advice={outfitAdvice} compact /> : null}
               {details.placesNotice ? (
                 <PlacesNoticeBanner message={details.placesNotice} />
               ) : null}
               {details.budgetBreakdown ? (
-                <BudgetBreakdownSection breakdown={details.budgetBreakdown} compact />
+                <BudgetBreakdownSection
+                  breakdown={details.budgetBreakdown}
+                  budgetScope={details.budgetScope}
+                  compact
+                />
               ) : (
                 <View style={styles.budgetPill}>
                   <Text style={styles.budgetPillLabel}>合計予算</Text>
@@ -327,8 +365,19 @@ function ItineraryTimeline({
           </View>
 
           <View style={styles.timelineList}>
+            <AfterPlanLaunchButton location={location} variant="compact" />
             <CurrentLocationButton compact />
-            <ItineraryDaysView days={days} variant="timeline" location={location} />
+            <ItineraryDaysView
+              days={days}
+              variant="timeline"
+              location={location}
+              editable
+              onEditItem={(target) => {
+                setEditTarget(target);
+                setShowEditSheet(true);
+              }}
+              transportContext={transportContext}
+            />
           </View>
 
           <View style={styles.detailHint}>
@@ -336,7 +385,19 @@ function ItineraryTimeline({
           </View>
         </Pressable>
 
-        <ConciergeAccessSection days={days} location={location} compact />
+        <ConciergeAccessSection
+          days={days}
+          location={location}
+          compact
+          transportContext={transportContext}
+        />
+
+        {(planType === '旅行プラン' || planType === '週末プラン') && days.length >= 2 ? (
+          <TourExperienceSection
+            destination={location}
+            tourSuggestions={details.tourSuggestions}
+          />
+        ) : null}
 
         {isDateRelatedCompanion(companion) && details.aiAdvice ? (
           <AiAdviceSection advice={details.aiAdvice} />
@@ -369,6 +430,7 @@ function ItineraryTimeline({
             companion={companion}
             personality={personality}
             tripDuration={tripDuration}
+            customDuration={customDuration}
             days={days}
             items={items}
             details={details}
@@ -382,6 +444,7 @@ function ItineraryTimeline({
             companion={companion}
             personality={personality}
             tripDuration={tripDuration}
+            customDuration={customDuration}
             days={days}
             items={items}
             details={details}
@@ -392,6 +455,17 @@ function ItineraryTimeline({
           <PrimaryButton label="このプランで決定" onPress={handleConfirm} variant="secondary" />
         </View>
       </View>
+
+      <ItineraryItemEditSheet
+        visible={showEditSheet}
+        target={editTarget}
+        payload={editPayload}
+        onClose={() => {
+          setShowEditSheet(false);
+          setEditTarget(null);
+        }}
+        onApply={handleApplyEdit}
+      />
     </>
   );
 }
@@ -402,76 +476,17 @@ type FormFieldProps = {
   onChangeText: (text: string) => void;
   placeholder: string;
   keyboardType?: 'default' | 'numeric' | 'number-pad';
+  hint?: string;
 };
 
-function TripDateField({
-  isoDate,
-  onChange,
-  onResetPlan,
-}: {
-  isoDate: string;
-  onChange: (date: string) => void;
-  onResetPlan?: () => void;
-}) {
-  const [showPicker, setShowPicker] = useState(false);
-  const dateValue = new Date(`${isoDate}T12:00:00`);
-  const label = formatTripDateLabel(isoDate);
-
-  const handleChange = (nextDate: Date) => {
-    onChange(formatIsoDate(nextDate));
-    onResetPlan?.();
-  };
-
-  if (Platform.OS === 'web') {
-    return (
-      <FormField
-        label="出発日"
-        value={isoDate}
-        onChangeText={(text) => {
-          if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-            onChange(text);
-            onResetPlan?.();
-          }
-        }}
-        placeholder="YYYY-MM-DD"
-      />
-    );
-  }
-
-  return (
-    <View style={styles.field}>
-      <Text style={styles.label}>出発日</Text>
-      <Pressable style={styles.dateInput} onPress={() => setShowPicker(true)}>
-        <Text style={styles.dateInputText}>{label}</Text>
-        <Text style={styles.dateInputHint}>タップして変更</Text>
-      </Pressable>
-      {showPicker ? (
-        <DateTimePicker
-          value={dateValue}
-          mode="date"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          minimumDate={new Date()}
-          locale="ja-JP"
-          onChange={(event, selectedDate) => {
-            if (Platform.OS === 'android') setShowPicker(false);
-            if (event.type === 'dismissed') {
-              setShowPicker(false);
-              return;
-            }
-            if (selectedDate) handleChange(selectedDate);
-          }}
-        />
-      ) : null}
-      {Platform.OS === 'ios' && showPicker ? (
-        <Pressable style={styles.datePickerDone} onPress={() => setShowPicker(false)}>
-          <Text style={styles.datePickerDoneText}>完了</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function FormField({ label, value, onChangeText, placeholder, keyboardType = 'default' }: FormFieldProps) {
+function FormField({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  keyboardType = 'default',
+  hint,
+}: FormFieldProps) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
@@ -483,6 +498,7 @@ function FormField({ label, value, onChangeText, placeholder, keyboardType = 'de
         placeholderTextColor={NS.colors.textMuted}
         keyboardType={keyboardType}
       />
+      {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
     </View>
   );
 }
@@ -555,74 +571,175 @@ function CompanionCard({
   label,
   selected,
   onPress,
+  colorIndex,
 }: {
   label: CompanionOption;
   selected: boolean;
   onPress: () => void;
+  colorIndex?: number;
 }) {
-  return <SelectChip label={label} selected={selected} onPress={onPress} />;
+  return (
+    <SelectChip
+      label={label}
+      selected={selected}
+      onPress={onPress}
+      colorIndex={colorIndex}
+    />
+  );
 }
 
 function PersonalityCard({
   label,
   selected,
   onPress,
+  colorIndex,
 }: {
   label: PersonalityOption;
   selected: boolean;
   onPress: () => void;
+  colorIndex?: number;
 }) {
-  return <SelectChip label={label} selected={selected} onPress={onPress} />;
+  return (
+    <SelectChip
+      label={label}
+      selected={selected}
+      onPress={onPress}
+      colorIndex={colorIndex}
+    />
+  );
 }
 
 function MoodCard({
   label,
   selected,
   onPress,
+  colorIndex,
 }: {
-  label: HomeMoodOption;
+  label: string;
   selected: boolean;
   onPress: () => void;
+  colorIndex?: number;
 }) {
-  return <SelectChip label={label} selected={selected} onPress={onPress} />;
+  return (
+    <SelectChip
+      label={label}
+      selected={selected}
+      onPress={onPress}
+      colorIndex={colorIndex}
+    />
+  );
 }
 
-function DurationCard({
+function PlanTypeCard({
   label,
   selected,
   onPress,
+  colorIndex,
 }: {
-  label: TripDurationOption;
+  label: PlanCreationType;
   selected: boolean;
   onPress: () => void;
+  colorIndex?: number;
 }) {
-  return <SelectChip label={label} selected={selected} onPress={onPress} />;
+  return (
+    <SelectChip
+      label={label}
+      selected={selected}
+      onPress={onPress}
+      colorIndex={colorIndex}
+    />
+  );
 }
 
+const INITIAL_LOADING_UI: PlanLoadingUiState = {
+  step: 0,
+  progress: 0,
+  headline: 'プランを作成中です',
+  estimateLabel: '完成まで約30秒かかります',
+  remainingLabel: '準備中…',
+  statusHint: PLAN_LOADING_STAGES[0].hint,
+  isLongRunning: false,
+  showMultiDayNote: false,
+};
+
 export default function HomeScreen() {
+  const [planType, setPlanType] = useState<PlanCreationType>('今日のお出かけ');
   const [location, setLocation] = useState('');
-  const [tripDate, setTripDate] = useState(getTodayIsoDate());
+  const [tripSchedule, setTripSchedule] = useState<TripScheduleEditorValue>(() =>
+    applyPlanTypeDefaults('今日のお出かけ', createDefaultTripSchedule()),
+  );
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [budget, setBudget] = useState('');
+  const [budgetScope, setBudgetScope] = useState<BudgetScopeSettings>(() =>
+    createDefaultBudgetScope('今日のお出かけ'),
+  );
+  const [travelTiming, setTravelTiming] = useState<TravelTimingSettings>(() =>
+    createDefaultTravelTiming(),
+  );
+  const [outfitStyleMode, setOutfitStyleMode] = useState<OutfitStyleMode>('AIに任せる');
   const [currency, setCurrency] = useState<CurrencyCode>('JPY');
   const [people, setPeople] = useState('');
   const [mood, setMood] = useState<HomeMoodOption | ''>('');
+  const [travelIntent, setTravelIntent] = useState<TravelIntentOption | ''>('');
   const [customPreferences, setCustomPreferences] = useState<PlanCustomPreferences>({});
   const [companion, setCompanion] = useState<CompanionOption | null>(null);
   const [personality, setPersonality] = useState<PersonalityOption | null>(null);
-  const [tripDuration, setTripDuration] = useState<TripDurationOption>('1日');
   const [showItinerary, setShowItinerary] = useState(false);
   const [days, setDays] = useState<ItineraryDay[]>([]);
   const [itinerary, setItinerary] = useState<ItineraryItem[]>([]);
   const [planDetails, setPlanDetails] = useState<PlanDetails | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState(0);
+  const [loadingUiState, setLoadingUiState] = useState<PlanLoadingUiState>(INITIAL_LOADING_UI);
   const [error, setError] = useState<string | null>(null);
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
+  const [travelMemories, setTravelMemories] = useState<import('@/types/travel-memory').TravelMemory[]>([]);
+  const [isMemoryLoading, setIsMemoryLoading] = useState(false);
   const insets = useSafeAreaInsets();
+  const generationAbortRef = useRef<AbortController | null>(null);
+  const progressHandleRef = useRef<PlanGenerationProgressHandle | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const formAnchorY = useRef(0);
 
-  const refreshUserPreferences = async () => {
-    setUserPreferences(await getUserPreferences());
+  const stopGenerationProgress = () => {
+    progressHandleRef.current?.stop();
+    progressHandleRef.current = null;
+    generationAbortRef.current = null;
   };
+
+  const handleCancelGeneration = () => {
+    generationAbortRef.current?.abort();
+    stopGenerationProgress();
+    setIsLoading(false);
+    setLoadingUiState(INITIAL_LOADING_UI);
+  };
+
+  const refreshUserPreferences = useCallback(async () => {
+    setUserPreferences(await getUserPreferences());
+  }, []);
+
+  const refreshTravelMemories = useCallback(async () => {
+    setIsMemoryLoading(true);
+    try {
+      setTravelMemories(await getTravelMemories());
+    } catch {
+      setTravelMemories([]);
+    } finally {
+      setIsMemoryLoading(false);
+    }
+  }, []);
+
+  const refreshMemorySummary = useCallback(async () => {
+    await Promise.all([refreshUserPreferences(), refreshTravelMemories()]);
+  }, [refreshTravelMemories, refreshUserPreferences]);
+
+  const memoryDisplay = useMemo(() => {
+    if (!userPreferences) return null;
+    return buildTravelMemoryDisplayData({
+      preferences: userPreferences,
+      memories: travelMemories,
+    });
+  }, [travelMemories, userPreferences]);
 
   useEffect(() => {
     const loadDefaults = async () => {
@@ -633,6 +750,7 @@ export default function HomeScreen() {
       ]);
 
       setUserPreferences(prefs);
+      void refreshTravelMemories();
 
       if (prefs.favoriteTravelStyle) {
         setPersonality(prefs.favoriteTravelStyle);
@@ -641,7 +759,7 @@ export default function HomeScreen() {
       }
 
       if (prefs.preferredTripDuration) {
-        setTripDuration(prefs.preferredTripDuration);
+        setTripSchedule((prev) => syncScheduleOnPresetChange(prev, prefs.preferredTripDuration!));
       }
 
       if (averageBudget && !budget) {
@@ -652,6 +770,22 @@ export default function HomeScreen() {
 
     loadDefaults();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshMemorySummary();
+      void consumePendingLocalSpotForPlan().then((pending) => {
+        if (!pending) return;
+        setLocation((prev) => prev || pending.area);
+        setCustomPreferences((prev) => ({
+          ...prev,
+          desiredPlaces: prev.desiredPlaces?.trim()
+            ? `${prev.desiredPlaces}、${pending.name}`
+            : pending.name,
+        }));
+      });
+    }, [refreshMemorySummary]),
+  );
 
   useEffect(() => {
     const trimmed = location.trim();
@@ -667,12 +801,78 @@ export default function HomeScreen() {
     setItinerary([]);
     setPlanDetails(null);
     setError(null);
-    setLoadingStep(0);
+    setSaveWarning(null);
   };
 
-  const fetchPlan = async (avoidActivities?: string[]) => {
+  const resolvedSchedule = resolveTripSchedule(tripSchedule);
+  const effectivePersonality = resolvePersonalityForPlan({
+    planType,
+    personality,
+    travelIntent,
+  });
+
+  const handlePlanTypeChange = (nextType: PlanCreationType) => {
+    setPlanType(nextType);
+    setTripSchedule((prev) => applyPlanTypeDefaults(nextType, prev));
+    setBudgetScope(createDefaultBudgetScope(nextType));
+    if (nextType === 'デートプラン' && !companion) {
+      setCompanion('カップル');
+    }
+    if (showsMoodQuestion(nextType)) {
+      setTravelIntent('');
+    } else if (showsTravelIntentQuestion(nextType)) {
+      setMood('');
+    }
+    if (showItinerary) resetPlan();
+  };
+
+  const handleHomePrimaryPress = () => {
+    handlePlanTypeChange('今日のお出かけ');
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(formAnchorY.current - Spacing.four, 0),
+        animated: true,
+      });
+    });
+  };
+
+  const handleTravelPressFromHero = () => {
+    handlePlanTypeChange('旅行プラン');
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(formAnchorY.current - Spacing.four, 0),
+        animated: true,
+      });
+    });
+  };
+
+  const handleTravelIntentSelect = (option: TravelIntentOption) => {
+    setTravelIntent(option);
+    const companionHint = resolveCompanionHint(option);
+    if (companionHint && !companion) {
+      setCompanion(companionHint);
+    }
+    if (showItinerary) resetPlan();
+  };
+
+  const fetchPlan = async (avoidActivities?: string[], signal?: AbortSignal) => {
     if (!companion) throw new Error('Companion not selected');
-    if (!personality) throw new Error('Personality not selected');
+
+    const resolvedPersonality = resolvePersonalityForPlan({
+      planType,
+      personality,
+      travelIntent,
+    });
+
+    const scheduleValidation = validateTripSchedule(tripSchedule);
+    if (scheduleValidation) {
+      throw new Error(scheduleValidation);
+    }
+
+    const travelPurpose = formatCombinedTravelIntent(
+      travelIntent,
+      customPreferences.customTravelIntent,
+    );
 
     const plan = await generatePlanWithAi({
       location,
@@ -680,12 +880,29 @@ export default function HomeScreen() {
       currency,
       people,
       companion,
-      personality,
-      tripDuration,
-      tripDate,
-      mood,
+      personality: resolvedPersonality,
+      tripDuration: resolvedSchedule.durationPreset,
+      tripDate: resolvedSchedule.departureDate,
+      tripEndDate: resolvedSchedule.returnDate,
+      customDuration: resolvedSchedule.customDuration,
+      mood: showsTravelIntentQuestion(planType) ? '' : mood,
+      travelIntent: showsTravelIntentQuestion(planType) ? travelIntent : '',
+      travelPurpose,
+      planCreationType: planType,
+      planType,
+      departureDate: resolvedSchedule.departureDate,
+      returnDate: resolvedSchedule.returnDate,
+      durationLabel: resolvedSchedule.durationLabel,
+      companionType: companion,
+      mustVisitPlaces: customPreferences.desiredPlaces,
+      avoidPreferences: customPreferences.avoidPreferences,
+      budgetScope,
       customPreferences,
       avoidActivities,
+      abortSignal: signal,
+      travelTiming:
+        planType === '旅行プラン' || planType === '週末プラン' ? travelTiming : undefined,
+      outfitStyleMode,
     });
     return { days: plan.days, items: plan.items, details: plan.details };
   };
@@ -694,7 +911,13 @@ export default function HomeScreen() {
     days: ItineraryDay[];
     details: PlanDetails;
   }) => {
-    if (!companion || !personality) return;
+    if (!companion) return;
+
+    const stylePersonality = resolvePersonalityForPlan({
+      planType,
+      personality,
+      travelIntent,
+    });
 
     await saveActiveTrip(
       buildActiveTripContext({
@@ -702,10 +925,12 @@ export default function HomeScreen() {
         budget,
         currency,
         people,
-        mood: formatCombinedMood(mood, customPreferences.customMood),
+        mood:
+          formatCombinedMood(mood, customPreferences.customMood) ||
+          formatCombinedTravelIntent(travelIntent, customPreferences.customTravelIntent),
         companion,
-        personality,
-        tripDuration,
+        personality: stylePersonality,
+        tripDuration: resolvedSchedule.durationPreset,
         days: plan.days,
         details: plan.details,
       }),
@@ -716,68 +941,165 @@ export default function HomeScreen() {
     days: ItineraryDay[];
     items: ItineraryItem[];
   }) => {
-    if (!personality) return;
+    const stylePersonality = resolvePersonalityForPlan({
+      planType,
+      personality,
+      travelIntent,
+    });
 
     await recordPlanPreferences({
-      personality,
-      tripDuration,
+      personality: stylePersonality,
+      tripDuration: resolvedSchedule.durationPreset,
       budget,
       currency,
       activities: getAllActivities(plan.days),
     });
-    await refreshUserPreferences();
+    await refreshMemorySummary();
   };
 
   const handleGenerate = async () => {
-    if (!companion || !personality || isLoading) return;
+    if (
+      !canGeneratePlan({
+        planType,
+        companion,
+        personality,
+        mood,
+        travelIntent,
+        customPreferences,
+      }) ||
+      isLoading
+    ) {
+      return;
+    }
 
+    const scheduleValidation = validateTripSchedule(tripSchedule);
+    if (scheduleValidation) {
+      setScheduleError(scheduleValidation);
+      return;
+    }
+
+    setScheduleError(null);
     setIsLoading(true);
-    setLoadingStep(0);
     setError(null);
+    setSaveWarning(null);
     setShowItinerary(false);
 
+    const abortController = new AbortController();
+    generationAbortRef.current = abortController;
+    const progress = createPlanGenerationProgress({
+      tripDuration: resolvedSchedule.durationPreset,
+      customDuration: resolvedSchedule.customDuration,
+      durationLabel: resolvedSchedule.durationLabel,
+      onUpdate: (state) => {
+        setLoadingUiState(state);
+      },
+    });
+    progressHandleRef.current = progress;
+    progress.start();
+
     try {
-      const [plan] = await Promise.all([fetchPlan(), runLoadingAnimation(setLoadingStep)]);
+      const plan = await fetchPlan(undefined, abortController.signal);
+      progress.complete();
 
       setDays(plan.days);
       setItinerary(plan.items);
       setPlanDetails(plan.details);
       setShowItinerary(true);
-      await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
+
+      try {
+        await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
+      } catch (saveErr) {
+        logPlanGenerationError('post_generation_save', saveErr);
+        setSaveWarning(
+          isSupabaseError(saveErr)
+            ? APP_MESSAGES.supabaseFailed
+            : APP_MESSAGES.planSaveWarning,
+        );
+      }
     } catch (err) {
-      setError(getErrorMessage(err));
+      if (isAbortError(err)) {
+        return;
+      }
+      logPlanGenerationError('generate_plan', err);
+      setError(getPlanGenerationErrorMessage(err));
       setShowItinerary(false);
     } finally {
+      stopGenerationProgress();
       setIsLoading(false);
-      setLoadingStep(0);
+      setLoadingUiState(INITIAL_LOADING_UI);
     }
   };
 
   const handleRegenerate = async () => {
-    if (!companion || !personality || isLoading || days.length === 0) return;
+    if (
+      !canGeneratePlan({
+        planType,
+        companion,
+        personality,
+        mood,
+        travelIntent,
+        customPreferences,
+      }) ||
+      isLoading ||
+      days.length === 0
+    ) {
+      return;
+    }
 
+    const scheduleValidation = validateTripSchedule(tripSchedule);
+    if (scheduleValidation) {
+      setScheduleError(scheduleValidation);
+      return;
+    }
+
+    setScheduleError(null);
     setIsLoading(true);
-    setLoadingStep(0);
     setError(null);
+    setSaveWarning(null);
 
     const avoidActivities = getAllActivities(days);
+    const abortController = new AbortController();
+    generationAbortRef.current = abortController;
+    const progress = createPlanGenerationProgress({
+      tripDuration: resolvedSchedule.durationPreset,
+      customDuration: resolvedSchedule.customDuration,
+      durationLabel: resolvedSchedule.durationLabel,
+      onUpdate: (state) => {
+        setLoadingUiState(state);
+      },
+    });
+    progressHandleRef.current = progress;
+    progress.start();
 
     try {
-      const [plan] = await Promise.all([
-        fetchPlan(avoidActivities),
-        runLoadingAnimation(setLoadingStep),
-      ]);
+      const plan = await fetchPlan(avoidActivities, abortController.signal);
+      progress.complete();
 
       setDays(plan.days);
       setItinerary(plan.items);
       setPlanDetails(plan.details);
       setShowItinerary(true);
-      await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
+
+      try {
+        await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
+      } catch (saveErr) {
+        logPlanGenerationError('post_regeneration_save', saveErr);
+        setSaveWarning(
+          isSupabaseError(saveErr)
+            ? APP_MESSAGES.supabaseFailed
+            : APP_MESSAGES.planSaveWarning,
+        );
+      }
     } catch (err) {
-      setError(getErrorMessage(err));
+      if (isAbortError(err)) {
+        return;
+      }
+      logPlanGenerationError('regenerate_plan', err);
+      setError(getPlanGenerationErrorMessage(err));
     } finally {
+      stopGenerationProgress();
       setIsLoading(false);
-      setLoadingStep(0);
+      setLoadingUiState(INITIAL_LOADING_UI);
     }
   };
 
@@ -787,15 +1109,40 @@ export default function HomeScreen() {
   };
 
   const resolvedMood = formatCombinedMood(mood, customPreferences.customMood);
-  const hasMoodSelection = Boolean(resolvedMood);
+  const generateReady = canGeneratePlan({
+    planType,
+    companion,
+    personality,
+    mood,
+    travelIntent,
+    customPreferences,
+  });
+  const generateHelperText = getGenerateHelperText({
+    planType,
+    companion,
+    personality,
+    mood,
+    travelIntent,
+    customPreferences,
+  });
+  const scheduleSubtitle =
+    planType === '今日のお出かけ' || planType === 'デートプラン'
+      ? '日帰りの日程を設定（カレンダーから選択できます）'
+      : '出発日と帰宅日、旅行の長さを設定';
 
   return (
+    <ScreenBackground>
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <PlanLoadingScreen visible={isLoading} currentStep={loadingStep} />
+      <PlanLoadingScreen
+        visible={isLoading}
+        uiState={loadingUiState}
+        onCancel={handleCancelGeneration}
+      />
 
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={[
           styles.content,
           {
@@ -805,36 +1152,94 @@ export default function HomeScreen() {
         ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-        <HeroSection />
+        <HomeHeroSection
+          onPrimaryPress={handleHomePrimaryPress}
+          onTravelPress={handleTravelPressFromHero}
+          afterPlanLocation={location.trim() || undefined}
+        />
 
-        {userPreferences ? (
+        {userPreferences && memoryDisplay ? (
           <FadeInView delay={40}>
-            <UserPreferencesSection preferences={userPreferences} compact />
+            <TravelMemoryHomeCard
+              preferenceChips={memoryDisplay.preferenceChips}
+              placeChips={memoryDisplay.placeChips}
+              totalPlaceCount={memoryDisplay.totalPlaceCount}
+              hasMemory={memoryDisplay.hasMemory}
+              isLoading={isMemoryLoading}
+            />
           </FadeInView>
         ) : null}
 
-        <SectionHeader
-          title="プランを生成"
-          subtitle="条件を入力して、AIがあなただけの1日を提案"
-        />
+        <View
+          onLayout={(event) => {
+            formAnchorY.current = event.nativeEvent.layout.y;
+          }}>
+          <SectionHeader
+            title="プランを作る"
+            subtitle="行き先や気分を入れるだけ。あとはお任せ"
+          />
+
+          <View style={styles.formCard}>
+            <SectionHeader
+              step={1}
+              title="何を作りますか？"
+              subtitle="まずはプランの種類を選んでね"
+            />
+            <View style={styles.companionGrid}>
+              {PLAN_CREATION_TYPES.map((option, index) => (
+                <PlanTypeCard
+                  key={option}
+                  label={option}
+                  selected={planType === option}
+                  onPress={() => handlePlanTypeChange(option)}
+                  colorIndex={index}
+                />
+              ))}
+            </View>
+          </View>
+        </View>
 
         <View style={styles.formCard}>
+          <SectionHeader
+            step={2}
+            title={LOCATION_FIELD_LABEL}
+            subtitle={LOCATION_FIELD_HELPER}
+          />
           <FormField
-            label="場所"
+            label={LOCATION_FIELD_LABEL}
             value={location}
             onChangeText={handleLocationChange}
-            placeholder="例）東京・Melbourne・Seoul"
+            placeholder={getLocationPlaceholder(planType)}
+          />
+          <FormField
+            label={`${SPOT_INTERESTS_LABEL}（任意）`}
+            value={customPreferences.desiredPlaces ?? ''}
+            onChangeText={(text) => {
+              setCustomPreferences((prev) => ({ ...prev, desiredPlaces: text }));
+              if (showItinerary) resetPlan();
+            }}
+            placeholder={SPOT_INTERESTS_PLACEHOLDER}
           />
           {locationCurrencyHint ? (
             <Text style={styles.locationCurrencyHint}>{locationCurrencyHint}</Text>
           ) : null}
-          <TripDateField
-            isoDate={tripDate}
-            onChange={setTripDate}
+        </View>
+
+        <View style={styles.formCard}>
+          <SectionHeader step={3} title="日程・期間" subtitle={scheduleSubtitle} />
+          <TripScheduleEditor
+            value={tripSchedule}
+            onChange={setTripSchedule}
+            error={scheduleError}
+            compact={isCompactSchedule(planType)}
             onResetPlan={() => {
               if (showItinerary) resetPlan();
             }}
           />
+        </View>
+
+        <View style={styles.formCard}>
+          <SectionHeader step={4} title="予算・人数" subtitle="ざっくりでOK。あとから調整できます 💰" />
           <CurrencySelector
             selected={currency}
             locationHint={locationCurrencyHint}
@@ -848,6 +1253,37 @@ export default function HomeScreen() {
             value={budget}
             onChangeText={setBudget}
           />
+          <BudgetScopeEditor
+            value={budgetScope}
+            onChange={(next) => {
+              setBudgetScope(next);
+              if (showItinerary) resetPlan();
+            }}
+          />
+          <OutfitStyleModePicker
+            value={outfitStyleMode}
+            onChange={(next) => {
+              setOutfitStyleMode(next);
+              if (showItinerary) resetPlan();
+            }}
+          />
+          {planType === '旅行プラン' || planType === '週末プラン' ? (
+            <>
+              <TravelTimingEditor
+                value={travelTiming}
+                onChange={(next) => {
+                  setTravelTiming(next);
+                  if (showItinerary) resetPlan();
+                }}
+              />
+              <PreTripPlanningSection
+                destination={location}
+                departureDate={resolvedSchedule.departureDate}
+                returnDate={resolvedSchedule.returnDate}
+                currencyCode={currency}
+              />
+            </>
+          ) : null}
           <FormField
             label="人数"
             value={people}
@@ -857,70 +1293,73 @@ export default function HomeScreen() {
           />
         </View>
 
-        <View style={styles.companionSection}>
-          <SectionHeader title="今日の気分は？" subtitle="ボタン選択に加え、自由入力もできます" />
-          <View style={styles.companionGrid}>
-            {HOME_MOOD_OPTIONS.map((option) => (
-              <MoodCard
-                key={option}
-                label={option}
-                selected={mood === option}
-                onPress={() => {
-                  setMood(option);
+        {showsMoodQuestion(planType) ? (
+          <View style={styles.companionSection}>
+            <SectionHeader title="今日の気分は？" subtitle="ボタン選択に加え、自由入力もできます" />
+            <View style={styles.companionGrid}>
+              {HOME_MOOD_OPTIONS.map((option, index) => (
+                <MoodCard
+                  key={option}
+                  label={option}
+                  selected={mood === option}
+                  onPress={() => {
+                    setMood(option);
+                    if (showItinerary) resetPlan();
+                  }}
+                  colorIndex={index}
+                />
+              ))}
+            </View>
+            <View style={styles.customPreferencesWrap}>
+              <PlanCustomPreferencesFields
+                value={customPreferences}
+                onChange={(next) => {
+                  setCustomPreferences(next);
                   if (showItinerary) resetPlan();
                 }}
+                showCustomTravelIntent={false}
+                hideDesiredPlaces
               />
-            ))}
+            </View>
           </View>
-          <View style={styles.customPreferencesWrap}>
-            <PlanCustomPreferencesFields
-              value={customPreferences}
-              onChange={(next) => {
-                setCustomPreferences(next);
-                if (showItinerary) resetPlan();
-              }}
+        ) : null}
+
+        {showsTravelIntentQuestion(planType) ? (
+          <View style={styles.companionSection}>
+            <SectionHeader
+              title="どんな旅行にしたいですか？"
+              subtitle="旅行の目的に合わせてプランを提案します"
             />
-          </View>
-        </View>
-
-        <View style={styles.companionSection}>
-          <SectionHeader title="期間は？" subtitle="旅行の長さに合わせてプランを作成" />
-          <View style={styles.companionGrid}>
-            {TRIP_DURATION_OPTIONS.map((option) => (
-              <DurationCard
-                key={option}
-                label={option}
-                selected={tripDuration === option}
-                onPress={() => {
-                  setTripDuration(option);
+            <View style={styles.companionGrid}>
+              {TRAVEL_INTENT_OPTIONS.map((option, index) => (
+                <MoodCard
+                  key={option}
+                  label={option}
+                  selected={travelIntent === option}
+                  onPress={() => handleTravelIntentSelect(option)}
+                  colorIndex={index}
+                />
+              ))}
+            </View>
+            <View style={styles.customPreferencesWrap}>
+              <PlanCustomPreferencesFields
+                value={customPreferences}
+                onChange={(next) => {
+                  setCustomPreferences(next);
                   if (showItinerary) resetPlan();
                 }}
+                showCustomMood={false}
+                showCustomTravelIntent
+                hideDesiredPlaces
               />
-            ))}
+            </View>
           </View>
-        </View>
-
-        <View style={styles.companionSection}>
-          <SectionHeader title="旅行タイプは？" subtitle="あなたの好みに合わせてプランを提案" />
-          <View style={styles.companionGrid}>
-            {PERSONALITY_OPTIONS.map((option) => (
-              <PersonalityCard
-                key={option}
-                label={option}
-                selected={personality === option}
-                onPress={() => {
-                  setPersonality(option);
-                  if (showItinerary) resetPlan();
-                }}
-              />
-            ))}
-          </View>
-        </View>
+        ) : null}
 
         <View style={styles.companionSection}>
           <SectionHeader title="誰と行く？" subtitle="一緒に行く相手に合わせた提案" />
           <View style={styles.companionGrid}>
-            {COMPANION_OPTIONS.map((option) => (
+            {COMPANION_OPTIONS.map((option, index) => (
               <CompanionCard
                 key={option}
                 label={option}
@@ -929,32 +1368,65 @@ export default function HomeScreen() {
                   setCompanion(option);
                   if (showItinerary) resetPlan();
                 }}
+                colorIndex={index}
               />
             ))}
           </View>
         </View>
 
+        {showsPersonalityQuestion(planType) ? (
+          <View style={styles.companionSection}>
+            <SectionHeader
+              title="旅行タイプは？"
+              subtitle="おまかせの場合も、参考にしたいスタイルがあれば選んでください"
+            />
+            <View style={styles.companionGrid}>
+              {PERSONALITY_OPTIONS.map((option, index) => (
+                <PersonalityCard
+                  key={option}
+                  label={option}
+                  selected={personality === option}
+                  onPress={() => {
+                    setPersonality(option);
+                    if (showItinerary) resetPlan();
+                  }}
+                  colorIndex={index}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {planType === 'AIに任せる' ? (
+          <View style={styles.companionSection}>
+            <SectionHeader
+              title="行きたい場所・避けたいこと"
+              subtitle="任意。入力するとプランに優先的に反映されます"
+            />
+            <PlanCustomPreferencesFields
+              value={customPreferences}
+              onChange={(next) => {
+                setCustomPreferences(next);
+                if (showItinerary) resetPlan();
+              }}
+              showCustomMood={false}
+              showCustomTravelIntent={false}
+              hideDesiredPlaces
+            />
+          </View>
+        ) : null}
+
         <View style={styles.generateButtonWrap}>
           <PrimaryButton
             label={isLoading ? '生成中...' : 'プランを生成'}
             onPress={handleGenerate}
-            disabled={!companion || !personality || !hasMoodSelection || isLoading}
+            disabled={!generateReady || isLoading}
           />
         </View>
 
-        {(!companion || !personality || !hasMoodSelection) && (
-          <Text style={styles.helperText}>
-            {!personality && !companion && !hasMoodSelection
-              ? '旅行タイプ・同行者・気分を選んでからプランを生成してください'
-              : !hasMoodSelection
-                ? '気分ボタンを選ぶか、「その他の気分を入力」に記入してください'
-              : !personality && !companion
-              ? '「旅行タイプ」と「誰と行く？」を選んでからプランを生成してください'
-              : !personality
-                ? '「旅行タイプは？」を選んでからプランを生成してください'
-                : '「誰と行く？」を選んでからプランを生成してください'}
-          </Text>
-        )}
+        {generateHelperText ? (
+          <Text style={styles.helperText}>{generateHelperText}</Text>
+        ) : null}
 
         {!isOpenAiConfigured() ? (
           <AppErrorBanner message={APP_MESSAGES.openAiNotConfigured} variant="info" />
@@ -964,14 +1436,19 @@ export default function HomeScreen() {
           <AppErrorBanner message={error} onRetry={handleGenerate} />
         ) : null}
 
-        {showItinerary && companion && personality && planDetails && (
+        {saveWarning ? (
+          <AppErrorBanner message={saveWarning} variant="info" />
+        ) : null}
+
+        {showItinerary && companion && planDetails && (
           <FadeInView
             key={days.map((day) => `${day.dayNumber}-${day.label}`).join('|')}
             delay={100}>
             <ItineraryTimeline
               companion={companion}
-              personality={personality}
-              tripDuration={tripDuration}
+              personality={effectivePersonality}
+              tripDuration={resolvedSchedule.durationPreset}
+              customDuration={resolvedSchedule.customDuration}
               location={location}
               budget={budget}
               currency={currency}
@@ -982,18 +1459,25 @@ export default function HomeScreen() {
               details={planDetails}
               onRegenerate={handleRegenerate}
               isRegenerating={isLoading}
+              planType={planType}
+              onPlanUpdated={(nextDays, nextItems, nextDetails) => {
+                setDays(nextDays);
+                setItinerary(nextItems);
+                setPlanDetails(nextDetails);
+              }}
             />
           </FadeInView>
         )}
       </ScrollView>
     </KeyboardAvoidingView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: NS.colors.bg,
+    backgroundColor: 'transparent',
   },
   content: {
     flexGrow: 1,
@@ -1022,19 +1506,19 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
   },
   title: {
-    color: theme.text,
+    color: NS.colors.text,
     ...NS.typography.display,
     marginBottom: Spacing.three,
   },
   tagline: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 20,
     fontWeight: '500',
     lineHeight: 30,
     letterSpacing: -0.3,
   },
   taglineAccent: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 22,
     fontWeight: '700',
     lineHeight: 32,
@@ -1056,7 +1540,7 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: 'rgba(129, 140, 248, 0.15)',
+    backgroundColor: NS.colors.accentSoft,
   },
   imafimaContent: {
     flexDirection: 'row',
@@ -1127,7 +1611,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   bestDayArrow: {
-    color: '#F97316',
+    color: NS.colors.orange,
     fontSize: 22,
     fontWeight: '700',
   },
@@ -1147,9 +1631,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 14,
-    backgroundColor: 'rgba(129, 140, 248, 0.1)',
+    backgroundColor: NS.colors.accentSoft,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.2)',
+    borderColor: NS.colors.accentBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1160,13 +1644,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   featureTitle: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 16,
     fontWeight: '700',
     letterSpacing: -0.2,
   },
   featureDescription: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 13,
     marginTop: 2,
   },
@@ -1174,12 +1658,12 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.three,
   },
   formSectionTitle: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 18,
     fontWeight: '700',
   },
   formSectionSubtitle: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 14,
     marginTop: 4,
   },
@@ -1187,16 +1671,17 @@ const styles = StyleSheet.create({
     backgroundColor: NS.colors.bgElevated,
     borderColor: NS.colors.border,
     borderWidth: 1,
-    borderRadius: NS.radius.lg,
-    padding: Spacing.four,
+    borderRadius: NS.radius.xxl,
+    padding: Spacing.four + 4,
     gap: Spacing.three,
+    marginBottom: Spacing.three,
     ...NS.shadow.card,
   },
   field: {
     gap: Spacing.two,
   },
   label: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1205,7 +1690,7 @@ const styles = StyleSheet.create({
     borderColor: NS.colors.borderStrong,
     borderWidth: 1,
     borderRadius: NS.radius.sm + 2,
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 16,
     paddingHorizontal: Spacing.three,
     paddingVertical: 14,
@@ -1222,7 +1707,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   dateInputText: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 16,
     fontWeight: '600',
   },
@@ -1253,28 +1738,34 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#161618',
+    borderRadius: NS.radius.pill,
+    backgroundColor: NS.colors.bgInput,
     borderWidth: 1.5,
-    borderColor: theme.backgroundSelected,
+    borderColor: NS.colors.borderStrong,
   },
   currencyChipSelected: {
-    backgroundColor: 'rgba(129, 140, 248, 0.12)',
-    borderColor: accent,
+    backgroundColor: NS.colors.accentSoft,
+    borderColor: NS.colors.accent,
   },
   currencyCode: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 12,
     fontWeight: '700',
   },
   currencyCodeSelected: {
-    color: theme.text,
+    color: NS.colors.text,
   },
   currencyAutoHint: {
     color: accent,
     fontSize: 12,
     fontWeight: '600',
     marginBottom: Spacing.two,
+  },
+  fieldHint: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: Spacing.one,
   },
   locationCurrencyHint: {
     color: accent,
@@ -1284,7 +1775,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.three,
   },
   currencySymbol: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1294,10 +1785,10 @@ const styles = StyleSheet.create({
   budgetInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#161618',
-    borderColor: theme.backgroundSelected,
+    backgroundColor: NS.colors.bgInput,
+    borderColor: NS.colors.borderStrong,
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: NS.radius.sm + 2,
     paddingLeft: Spacing.three,
   },
   budgetPrefix: {
@@ -1308,7 +1799,7 @@ const styles = StyleSheet.create({
   },
   budgetInput: {
     flex: 1,
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 16,
     paddingVertical: 14,
     paddingRight: Spacing.three,
@@ -1328,12 +1819,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     rowGap: Spacing.two,
   },
+  afterPlanBannerWrap: {
+    marginTop: Spacing.three,
+  },
   companionCard: {
     width: '48%',
-    backgroundColor: theme.backgroundElement,
-    borderColor: theme.backgroundSelected,
-    borderWidth: 1.5,
-    borderRadius: 16,
+    backgroundColor: NS.colors.bgElevated,
+    borderColor: NS.colors.border,
+    borderWidth: 1,
+    borderRadius: NS.radius.md,
     paddingHorizontal: Spacing.three,
     paddingVertical: 16,
     flexDirection: 'row',
@@ -1341,20 +1835,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   companionCardSelected: {
-    backgroundColor: 'rgba(129, 140, 248, 0.12)',
-    borderColor: accent,
+    backgroundColor: NS.colors.accentSoft,
+    borderColor: NS.colors.accent,
   },
   companionCardPressed: {
     opacity: 0.85,
     transform: [{ scale: 0.98 }],
   },
   companionLabel: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 15,
     fontWeight: '600',
   },
   companionLabelSelected: {
-    color: theme.text,
+    color: NS.colors.text,
     fontWeight: '700',
   },
   companionCheck: {
@@ -1381,7 +1875,7 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.98 }],
   },
   buttonDisabled: {
-    backgroundColor: theme.backgroundSelected,
+    backgroundColor: NS.colors.borderStrong,
     shadowOpacity: 0,
     elevation: 0,
   },
@@ -1391,7 +1885,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   helperText: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 13,
     textAlign: 'center',
     marginTop: Spacing.two,
@@ -1447,19 +1941,19 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   itineraryTitle: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 24,
     fontWeight: '800',
     letterSpacing: -0.5,
   },
   itinerarySubtitle: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 13,
     lineHeight: 20,
     marginTop: 6,
   },
   itineraryCompanionNote: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     marginTop: 4,
@@ -1467,12 +1961,12 @@ const styles = StyleSheet.create({
   },
   personalityBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(129, 140, 248, 0.15)',
-    borderRadius: 999,
+    backgroundColor: NS.colors.purpleSoft,
+    borderRadius: NS.radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.3)',
+    borderColor: 'rgba(167, 139, 250, 0.35)',
   },
   badgeRow: {
     flexDirection: 'row',
@@ -1490,7 +1984,7 @@ const styles = StyleSheet.create({
     borderColor: NS.colors.border,
   },
   durationBadgeText: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1502,31 +1996,31 @@ const styles = StyleSheet.create({
   budgetPill: {
     marginTop: Spacing.two,
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(129, 140, 248, 0.1)',
-    borderRadius: 12,
+    backgroundColor: NS.colors.mintSoft,
+    borderRadius: NS.radius.sm,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.2)',
+    borderColor: 'rgba(52, 211, 153, 0.28)',
   },
   budgetPillLabel: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 11,
     fontWeight: '600',
     marginBottom: 2,
   },
   budgetPillValue: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 14,
     fontWeight: '700',
   },
   plannerMessageBox: {
     marginTop: Spacing.two,
-    backgroundColor: 'rgba(129, 140, 248, 0.08)',
-    borderRadius: 14,
+    backgroundColor: NS.colors.skySoft,
+    borderRadius: NS.radius.md - 2,
     padding: Spacing.three,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.18)',
+    borderColor: 'rgba(56, 189, 248, 0.28)',
   },
   plannerMessageLabel: {
     color: accent,
@@ -1536,17 +2030,17 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   plannerMessageText: {
-    color: theme.textSecondary,
+    color: NS.colors.textSecondary,
     fontSize: 14,
     lineHeight: 22,
   },
   itineraryBadge: {
-    backgroundColor: 'rgba(129, 140, 248, 0.15)',
-    borderRadius: 999,
+    backgroundColor: NS.colors.accentSoft,
+    borderRadius: NS.radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.25)',
+    borderColor: NS.colors.accentBorder,
   },
   itineraryBadgeText: {
     color: accent,
@@ -1560,7 +2054,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.four,
     paddingTop: Spacing.three,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    borderTopColor: NS.colors.border,
     alignItems: 'center',
   },
   detailHintText: {
@@ -1572,10 +2066,10 @@ const styles = StyleSheet.create({
     marginTop: Spacing.four,
     paddingTop: Spacing.four,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    borderTopColor: NS.colors.border,
   },
   reasonsTitle: {
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 17,
     fontWeight: '700',
     marginBottom: Spacing.three,
@@ -1592,25 +2086,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-    backgroundColor: '#1A1A1D',
-    borderRadius: 16,
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: NS.radius.md,
     paddingHorizontal: Spacing.two + 2,
     paddingVertical: 14,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.15)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    borderColor: NS.colors.border,
+    ...NS.shadow.card,
   },
   reasonCheck: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: 'rgba(129, 140, 248, 0.15)',
+    backgroundColor: NS.colors.mintSoft,
     borderWidth: 1,
-    borderColor: 'rgba(129, 140, 248, 0.3)',
+    borderColor: 'rgba(52, 211, 153, 0.35)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1621,30 +2111,30 @@ const styles = StyleSheet.create({
   },
   reasonText: {
     flex: 1,
-    color: theme.text,
+    color: NS.colors.text,
     fontSize: 13,
     fontWeight: '600',
     lineHeight: 18,
   },
   confirmButton: {
     marginTop: Spacing.four,
-    backgroundColor: '#34D399',
-    borderRadius: 16,
+    backgroundColor: NS.colors.mint,
+    borderRadius: NS.radius.md,
     paddingVertical: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#34D399',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowColor: NS.colors.mint,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
   },
   confirmButtonPressed: {
     opacity: 0.9,
     transform: [{ scale: 0.98 }],
   },
   confirmButtonText: {
-    color: '#0A0A0B',
+    color: NS.colors.textOnAccent,
     fontSize: 17,
     fontWeight: '800',
   },

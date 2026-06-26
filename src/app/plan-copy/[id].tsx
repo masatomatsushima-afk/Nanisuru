@@ -1,4 +1,4 @@
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { TripScheduleEditor } from '@/components/trip-schedule-editor';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -35,14 +35,18 @@ import {
 } from '@/lib/plan-copy';
 import { getTripById, updateTrip } from '@/lib/saved-trips';
 import { flattenItineraryDays } from '@/lib/trip-duration';
-import { formatTripDateLabel, getTodayIsoDate, formatIsoDate } from '@/lib/weather';
+import {
+  applyTripScheduleToPayload,
+  createDefaultTripSchedule,
+  payloadToTripSchedule,
+  validateTripSchedule,
+} from '@/lib/trip-schedule';
+import type { TripScheduleEditorValue } from '@/types/trip-schedule';
 import {
   COMPANION_OPTIONS,
   PERSONALITY_OPTIONS,
-  TRIP_DURATION_OPTIONS,
   type CompanionOption,
   type PersonalityOption,
-  type TripDurationOption,
 } from '@/types/plan';
 import { HOME_MOOD_OPTIONS } from '@/types/plan-preferences';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
@@ -112,7 +116,8 @@ export default function PlanCopyEditScreen() {
   const [customPreferences, setCustomPreferences] = useState<PlanCustomPreferences>({});
   const [notes, setNotes] = useState('');
   const [mood, setMood] = useState('');
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [tripSchedule, setTripSchedule] = useState<TripScheduleEditorValue>(createDefaultTripSchedule);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -138,6 +143,7 @@ export default function PlanCopyEditScreen() {
       const normalized = buildPayloadFromTrip(loaded);
       setTrip(loaded);
       setPayload(normalized);
+      setTripSchedule(payloadToTripSchedule(normalized));
       setCustomPreferences(normalized.customPreferences ?? {});
       setNotes(normalized.notes ?? '');
       setMood(normalized.mood ?? '');
@@ -173,19 +179,30 @@ export default function PlanCopyEditScreen() {
   const handleSave = async (): Promise<boolean> => {
     if (!trip || !payload) return false;
 
+    const scheduleValidation = validateTripSchedule(tripSchedule);
+    if (scheduleValidation) {
+      setScheduleError(scheduleValidation);
+      setError(scheduleValidation);
+      return false;
+    }
+
+    setScheduleError(null);
     setIsSaving(true);
     setError(null);
     try {
+      const scheduledPayload = applyTripScheduleToPayload(payload, tripSchedule);
       const nextPayload: SavedTripPayload = {
-        ...payload,
+        ...scheduledPayload,
         mood,
         customPreferences,
         notes: notes.trim(),
-        items: flattenItineraryDays(payload.days),
+        items: flattenItineraryDays(scheduledPayload.days),
       };
       const updated = await updateTrip(trip.id, nextPayload, buildUpdatedTripTitle(nextPayload));
       setTrip(updated);
-      setPayload(buildPayloadFromTrip(updated));
+      const normalized = buildPayloadFromTrip(updated);
+      setPayload(normalized);
+      setTripSchedule(payloadToTripSchedule(normalized));
       setShowSuccess('マイプランとして保存しました');
       setTimeout(() => setShowSuccess(null), 1800);
       return true;
@@ -200,17 +217,27 @@ export default function PlanCopyEditScreen() {
   const handleAdjust = async (instruction: string) => {
     if (!payload) return;
 
+    const scheduleValidation = validateTripSchedule(tripSchedule);
+    if (scheduleValidation) {
+      setScheduleError(scheduleValidation);
+      setError(scheduleValidation);
+      return;
+    }
+
+    setScheduleError(null);
     setIsAdjusting(true);
     setError(null);
     try {
+      const scheduledPayload = applyTripScheduleToPayload(payload, tripSchedule);
       const basePayload: SavedTripPayload = {
-        ...payload,
+        ...scheduledPayload,
         mood,
         customPreferences,
         notes: notes.trim(),
       };
       const adjusted = await adjustCopiedPlanWithAi(basePayload, instruction);
       setPayload(adjusted);
+      setTripSchedule(payloadToTripSchedule(adjusted));
       setShowSuccess('AIがプランを調整しました');
       setTimeout(() => setShowSuccess(null), 1600);
     } catch (err) {
@@ -254,7 +281,6 @@ export default function PlanCopyEditScreen() {
 
   if (!trip || !payload) return null;
 
-  const tripDate = payload.details.tripDate ?? getTodayIsoDate();
   const currencySymbol = getCurrency(payload.currency).symbol;
 
   return (
@@ -293,8 +319,11 @@ export default function PlanCopyEditScreen() {
           <View style={styles.creditWrap}>
             <InspiredByCredit
               metadata={payload.copyMetadata}
-              onPressCreator={() =>
-                router.push(`/creator/${payload.copyMetadata!.sourceCreatorUserId}`)
+              onPressCreator={
+                payload.copyMetadata.sourcePublicPlanId.startsWith('sample:')
+                  ? undefined
+                  : () =>
+                      router.push(`/creator/${payload.copyMetadata!.sourceCreatorUserId}`)
               }
             />
           </View>
@@ -309,67 +338,14 @@ export default function PlanCopyEditScreen() {
             placeholder="例）東京・渋谷、Melbourne CBD"
           />
 
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>出発日</Text>
-            {Platform.OS === 'web' ? (
-              <TextInput
-                style={styles.input}
-                value={tripDate}
-                onChangeText={(text) => {
-                  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-                    patchDetails({ tripDate: text });
-                  }
-                }}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={NS.colors.textMuted}
-              />
-            ) : (
-              <>
-                <Pressable style={styles.dateButton} onPress={() => setShowDatePicker(true)}>
-                  <Text style={styles.dateButtonText}>{formatTripDateLabel(tripDate)}</Text>
-                  <Text style={styles.dateButtonHint}>タップして変更</Text>
-                </Pressable>
-                {showDatePicker ? (
-                  <DateTimePicker
-                    value={new Date(`${tripDate}T12:00:00`)}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    minimumDate={new Date()}
-                    locale="ja-JP"
-                    onChange={(event, selectedDate) => {
-                      if (Platform.OS === 'android') setShowDatePicker(false);
-                      if (event.type === 'dismissed') {
-                        setShowDatePicker(false);
-                        return;
-                      }
-                      if (selectedDate) {
-                        patchDetails({ tripDate: formatIsoDate(selectedDate) });
-                      }
-                    }}
-                  />
-                ) : null}
-                {Platform.OS === 'ios' && showDatePicker ? (
-                  <Pressable style={styles.dateDone} onPress={() => setShowDatePicker(false)}>
-                    <Text style={styles.dateDoneText}>完了</Text>
-                  </Pressable>
-                ) : null}
-              </>
-            )}
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>期間</Text>
-            <View style={styles.chipGrid}>
-              {TRIP_DURATION_OPTIONS.map((option) => (
-                <OptionChip
-                  key={option}
-                  label={option}
-                  selected={payload.tripDuration === option}
-                  onPress={() => patchPayload({ tripDuration: option })}
-                />
-              ))}
-            </View>
-          </View>
+          <TripScheduleEditor
+            value={tripSchedule}
+            onChange={(value) => {
+              setScheduleError(null);
+              setTripSchedule(value);
+            }}
+            error={scheduleError}
+          />
 
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>通貨</Text>
@@ -524,7 +500,10 @@ export default function PlanCopyEditScreen() {
 
       <PublishPlanSheet
         visible={showPublishSheet}
-        trip={trip}
+        trip={{
+          ...trip,
+          payload: applyTripScheduleToPayload(payload, tripSchedule),
+        }}
         onClose={() => setShowPublishSheet(false)}
         onPublished={() => {
           setShowPublishSheet(false);

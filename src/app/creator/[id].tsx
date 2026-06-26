@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,27 +11,38 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { FollowButton } from '@/components/follow-button';
+import { ProfileHeader } from '@/components/profile-header';
+import { ProfileMemoryGridCard } from '@/components/profile-memory-grid-card';
+import { ProfilePlanGridCard } from '@/components/profile-plan-grid-card';
+import { ProfileSavedGridCard } from '@/components/profile-saved-grid-card';
+import { ProfileSpotGridCard } from '@/components/profile-spot-grid-card';
+import { ProfileTabBar } from '@/components/profile-tab-bar';
 import { ReportReasonSheet } from '@/components/report-reason-sheet';
-import { PublicPlanCard } from '@/components/public-plan-card';
+import { ScreenBackground } from '@/components/ui/screen-background';
 import { ErrorStateCard } from '@/components/ui/state-cards';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { getActionErrorMessage } from '@/lib/app-errors';
+import { fetchLocalHiddenSpotsByUserId } from '@/lib/local-hidden-spots';
+import { fetchUserSavedPortfolioItems } from '@/lib/profile-saves';
 import { fetchPublicPlansByUserId } from '@/lib/public-plans';
 import { reportUser } from '@/lib/content-reports';
 import { blockUser } from '@/lib/user-blocks';
+import { fetchProfilePublicMemoriesByUserId } from '@/lib/trip-memories';
 import { getUserProfileById } from '@/lib/user-profiles';
 import { PLAN_REPORT_REASONS } from '@/types/moderation';
+import type { ProfileSavedItem, ProfileTabId } from '@/types/profile-portfolio';
+import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
 import type { PublicPlan } from '@/types/public-plan';
-import { getProfileInitial, type UserProfile } from '@/types/user-profile';
+import type { TripMemory } from '@/types/trip-memory';
+import type { UserProfile } from '@/types/user-profile';
 
-function StatBlock({ label, value }: { label: string; value: number }) {
+function ProfileEmptyState({ emoji, message }: { emoji: string; message: string }) {
   return (
-    <View style={styles.statBlock}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    <View style={styles.emptyBox}>
+      <Text style={styles.emptyEmoji}>{emoji}</Text>
+      <Text style={styles.emptyText}>{message}</Text>
     </View>
   );
 }
@@ -44,10 +55,19 @@ export default function CreatorProfileScreen() {
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [memories, setMemories] = useState<TripMemory[]>([]);
+  const [spots, setSpots] = useState<LocalHiddenSpot[]>([]);
+  const [savedItems, setSavedItems] = useState<ProfileSavedItem[]>([]);
+  const [activeTab, setActiveTab] = useState<ProfileTabId>('plans');
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showReportSheet, setShowReportSheet] = useState(false);
+
+  const isSelf = useMemo(
+    () => Boolean(profile?.isSelf || (currentUserId && currentUserId === id)),
+    [profile?.isSelf, currentUserId, id],
+  );
 
   const loadProfile = useCallback(async () => {
     if (!id) {
@@ -60,32 +80,55 @@ export default function CreatorProfileScreen() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [loadedProfile, loadedPlans] = await Promise.all([
+      const [loadedProfile, loadedPlans, loadedMemories, loadedSpots] = await Promise.all([
         getUserProfileById(id),
         fetchPublicPlansByUserId(id),
+        fetchProfilePublicMemoriesByUserId(id),
+        fetchLocalHiddenSpotsByUserId(id),
       ]);
 
-      if (!loadedProfile && loadedPlans.length === 0) {
+      if (!loadedProfile && loadedPlans.length === 0 && loadedMemories.length === 0 && loadedSpots.length === 0) {
         setNotFound(true);
         setProfile(null);
         setPlans([]);
+        setMemories([]);
+        setSpots([]);
+        setSavedItems([]);
         return;
       }
 
       setProfile(loadedProfile);
       setPlans(loadedPlans);
+      setMemories(loadedMemories);
+      setSpots(loadedSpots);
       setNotFound(false);
+
+      if (loadedProfile?.isSelf || currentUserId === id) {
+        try {
+          setSavedItems(await fetchUserSavedPortfolioItems());
+        } catch {
+          setSavedItems([]);
+        }
+      } else {
+        setSavedItems([]);
+      }
     } catch (error) {
       setLoadError(getActionErrorMessage(error, 'プロフィールの読み込みに失敗しました'));
       setNotFound(false);
     } finally {
       setIsLoading(false);
     }
-  }, [id]);
+  }, [currentUserId, id]);
 
   useEffect(() => {
     void loadProfile();
   }, [loadProfile]);
+
+  useEffect(() => {
+    if (!isSelf && activeTab === 'saved') {
+      setActiveTab('plans');
+    }
+  }, [activeTab, isSelf]);
 
   if (isLoading) {
     return (
@@ -107,7 +150,7 @@ export default function CreatorProfileScreen() {
     );
   }
 
-  if (notFound || !profile) {
+  if (notFound) {
     return (
       <View style={[styles.centered, styles.container, { paddingTop: insets.top + Spacing.four }]}>
         <Text style={styles.notFoundIcon}>👤</Text>
@@ -119,160 +162,202 @@ export default function CreatorProfileScreen() {
     );
   }
 
-  const isSelf = currentUserId === profile.userId;
+  const displayProfile: UserProfile =
+    profile ??
+    ({
+      userId: id!,
+      displayName:
+        plans[0]?.creatorDisplayName ??
+        memories[0]?.title ??
+        spots[0]?.creatorDisplayName ??
+        'Nanisuruユーザー',
+      bio: '',
+      styleTags: [],
+      isLocalContributor: false,
+      localExpertAreas: [],
+      followerCount: 0,
+      followingCount: 0,
+      publicPlanCount: plans.length,
+      publicMemoryCount: memories.length,
+      localSpotCount: spots.length,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isSelf,
+      isFollowing: false,
+    } satisfies UserProfile);
 
-  return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[
-        styles.content,
-        {
-          paddingTop: insets.top + Spacing.three,
-          paddingBottom: insets.bottom + Spacing.five,
-        },
-      ]}
-      showsVerticalScrollIndicator={false}>
-      <Pressable style={styles.backButton} onPress={() => router.back()}>
-        <Text style={styles.backButtonText}>← 戻る</Text>
-      </Pressable>
-
-      <View style={styles.hero}>
-        <View style={styles.heroGlow} />
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{getProfileInitial(profile.displayName)}</Text>
-        </View>
-        <Text style={styles.displayName}>{profile.displayName}</Text>
-        {profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
-
-        <View style={styles.statsRow}>
-          <StatBlock label="公開プラン" value={profile.publicPlanCount ?? plans.length} />
-          <StatBlock label="フォロワー" value={profile.followerCount} />
-          <StatBlock label="フォロー中" value={profile.followingCount} />
-        </View>
-
-        {!isSelf ? (
-          <View style={styles.followWrap}>
-            <FollowButton
-              userId={profile.userId}
-              isFollowing={Boolean(profile.isFollowing)}
-              isSelf={false}
-              isLoggedIn={Boolean(session)}
-              onRequireLogin={() => router.push('/login')}
-              onFollowChange={(next) =>
-                setProfile((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        isFollowing: next.isFollowing,
-                        followerCount: next.followerCount,
-                      }
-                    : prev,
-                )
-              }
-            />
-          </View>
-        ) : null}
-
-        {!isSelf && profile.followerCount === 0 ? (
-          <Text style={styles.noFollowersText}>まだフォロワーはいません</Text>
-        ) : null}
-
-        {profile.styleTags.length > 0 ? (
-          <View style={styles.tagRow}>
-            {profile.styleTags.map((tag) => (
-              <View key={tag} style={styles.tag}>
-                <Text style={styles.tagText}>{tag}</Text>
-              </View>
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'plans':
+        return plans.length === 0 ? (
+          <ProfileEmptyState emoji="🗺️" message="まだ公開プランはありません" />
+        ) : (
+          <View style={styles.grid}>
+            {plans.map((plan) => (
+              <ProfilePlanGridCard
+                key={plan.id}
+                plan={plan}
+                onPress={() => router.push(`/public-plan/${plan.id}`)}
+              />
             ))}
           </View>
-        ) : null}
-      </View>
+        );
+      case 'memories':
+        return memories.length === 0 ? (
+          <ProfileEmptyState emoji="📸" message="まだ思い出はありません" />
+        ) : (
+          <View style={styles.grid}>
+            {memories.map((memory) => (
+              <ProfileMemoryGridCard
+                key={memory.id}
+                memory={memory}
+                onPress={() => router.push(`/memory/${memory.id}`)}
+              />
+            ))}
+          </View>
+        );
+      case 'spots':
+        return spots.length === 0 ? (
+          <ProfileEmptyState emoji="🌿" message="まだ穴場スポットはありません" />
+        ) : (
+          <View style={styles.grid}>
+            {spots.map((spot, index) => (
+              <ProfileSpotGridCard
+                key={spot.id}
+                spot={spot}
+                index={index}
+                onPress={() => router.push(`/local-spot/${spot.id}`)}
+              />
+            ))}
+          </View>
+        );
+      case 'saved':
+        return savedItems.length === 0 ? (
+          <ProfileEmptyState emoji="🔖" message="まだ保存したコンテンツはありません" />
+        ) : (
+          <View style={styles.grid}>
+            {savedItems.map((item) => (
+              <ProfileSavedGridCard
+                key={`${item.type}-${item.type === 'plan' ? item.plan.id : item.type === 'memory' ? item.memory.id : item.spot.id}`}
+                item={item}
+                onPress={() => {
+                  if (item.type === 'plan') router.push(`/public-plan/${item.plan.id}`);
+                  else if (item.type === 'memory') router.push(`/memory/${item.memory.id}`);
+                  else router.push(`/local-spot/${item.spot.id}`);
+                }}
+              />
+            ))}
+          </View>
+        );
+      default:
+        return null;
+    }
+  };
 
-      <Text style={styles.sectionTitle}>公開プラン</Text>
-      {plans.length === 0 ? (
-        <View style={styles.emptyBox}>
-          <Text style={styles.emptyText}>まだ公開プランがありません</Text>
-        </View>
-      ) : (
-        plans.map((plan, index) => (
-          <PublicPlanCard
-            key={plan.id}
-            plan={plan}
-            index={index}
-            currentUserId={currentUserId}
-            onPress={() => router.push(`/public-plan/${plan.id}`)}
-            onCreatorPress={() => {}}
-            onFollowChange={() => void loadProfile()}
-          />
-        ))
-      )}
+  return (
+    <ScreenBackground>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: insets.top + Spacing.three,
+            paddingBottom: insets.bottom + Spacing.five,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}>
+        <Pressable style={styles.backButton} onPress={() => router.back()}>
+          <Text style={styles.backButtonText}>← 戻る</Text>
+        </Pressable>
 
-      {!isSelf ? (
-        <View style={styles.safetySection}>
-          <Text style={styles.safetyTitle}>安全・プライバシー</Text>
-          <Pressable
-            style={styles.safetyButton}
-            onPress={() => {
-              if (!session) {
-                router.push('/login');
-                return;
-              }
-              setShowReportSheet(true);
-            }}>
-            <Text style={styles.safetyButtonText}>このユーザーを通報</Text>
-          </Pressable>
-          <Pressable
-            style={styles.safetyButton}
-            onPress={() => {
-              if (!session) {
-                router.push('/login');
-                return;
-              }
-              Alert.alert(
-                'ユーザーをブロック',
-                'このユーザーをブロックしますか？今後、このユーザーの公開プランやコメントは表示されなくなります。',
-                [
-                  { text: 'キャンセル', style: 'cancel' },
-                  {
-                    text: 'ブロックする',
-                    style: 'destructive',
-                    onPress: () => {
-                      void blockUser(profile.userId)
-                        .then(() => {
-                          Alert.alert('ブロックしました', 'このユーザーのコンテンツは表示されなくなりました。');
-                          router.back();
-                        })
-                        .catch((error) => {
-                          Alert.alert(
-                            'エラー',
-                            error instanceof Error ? error.message : 'ブロックに失敗しました',
-                          );
-                        });
+        <ProfileHeader
+          profile={{ ...displayProfile, isSelf }}
+          isLoggedIn={Boolean(session)}
+          onRequireLogin={() => router.push('/login')}
+          onFollowChange={(next) =>
+            setProfile((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    isFollowing: next.isFollowing,
+                    followerCount: next.followerCount,
+                  }
+                : prev,
+            )
+          }
+        />
+
+        <ProfileTabBar activeTab={activeTab} isSelf={isSelf} onChange={setActiveTab} />
+
+        {renderTabContent()}
+
+        {!isSelf ? (
+          <View style={styles.safetySection}>
+            <Text style={styles.safetyTitle}>安全・プライバシー</Text>
+            <Pressable
+              style={styles.safetyButton}
+              onPress={() => {
+                if (!session) {
+                  router.push('/login');
+                  return;
+                }
+                setShowReportSheet(true);
+              }}>
+              <Text style={styles.safetyButtonText}>このユーザーを通報</Text>
+            </Pressable>
+            <Pressable
+              style={styles.safetyButton}
+              onPress={() => {
+                if (!session) {
+                  router.push('/login');
+                  return;
+                }
+                Alert.alert(
+                  'ユーザーをブロック',
+                  'このユーザーをブロックしますか？今後、このユーザーの公開プランやコメントは表示されなくなります。',
+                  [
+                    { text: 'キャンセル', style: 'cancel' },
+                    {
+                      text: 'ブロックする',
+                      style: 'destructive',
+                      onPress: () => {
+                        void blockUser(displayProfile.userId)
+                          .then(() => {
+                            Alert.alert('ブロックしました', 'このユーザーのコンテンツは表示されなくなりました。');
+                            router.back();
+                          })
+                          .catch((error) => {
+                            Alert.alert(
+                              'エラー',
+                              error instanceof Error ? error.message : 'ブロックに失敗しました',
+                            );
+                          });
+                      },
                     },
-                  },
-                ],
-              );
-            }}>
-            <Text style={styles.safetyButtonText}>このユーザーをブロック</Text>
-          </Pressable>
-        </View>
-      ) : null}
+                  ],
+                );
+              }}>
+              <Text style={styles.safetyButtonText}>このユーザーをブロック</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
-      <ReportReasonSheet
-        visible={showReportSheet}
-        title="ユーザーを通報"
-        subtitle="問題の内容に最も近い理由を選んでください。"
-        reasons={PLAN_REPORT_REASONS}
-        onClose={() => setShowReportSheet(false)}
-        onSubmit={async (reason, details) => {
-          await reportUser(profile.userId, reason, details);
-          Alert.alert(
-            'ご報告ありがとうございます',
-            '内容を確認いたします。安全なコミュニティ維持にご協力いただき、ありがとうございます。',
-          );
-        }}
-      />
-    </ScrollView>
+        <ReportReasonSheet
+          visible={showReportSheet}
+          title="ユーザーを通報"
+          subtitle="問題の内容に最も近い理由を選んでください。"
+          reasons={PLAN_REPORT_REASONS}
+          onClose={() => setShowReportSheet(false)}
+          onSubmit={async (reason, details) => {
+            await reportUser(displayProfile.userId, reason, details);
+            Alert.alert(
+              'ご報告ありがとうございます',
+              '内容を確認いたします。安全なコミュニティ維持にご協力いただき、ありがとうございます。',
+            );
+          }}
+        />
+      </ScrollView>
+    </ScreenBackground>
   );
 }
 
@@ -281,7 +366,6 @@ const accent = NS.colors.accent;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: NS.colors.bg,
   },
   centered: {
     flex: 1,
@@ -292,7 +376,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: Spacing.four,
-    maxWidth: 480,
+    maxWidth: 520,
     width: '100%',
     alignSelf: 'center',
   },
@@ -311,122 +395,28 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  hero: {
-    alignItems: 'center',
-    marginBottom: Spacing.five,
-    position: 'relative',
-  },
-  heroGlow: {
-    position: 'absolute',
-    top: -10,
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: NS.colors.accentGlow,
-  },
-  avatar: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: NS.colors.accentSoft,
-    borderWidth: 2,
-    borderColor: NS.colors.accentBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.three,
-  },
-  avatarText: {
-    color: accent,
-    fontSize: 34,
-    fontWeight: '800',
-  },
-  displayName: {
-    color: NS.colors.text,
-    fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: -0.3,
-    marginBottom: Spacing.two,
-    textAlign: 'center',
-  },
-  bio: {
-    color: NS.colors.textSecondary,
-    fontSize: 15,
-    lineHeight: 24,
-    textAlign: 'center',
-    marginBottom: Spacing.three,
-    maxWidth: 340,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: Spacing.three,
-    marginBottom: Spacing.three,
-  },
-  statBlock: {
-    minWidth: 88,
-    backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.md,
-    borderWidth: 1,
-    borderColor: NS.colors.border,
-    paddingVertical: Spacing.two + 2,
-    paddingHorizontal: Spacing.three,
-    alignItems: 'center',
-  },
-  statValue: {
-    color: NS.colors.text,
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 2,
-  },
-  statLabel: {
-    color: NS.colors.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  followWrap: {
-    marginBottom: Spacing.three,
-  },
-  noFollowersText: {
-    color: NS.colors.textMuted,
-    fontSize: 13,
-    textAlign: 'center',
-    marginBottom: Spacing.two,
-  },
-  tagRow: {
+  grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: Spacing.two,
-  },
-  tag: {
-    backgroundColor: NS.colors.accentSoft,
-    borderRadius: NS.radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: NS.colors.accentBorder,
-  },
-  tagText: {
-    color: accent,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  sectionTitle: {
-    color: NS.colors.text,
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: Spacing.three,
+    gap: Spacing.three,
+    justifyContent: 'space-between',
   },
   emptyBox: {
     backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.lg,
+    borderRadius: NS.radius.xl,
     borderWidth: 1,
     borderColor: NS.colors.border,
-    padding: Spacing.five,
+    padding: Spacing.six,
     alignItems: 'center',
+    gap: Spacing.two,
+  },
+  emptyEmoji: {
+    fontSize: 32,
   },
   emptyText: {
     color: NS.colors.textMuted,
     fontSize: 14,
+    textAlign: 'center',
   },
   notFoundIcon: {
     fontSize: 40,
@@ -452,7 +442,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   safetySection: {
-    marginTop: Spacing.four,
+    marginTop: Spacing.five,
     gap: Spacing.two,
     paddingTop: Spacing.four,
     borderTopWidth: 1,

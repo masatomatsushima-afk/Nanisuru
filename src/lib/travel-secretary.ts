@@ -52,7 +52,7 @@ export function buildSecretarySystemPrompt(
 - 天候変化（雨など）への即時対応と代替プラン提案
 - 予算の見直し・節約アドバイス
 - 近くのおすすめスポット提案（Google Places の周辺検索結果を活用）
-- 行程の変更・組み替え
+- 行程の変更・組み替え（部分編集：「2日目の昼をカフェに」「ディナー前にビーチ」など特定の予定だけ変更）
 - 子供連れ・家族向けへの調整
 - 旅行中の不安や疑問への回答
 
@@ -72,7 +72,8 @@ ${tripSection}${nearbySection}
 - ユーザーの過去の好み（下記）
 - 会話履歴
 
-プラン変更を提案する際は、「今の○○の代わりに△△」のように**何をどう変えるか**を明確にしてください。`;
+プラン変更を提案する際は、「今の○○の代わりに△△」のように**何をどう変えるか**を明確にしてください。
+ユーザーが「○日目の○○を変更したい」と言った場合、対象の日・時間帯・予定を特定して具体的に答えてください。`;
 }
 
 async function buildEnrichedSystemPrompt(
@@ -130,14 +131,21 @@ export async function sendSecretaryMessage(params: {
   userMessage: string;
   history: SecretaryMessage[];
   nearbyPlaces?: NearbyPlacesContext | null;
+  tripContext?: ActiveTripContext | null;
+  folderBrief?: string | null;
 }): Promise<string> {
   if (!isOpenAiConfigured()) {
     throw new AppError(APP_MESSAGES.openAiNotConfigured, 'OPENAI_FAILED');
   }
 
-  const activeTrip = await getActiveTrip();
+  const activeTrip =
+    params.tripContext !== undefined ? params.tripContext : await getActiveTrip();
   const apiKey = getOpenAiApiKey()!;
-  const systemPrompt = await buildEnrichedSystemPrompt(activeTrip, params.nearbyPlaces ?? null);
+  let systemPrompt = await buildEnrichedSystemPrompt(activeTrip, params.nearbyPlaces ?? null);
+
+  if (params.folderBrief?.trim()) {
+    systemPrompt = `${systemPrompt}\n\n${params.folderBrief.trim()}\n\n上記は現在選択中の旅行フォルダの情報です。この旅行だけの文脈で回答してください。他の旅行の情報は混ぜないでください。`;
+  }
 
   const recentHistory = params.history.slice(-10).map((message) => ({
     role: message.role,

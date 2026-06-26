@@ -4,6 +4,7 @@ import type { CompanionOption, PersonalityOption, TripDurationOption } from '@/t
 import type { UserPreferences } from '@/types/user-memory';
 import type { TravelMemory } from '@/types/travel-memory';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import type { PlanCreationType } from '@/types/plan-creation';
 import type { BestDayContext } from '@/types/best-day';
 import type { WeatherForecast } from '@/lib/weather';
 
@@ -16,6 +17,8 @@ export type PlanAnalysisInput = {
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
   tripDate: string;
+  tripEndDate?: string;
+  customDuration?: import('@/types/trip-schedule').CustomTripDuration;
   mood: string;
   customPreferences?: PlanCustomPreferences;
   weather?: WeatherForecast;
@@ -23,4 +26,6 @@ export type PlanAnalysisInput = {
   travelMemories?: TravelMemory[];
   spontaneous?: SpontaneousContext;
   bestDay?: BestDayContext;
+  planCreationType?: PlanCreationType;
+  travelIntent?: string;
 };

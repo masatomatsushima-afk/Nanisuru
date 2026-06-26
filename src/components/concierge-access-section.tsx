@@ -6,10 +6,12 @@ import {
   getMapsUrl,
   getReservationUrl,
   getWebsiteUrl,
-  hasTravelTime,
   usesDirectReservationLink,
 } from '@/lib/concierge-links';
+import { buildDayRouteNote } from '@/lib/transport-guidance';
+import { ItineraryTransportSection } from '@/components/itinerary-transport-section';
 import type { ItineraryDay } from '@/types/plan';
+import type { TransportGuidanceContext } from '@/types/transport-guidance';
 
 type AccessLinkProps = {
   icon: string;
@@ -38,15 +40,26 @@ type ConciergeSpotCardProps = {
   activity: string;
   location: string;
   item: ItineraryDay['items'][number];
+  nextItem?: ItineraryDay['items'][number];
   isLastInDay: boolean;
+  transportContext?: TransportGuidanceContext;
+  dayIndex?: number;
+  totalDays?: number;
+  itemIndex?: number;
 };
 
-function showTransportFallback(item: ItineraryDay['items'][number]): boolean {
-  const transport = item.transportation?.trim();
-  return Boolean(transport && transport !== '—' && transport !== '-');
-}
-
-function ConciergeSpotCard({ time, activity, location, item, isLastInDay }: ConciergeSpotCardProps) {
+function ConciergeSpotCard({
+  time,
+  activity,
+  location,
+  item,
+  nextItem,
+  isLastInDay,
+  transportContext,
+  dayIndex = 0,
+  totalDays = 1,
+  itemIndex = 0,
+}: ConciergeSpotCardProps) {
   const openUrl = async (url: string) => {
     const supported = await Linking.canOpenURL(url);
     if (supported) {
@@ -87,16 +100,15 @@ function ConciergeSpotCard({ time, activity, location, item, isLastInDay }: Conc
         />
       </View>
 
-      {!isLastInDay && (hasTravelTime(item) || showTransportFallback(item)) ? (
-        <View style={styles.travelTimeBox}>
-          <Text style={styles.travelTimeLabel}>次のスポットまで</Text>
-          <Text style={styles.travelTimeValue}>
-            {hasTravelTime(item) ? item.travelTimeToNext : '移動時間の目安'}
-          </Text>
-          {item.transportation && item.transportation !== '—' ? (
-            <Text style={styles.travelTimeTransport}>{item.transportation}</Text>
-          ) : null}
-        </View>
+      {!isLastInDay && nextItem ? (
+        <ItineraryTransportSection
+          fromItem={item}
+          toItem={nextItem}
+          context={{ ...transportContext, location }}
+          dayIndex={dayIndex}
+          totalDays={totalDays}
+          itemIndex={itemIndex}
+        />
       ) : null}
     </View>
   );
@@ -106,13 +118,20 @@ type ConciergeAccessSectionProps = {
   days: ItineraryDay[];
   location: string;
   compact?: boolean;
+  transportContext?: TransportGuidanceContext;
 };
 
 export function ConciergeAccessSection({
   days,
   location,
   compact = false,
+  transportContext,
 }: ConciergeAccessSectionProps) {
+  const context: TransportGuidanceContext = {
+    ...transportContext,
+    location: transportContext?.location ?? location,
+  };
+
   return (
     <View style={[styles.container, compact && styles.containerCompact]}>
       <View style={styles.header}>
@@ -120,17 +139,28 @@ export function ConciergeAccessSection({
         <Text style={styles.title}>予約・アクセス</Text>
         {!compact ? (
           <Text style={styles.subtitle}>
-            各スポットの予約・公式サイト・地図リンクと、移動時間の目安です
+            各スポットの予約・公式サイト・地図リンクと、次の場所への移動案内です
           </Text>
         ) : null}
       </View>
 
-      {days.map((day) => (
+      {days.map((day, dayIndex) => {
+        const routeNote = buildDayRouteNote(day, context, dayIndex, days.length);
+
+        return (
         <View key={`${day.dayNumber}-${day.label}`} style={styles.dayBlock}>
           {days.length > 1 ? (
             <View style={styles.dayHeader}>
               <Text style={styles.dayLabel}>{day.label}</Text>
               {day.theme ? <Text style={styles.dayTheme}>{day.theme}</Text> : null}
+              {routeNote ? (
+                <View style={styles.routeNoteBox}>
+                  <Text style={styles.routeNoteLabel}>{routeNote.label}</Text>
+                  {routeNote.detail ? (
+                    <Text style={styles.routeNoteDetail}>{routeNote.detail}</Text>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -141,11 +171,17 @@ export function ConciergeAccessSection({
               activity={item.activity}
               location={location}
               item={item}
+              nextItem={day.items[index + 1]}
               isLastInDay={index === day.items.length - 1}
+              transportContext={context}
+              dayIndex={dayIndex}
+              totalDays={days.length}
+              itemIndex={index}
             />
           ))}
         </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -202,6 +238,26 @@ const styles = StyleSheet.create({
     color: NS.colors.textSecondary,
     fontSize: 12,
     marginTop: 4,
+  },
+  routeNoteBox: {
+    marginTop: Spacing.two,
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: NS.radius.sm,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one + 2,
+    gap: 2,
+  },
+  routeNoteLabel: {
+    color: NS.colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  routeNoteDetail: {
+    color: NS.colors.textMuted,
+    fontSize: 11,
+    lineHeight: 16,
   },
   spotCard: {
     backgroundColor: NS.colors.bgElevated,
@@ -264,28 +320,5 @@ const styles = StyleSheet.create({
     color: NS.colors.accent,
     fontSize: 14,
     fontWeight: '700',
-  },
-  travelTimeBox: {
-    backgroundColor: NS.colors.accentSoft,
-    borderRadius: NS.radius.sm,
-    padding: Spacing.two + 2,
-    borderWidth: 1,
-    borderColor: NS.colors.accentBorder,
-    gap: 4,
-  },
-  travelTimeLabel: {
-    color: NS.colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  travelTimeValue: {
-    color: NS.colors.text,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  travelTimeTransport: {
-    color: NS.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
   },
 });

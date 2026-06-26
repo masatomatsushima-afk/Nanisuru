@@ -9,6 +9,7 @@ import type {
 } from '@/types/plan';
 import type { PlanCopyMetadata } from '@/types/plan-copy';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import type { CustomTripDuration } from '@/types/trip-schedule';
 
 export type SavedTripPayload = {
   location: string;
@@ -19,6 +20,7 @@ export type SavedTripPayload = {
   companion: CompanionOption;
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
+  customDuration?: CustomTripDuration;
   days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;

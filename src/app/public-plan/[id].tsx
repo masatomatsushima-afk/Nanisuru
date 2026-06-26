@@ -18,6 +18,7 @@ import { ConciergeAnalysisSection } from '@/components/concierge-analysis-sectio
 import { CurrentLocationButton } from '@/components/current-location-button';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { PublicPlanActions } from '@/components/public-plan-actions';
+import { ProfileShowOnProfilePlanButton } from '@/components/profile-show-on-profile-button';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { FollowButton } from '@/components/follow-button';
 import { PublicPlanImageGallery } from '@/components/public-plan-image-gallery';
@@ -31,11 +32,12 @@ import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
-import { getPublicPlanById } from '@/lib/public-plans';
+import { getPublicPlanById, togglePublicPlanShowOnProfile } from '@/lib/public-plans';
 import { copyPublicPlanForEditing } from '@/lib/plan-copy';
 import {
   formatPublicPlanBudget,
   formatPublicPlanDuration,
+  formatPublicPlanSchedule,
   getPublicPlanDestination,
   type PublicPlan,
 } from '@/types/public-plan';
@@ -59,6 +61,7 @@ export default function PublicPlanDetailScreen() {
   const [plan, setPlan] = useState<PublicPlan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCopying, setIsCopying] = useState(false);
+  const [isProfileToggleBusy, setIsProfileToggleBusy] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
@@ -211,6 +214,29 @@ export default function PublicPlanDetailScreen() {
       </View>
 
       <View style={styles.actionsWrap}>
+        {isCreator && plan.visibility === 'public' && plan.isPublic ? (
+          <ProfileShowOnProfilePlanButton
+            visible
+            showOnProfile={plan.showOnProfile !== false}
+            busy={isProfileToggleBusy}
+            onToggle={() => {
+              void (async () => {
+                setIsProfileToggleBusy(true);
+                try {
+                  const nextShow = plan.showOnProfile === false;
+                  setPlan(await togglePublicPlanShowOnProfile(plan.id, nextShow));
+                } catch (error) {
+                  Alert.alert(
+                    'エラー',
+                    error instanceof Error ? error.message : '更新に失敗しました',
+                  );
+                } finally {
+                  setIsProfileToggleBusy(false);
+                }
+              })();
+            }}
+          />
+        ) : null}
         <PrimaryButton
           label={isCopying ? 'コピー中...' : 'このプランをコピーして編集'}
           onPress={() => void handleCopyAndEdit()}
@@ -231,6 +257,14 @@ export default function PublicPlanDetailScreen() {
         <Text style={styles.sectionTitle}>📍 行き先</Text>
         <Text style={styles.sectionBody}>{destination}</Text>
       </View>
+
+      {formatPublicPlanSchedule(plan) ? (
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>📅 日程</Text>
+          <Text style={styles.sectionBody}>{formatPublicPlanSchedule(plan)}</Text>
+          <Text style={styles.sectionMeta}>{formatPublicPlanDuration(plan)}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>💰 予算</Text>
@@ -286,7 +320,18 @@ export default function PublicPlanDetailScreen() {
         {days.length > 0 ? (
           <>
             <CurrentLocationButton compact />
-            <ItineraryDaysView days={days} variant="detail" location={payload.location} />
+            <ItineraryDaysView
+              days={days}
+              variant="detail"
+              location={payload.location}
+              transportContext={{
+                location: payload.location,
+                weather: details.weather,
+                travelTiming: details.travelTiming,
+                companion: payload.companion,
+                budget: payload.budget,
+              }}
+            />
           </>
         ) : (
           <Text style={styles.emptySectionText}>行程データがありません</Text>
@@ -302,7 +347,18 @@ export default function PublicPlanDetailScreen() {
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>🎫 予約・アクセス</Text>
         {days.length > 0 ? (
-          <ConciergeAccessSection days={days} location={payload.location} compact />
+          <ConciergeAccessSection
+            days={days}
+            location={payload.location}
+            compact
+            transportContext={{
+              location: payload.location,
+              weather: details.weather,
+              travelTiming: details.travelTiming,
+              companion: payload.companion,
+              budget: payload.budget,
+            }}
+          />
         ) : (
           <Text style={styles.emptySectionText}>予約・アクセス情報がありません</Text>
         )}
@@ -505,6 +561,12 @@ const styles = StyleSheet.create({
     color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
     lineHeight: 24,
+  },
+  sectionMeta: {
+    color: NS.colors.accent,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: Spacing.one,
   },
   subtitle: {
     color: NS.colors.textSecondary,

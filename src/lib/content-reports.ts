@@ -83,3 +83,16 @@ export async function reportUser(
     details,
   });
 }
+
+export async function reportLocalHiddenSpot(
+  spotId: string,
+  reason: string,
+  details?: string,
+): Promise<void> {
+  await submitContentReport({
+    targetType: 'local_hidden_spot',
+    targetId: spotId,
+    reason,
+    details,
+  });
+}

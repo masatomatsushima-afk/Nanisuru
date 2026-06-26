@@ -226,7 +226,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   rankBadgeTextGold: {
-    color: NS.colors.bg,
+    color: NS.colors.textOnAccent,
   },
   body: {
     paddingHorizontal: Spacing.four,
@@ -323,17 +323,17 @@ const styles = StyleSheet.create({
     gap: Spacing.one,
   },
   tag: {
-    backgroundColor: NS.colors.bgElevated,
+    backgroundColor: NS.colors.skySoft,
     borderRadius: NS.radius.pill,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: NS.colors.border,
+    borderColor: 'rgba(56, 189, 248, 0.28)',
   },
   tagText: {
-    color: NS.colors.textMuted,
+    color: NS.colors.accent,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   footer: {
     flexDirection: 'row',

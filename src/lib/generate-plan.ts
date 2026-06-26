@@ -23,18 +23,55 @@ import {
   resolveBestDayPreferences,
 } from './best-day';
 import { buildConciergePrompt, type PlanInput } from './prompts';
-import { flattenItineraryDays, TRIP_DURATION_CONFIG } from './trip-duration';
+import { flattenItineraryDays, resolveDurationConfig } from './trip-duration';
 import { fetchWeatherForecast, getTodayIsoDate, type WeatherForecast } from './weather';
 import { getUserPreferences } from './user-memory';
 import { getTravelMemories } from './travel-memory';
 import {
+  fetchLocalHiddenSpotsForPlan,
+  shouldPrioritizeLocalHiddenSpots,
+} from './local-hidden-spots';
+import {
+  buildEmptyPlacesContext,
   enrichPlanWithRealPlaceLinks,
   fetchRealPlacesForLocation,
 } from './location-places';
+import {
+  analyzeItineraryBalance,
+  isGourmetTourIntent,
+  ITINERARY_ACTIVITY_CATEGORIES,
+} from './itinerary-balance';
+import {
+  dedupeItineraryPlaces,
+  logItineraryQualityReport,
+  shouldAttemptQualityFix,
+  validateItineraryQuality,
+} from './itinerary-quality';
+import { finalizeItineraryBeforeDisplay } from './finalize-itinerary';
+import { isAbortError } from './plan-generation-progress';
 import { inferCurrencyFromLocation } from './location-currency';
 import { APP_MESSAGES, AppError, classifyError, isNetworkError } from './app-errors';
 import { learnFromCustomPreferences } from './custom-preferences';
+import {
+  buildPlanGenerationLogPayload,
+  logPlanGenerationError,
+  logPlanGenerationStep,
+  normalizePlanGenerationInput,
+  validatePlanGenerationInput,
+} from './plan-generation-log';
 import type { CurrencyCode } from '@/constants/currency';
+import type { CustomTripDuration } from '@/types/trip-schedule';
+import type { TourSuggestion, TravelTimingSettings } from '@/types/travel-timing';
+import {
+  BUDGET_KEY_DESCRIPTIONS,
+  getBreakdownKeysForScope,
+} from './budget-scope';
+import { buildDefaultPreTripBookingLinks } from './pre-trip-links';
+import {
+  generateOutfitPackingAdvice,
+  logOutfitAdviceGenerated,
+} from './outfit-packing-advice';
+import type { BudgetScopeSettings } from '@/types/budget-scope';
 
 export type GeneratedPlan = {
   days: ItineraryDay[];
@@ -54,6 +91,7 @@ type AiPlanResponse = {
   highlights?: string[];
   rainyDayAlternatives?: string[];
   aiAdvice?: AiAdvice;
+  tourSuggestions?: TourSuggestion[];
 };
 
 const ITINERARY_ITEM_SCHEMA = {
@@ -61,6 +99,12 @@ const ITINERARY_ITEM_SCHEMA = {
   properties: {
     time: { type: 'string', description: 'Start time HH:MM' },
     activity: { type: 'string', description: 'Real place name in Japanese — must match provided real places list when available' },
+    activityCategory: {
+      type: 'string',
+      enum: [...ITINERARY_ACTIVITY_CATEGORIES],
+      description:
+        'Itinerary stop category in Japanese: 食事 / カフェ / 散歩 / 体験 / 景色 / 買い物 / 文化 / 休憩 / 夜景 / 移動',
+    },
     placeCategory: {
       type: 'string',
       description:
@@ -103,6 +147,8 @@ const ITINERARY_ITEM_SCHEMA = {
   required: [
     'time',
     'activity',
+    'activityCategory',
+    'placeCategory',
     'reason',
     'estimatedCost',
     'transportation',
@@ -192,12 +238,64 @@ const BUDGET_BREAKDOWN_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+function buildBudgetBreakdownSchema(budgetScope?: BudgetScopeSettings) {
+  if (!budgetScope) {
+    return BUDGET_BREAKDOWN_SCHEMA;
+  }
+
+  const keys = getBreakdownKeysForScope(budgetScope);
+  const properties: Record<string, unknown> = {
+    total: { type: 'string', description: 'Total budget with currency symbol in Japanese' },
+  };
+
+  for (const key of keys) {
+    properties[key] = {
+      type: 'string',
+      description: `${BUDGET_KEY_DESCRIPTIONS[key]}（${symbolHint(key)}）`,
+    };
+  }
+
+  const required = ['total', ...keys];
+
+  if (budgetScope.customItems.length > 0) {
+    properties.customItems = {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          label: { type: 'string' },
+          amount: { type: 'string' },
+        },
+        required: ['label', 'amount'],
+        additionalProperties: false,
+      },
+      minItems: 1,
+      maxItems: Math.max(budgetScope.customItems.length, 1),
+    };
+    required.push('customItems');
+  }
+
+  return {
+    type: 'object',
+    properties,
+    required,
+    additionalProperties: false,
+  };
+}
+
+function symbolHint(_key: string): string {
+  return '現地通貨記号付き';
+}
+
 function buildPlanJsonSchema(
   tripDuration: TripDurationOption,
   includeAiAdvice: boolean,
   overrides?: { dayCount?: number; itemsMin?: number; itemsMax?: number },
+  customDuration?: CustomTripDuration | null,
+  budgetScope?: BudgetScopeSettings,
+  options?: { includeTourSuggestions?: boolean },
 ) {
-  const config = TRIP_DURATION_CONFIG[tripDuration];
+  const config = resolveDurationConfig(tripDuration, customDuration);
   const dayCount = overrides?.dayCount ?? config.dayCount;
   const itemsMin = overrides?.itemsMin ?? config.itemsMin;
   const itemsMax = overrides?.itemsMax ?? config.itemsMax;
@@ -229,7 +327,7 @@ function buildPlanJsonSchema(
       maxItems: dayCount,
     },
     budgetBreakdown: {
-      ...BUDGET_BREAKDOWN_SCHEMA,
+      ...buildBudgetBreakdownSchema(budgetScope),
       description: 'Category budget breakdown optimized for user budget in Japanese',
     },
     totalBudget: {
@@ -275,6 +373,33 @@ function buildPlanJsonSchema(
     required.push('aiAdvice');
   }
 
+  if (options?.includeTourSuggestions) {
+    properties.tourSuggestions = {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          dayNumber: { type: 'number', description: 'Optional day number for the suggestion' },
+          title: { type: 'string', description: 'Tour suggestion title in Japanese' },
+          description: {
+            type: 'string',
+            description: 'Why this tour fits the trip in Japanese, mention booking if needed',
+          },
+          needsBooking: {
+            type: 'boolean',
+            description: 'True if advance booking is likely required',
+          },
+        },
+        required: ['title', 'description', 'needsBooking'],
+        additionalProperties: false,
+      },
+      minItems: 1,
+      maxItems: 4,
+      description: 'Optional tour and local experience suggestions for multi-day trips',
+    };
+    required.push('tourSuggestions');
+  }
+
   return {
     type: 'object',
     properties,
@@ -287,6 +412,7 @@ const SYSTEM_PROMPT =
   'あなたはプロの旅行コンシェルジュです。' +
   '行程作成前に好み・天気・予算・期間・旅行スタイルを分析し、conciergeAnalysis に記載してから itinerary を設計してください。' +
   '各スポットには詳細な選定理由、現実的な概算費用、具体的な交通手段、天候変化時の代替（weatherBackup）を必ず含めてください。' +
+  'プランは食事ばかりにせず、散歩・体験・景色・文化・休憩を織り交ぜた人間らしい1日の流れにすること。' +
   '実在のスポット名、丁寧な日本語、指定JSONスキーマに厳密に従って回答してください。';
 
 const REGENERATE_SYSTEM_PROMPT =
@@ -332,6 +458,7 @@ export async function generateImaHimaPlan(params: {
   availableTime: ImaHimaTimeOption;
   mood: ImaHimaMoodOption;
   customPreferences?: import('@/types/plan-preferences').PlanCustomPreferences;
+  abortSignal?: AbortSignal;
 }): Promise<GeneratedPlan> {
   const moodPrefs = resolveMoodPreferences(params.mood);
   const spontaneous = buildSpontaneousContext(params.availableTime, params.mood);
@@ -355,6 +482,7 @@ export async function generateImaHimaPlan(params: {
     mood: params.mood,
     customPreferences: params.customPreferences,
     spontaneous,
+    abortSignal: params.abortSignal,
   });
 }
 
@@ -397,6 +525,9 @@ function parseAiResponse(
   tripDuration: TripDurationOption,
   tripDate: string,
   weather?: WeatherForecast,
+  tripEndDate?: string,
+  customDuration?: CustomTripDuration,
+  travelTiming?: TravelTimingSettings,
 ): GeneratedPlan {
   const parsed = JSON.parse(content) as AiPlanResponse;
 
@@ -411,6 +542,8 @@ function parseAiResponse(
     items: day.items.map((item) => ({
       time: item.time,
       activity: item.activity,
+      activityCategory: item.activityCategory,
+      placeCategory: item.placeCategory,
       reason: item.reason,
       estimatedCost: item.estimatedCost,
       transportation: item.transportation,
@@ -430,13 +563,17 @@ function parseAiResponse(
       totalBudget:
         parsed.budgetBreakdown?.total ?? parsed.totalBudget ?? '予算目安を算出できませんでした',
       budgetBreakdown: parsed.budgetBreakdown,
-      duration: parsed.duration ?? tripDuration,
+      duration: parsed.duration ?? resolveDurationConfig(tripDuration, customDuration).label,
       tripDuration,
       tripDate,
+      tripEndDate,
+      customDuration,
       weather,
       highlights: parsed.highlights ?? [],
       rainyDayAlternatives: parsed.rainyDayAlternatives ?? [],
       aiAdvice: includeAiAdvice ? parsed.aiAdvice : undefined,
+      tourSuggestions: parsed.tourSuggestions,
+      travelTiming,
     },
   };
 }
@@ -467,56 +604,330 @@ function extractResponseText(data: unknown): string {
 }
 
 function parseApiError(status: number, body: string): never {
+  logPlanGenerationError('openai_api_response', new Error(`HTTP ${status}`), {
+    status,
+    body: body.slice(0, 2000),
+  });
+
   if (status === 0 || status >= 500) {
-    throw new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
+    throw new AppError(APP_MESSAGES.openAiApiFailed, 'OPENAI_FAILED');
   }
 
   try {
-    const error = JSON.parse(body) as { error?: { message?: string } };
+    const error = JSON.parse(body) as { error?: { message?: string; type?: string } };
     const message = error.error?.message;
-    if (message && /rate limit|timeout|overloaded|server/i.test(message)) {
-      throw new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
+    if (message) {
+      if (/rate limit|timeout|overloaded|server/i.test(message)) {
+        throw new AppError(APP_MESSAGES.openAiApiFailed, 'OPENAI_FAILED');
+      }
+      if (/json_schema|schema|required|invalid/i.test(message)) {
+        throw new AppError(
+          `AIプランの形式エラーが発生しました。(${message.slice(0, 120)})`,
+          'OPENAI_FAILED',
+        );
+      }
+      throw new AppError(
+        `AI APIエラー: ${message.slice(0, 160)}`,
+        'OPENAI_FAILED',
+      );
     }
   } catch (parseErr) {
     if (parseErr instanceof AppError) throw parseErr;
   }
 
-  throw new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
+  throw new AppError(APP_MESSAGES.openAiApiFailed, 'OPENAI_FAILED');
 }
 
-export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPlan> {
-  const apiKey = getOpenAiApiKey();
-  if (!apiKey) {
-    throw new AppError(APP_MESSAGES.openAiNotConfigured, 'OPENAI_FAILED');
-  }
+async function fetchPlanFromAi(params: {
+  apiKey: string;
+  systemPrompt: string;
+  planInput: PlanInput;
+  tripDuration: TripDurationOption;
+  includeAiAdvice: boolean;
+  schemaOverrides?: { dayCount?: number; itemsMin?: number; itemsMax?: number };
+  customDuration?: CustomTripDuration;
+  tripDate: string;
+  tripEndDate?: string;
+  weather?: WeatherForecast;
+}): Promise<GeneratedPlan> {
+  const durationConfig = resolveDurationConfig(params.tripDuration, params.customDuration);
+  const isTravelPlan =
+    params.planInput.planCreationType === '旅行プラン' ||
+    params.planInput.planCreationType === '週末プラン';
+  const includeTourSuggestions =
+    isTravelPlan && durationConfig.dayCount >= 3 && !params.planInput.spontaneous && !params.planInput.bestDay;
 
-  let weather: WeatherForecast | undefined;
-  const locationTrimmed = input.location.trim();
-  if (!locationTrimmed) {
-    throw new AppError(APP_MESSAGES.locationRequired, 'NO_PLACES_FOUND');
-  }
+  const userPrompt = buildConciergePrompt(params.planInput);
+  logPlanGenerationStep('openai_request', {
+    systemPromptPreview: params.systemPrompt.slice(0, 600),
+    promptPreview: userPrompt.slice(0, 1200),
+    promptLength: userPrompt.length,
+  });
 
-  let realPlaces;
+  let response: Response;
   try {
-    [weather, realPlaces] = await Promise.all([
-      fetchWeatherForecast({
-        location: locationTrimmed,
-        startDate: input.tripDate,
-        tripDuration: input.tripDuration,
-      }).catch(() => undefined),
-      fetchRealPlacesForLocation(locationTrimmed),
-    ]);
+    response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${params.apiKey}`,
+      },
+      signal: params.planInput.abortSignal,
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        input: [
+          { role: 'system', content: params.systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: params.includeAiAdvice ? 'nanisuru_trip_plan_with_advice' : 'nanisuru_trip_plan',
+            strict: true,
+            schema: buildPlanJsonSchema(
+              params.tripDuration,
+              params.includeAiAdvice,
+              params.schemaOverrides,
+              params.customDuration,
+              params.planInput.budgetScope,
+              { includeTourSuggestions },
+            ),
+          },
+        },
+      }),
+    });
   } catch (err) {
+    logPlanGenerationError('openai_fetch', err);
+    if (params.planInput.abortSignal?.aborted || isAbortError(err)) {
+      throw err;
+    }
     if (isNetworkError(err)) {
       throw new AppError(APP_MESSAGES.networkError, 'NETWORK_ERROR');
     }
     throw classifyError(err);
   }
 
+  if (!response.ok) {
+    const errorBody = await response.text();
+    parseApiError(response.status, errorBody);
+  }
+
+  const data = await response.json();
+  try {
+    return parseAiResponse(
+      extractResponseText(data),
+      params.includeAiAdvice,
+      params.tripDuration,
+      params.tripDate,
+      params.weather,
+      params.tripEndDate,
+      params.customDuration,
+      params.planInput.travelTiming,
+    );
+  } catch (err) {
+    logPlanGenerationError('openai_parse', err, { responsePreview: JSON.stringify(data).slice(0, 800) });
+    throw new AppError(APP_MESSAGES.openAiApiFailed, 'OPENAI_FAILED');
+  }
+}
+
+function attachRealPlaces(plan: GeneratedPlan, realPlaces: NonNullable<PlanInput['realPlaces']>): GeneratedPlan {
+  const days =
+    realPlaces.places.length > 0
+      ? enrichPlanWithRealPlaceLinks(plan.days, realPlaces.places)
+      : plan.days;
+
+  return {
+    ...plan,
+    days,
+    items: flattenItineraryDays(days),
+    details: {
+      ...plan.details,
+      placesNotice: realPlaces.notice ?? plan.details.placesNotice,
+      placesSource: realPlaces.source ?? plan.details.placesSource,
+    },
+  };
+}
+
+function applyDuplicateDedupAndEnrich(
+  plan: GeneratedPlan,
+  realPlaces?: import('@/types/nearby-places').NearbyPlacesContext,
+): GeneratedPlan {
+  const deduped = dedupeItineraryPlaces(plan.days, realPlaces?.places ?? []);
+  let days = deduped.days;
+  if (realPlaces && realPlaces.places.length > 0) {
+    days = enrichPlanWithRealPlaceLinks(days, realPlaces.places);
+  }
+  if (deduped.replacedCount > 0) {
+    logPlanGenerationStep('duplicate_replacement', {
+      replacedCount: deduped.replacedCount,
+    });
+  }
+  return {
+    ...plan,
+    days,
+    items: flattenItineraryDays(days),
+  };
+}
+
+function mergeRegeneratedDays(
+  basePlan: GeneratedPlan,
+  regenerated: GeneratedPlan,
+  targetDayNumbers: number[],
+): GeneratedPlan {
+  const targetSet = new Set(targetDayNumbers);
+  const regenByDay = new Map(regenerated.days.map((day) => [day.dayNumber, day]));
+
+  const days = basePlan.days.map((day) => {
+    if (!targetSet.has(day.dayNumber)) return day;
+    return regenByDay.get(day.dayNumber) ?? day;
+  });
+
+  return {
+    ...basePlan,
+    days,
+    items: flattenItineraryDays(days),
+    details: {
+      ...basePlan.details,
+      ...regenerated.details,
+      outfitAdvice: basePlan.details.outfitAdvice ?? regenerated.details.outfitAdvice,
+      weather: basePlan.details.weather ?? regenerated.details.weather,
+      budgetBreakdown: regenerated.details.budgetBreakdown ?? basePlan.details.budgetBreakdown,
+    },
+  };
+}
+
+async function runQualityPartialRegeneration(params: {
+  instruction: string;
+  basePlan: { days: ItineraryDay[]; details: PlanDetails };
+  enrichedInput: PlanInput;
+  apiKey: string;
+  systemPrompt: string;
+  tripDuration: TripDurationOption;
+  includeAiAdvice: boolean;
+  schemaOverrides?: Parameters<typeof fetchPlanFromAi>[0]['schemaOverrides'];
+  customDuration?: CustomTripDuration;
+  tripDate: string;
+  tripEndDate?: string;
+  weather?: WeatherForecast;
+  realPlaces?: import('@/types/nearby-places').NearbyPlacesContext;
+  targetDayNumbers?: number[];
+  abortSignal?: AbortSignal;
+}): Promise<{ days: ItineraryDay[]; details: PlanDetails }> {
+  if (params.abortSignal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+
+  const partialInput: PlanInput = {
+    ...params.enrichedInput,
+    itineraryQualityFix: {
+      baseDays: params.basePlan.days,
+      baseDetails: params.basePlan.details,
+      issues: [params.instruction],
+      targetDayNumbers: params.targetDayNumbers,
+    },
+  };
+
+  let regen = await fetchPlanFromAi({
+    apiKey: params.apiKey,
+    systemPrompt: `${params.systemPrompt}\n${params.instruction}`,
+    planInput: partialInput,
+    tripDuration: params.tripDuration,
+    includeAiAdvice: params.includeAiAdvice,
+    schemaOverrides: params.schemaOverrides,
+    customDuration: params.customDuration,
+    tripDate: params.tripDate,
+    tripEndDate: params.tripEndDate,
+    weather: params.weather,
+  });
+
+  if (params.realPlaces) {
+    regen = attachRealPlaces(regen, params.realPlaces);
+    regen = applyDuplicateDedupAndEnrich(regen, params.realPlaces);
+  }
+
+  if (params.targetDayNumbers?.length) {
+    regen = mergeRegeneratedDays(
+      { ...params.basePlan, items: flattenItineraryDays(params.basePlan.days) },
+      regen,
+      params.targetDayNumbers,
+    );
+    if (params.realPlaces) {
+      regen = applyDuplicateDedupAndEnrich(regen, params.realPlaces);
+    }
+  }
+
+  return { days: regen.days, details: regen.details };
+}
+
+export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPlan> {
+  const normalized = normalizePlanGenerationInput(input);
+  validatePlanGenerationInput(normalized);
+
+  logPlanGenerationStep('input', buildPlanGenerationLogPayload(normalized));
+
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    throw new AppError(APP_MESSAGES.openAiNotConfigured, 'OPENAI_FAILED');
+  }
+
+  let weather: WeatherForecast | undefined;
+  const locationTrimmed = normalized.location;
+  if (!locationTrimmed) {
+    throw new AppError(APP_MESSAGES.locationRequired, 'NO_PLACES_FOUND');
+  }
+
+  let realPlaces;
+  try {
+    weather = await fetchWeatherForecast({
+      location: locationTrimmed,
+      startDate: input.tripDate,
+      tripDuration: input.tripDuration,
+      endDate: input.tripEndDate,
+      customDuration: input.customDuration,
+    }).catch((err) => {
+      logPlanGenerationError('weather_fetch', err);
+      return undefined;
+    });
+
+    realPlaces = await fetchRealPlacesForLocation(locationTrimmed);
+    logPlanGenerationStep('places', {
+      count: realPlaces.places.length,
+      source: realPlaces.source,
+      notice: realPlaces.notice,
+      sample: realPlaces.places.slice(0, 3).map((place) => place.name),
+    });
+  } catch (err) {
+    logPlanGenerationError('places_fetch', err);
+    if (err instanceof AppError && err.code === 'NO_PLACES_FOUND') {
+      throw err;
+    }
+    realPlaces = buildEmptyPlacesContext(locationTrimmed, APP_MESSAGES.placesFetchWarning);
+  }
+
   const [userPreferences, travelMemories] = await Promise.all([
     getUserPreferences(),
     getTravelMemories(),
   ]);
+
+  const customText = [
+    input.customPreferences?.desiredPlaces,
+    input.customPreferences?.customTravelIntent,
+    input.customPreferences?.customMood,
+    input.mustVisitPlaces,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const prioritizeLocalSpots = shouldPrioritizeLocalHiddenSpots({
+    personality: input.personality,
+    mood: input.mood,
+    travelIntent: input.travelIntent,
+    customText,
+  });
+
+  const localHiddenSpots = prioritizeLocalSpots
+    ? await fetchLocalHiddenSpotsForPlan({ location: locationTrimmed, limit: 8 })
+    : [];
 
   const resolvedCurrency =
     realPlaces?.inferredCurrency ??
@@ -530,12 +941,22 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     realPlaces,
     userPreferences: userPreferences.hasData ? userPreferences : undefined,
     travelMemories: travelMemories.length > 0 ? travelMemories : undefined,
+    localHiddenSpots: localHiddenSpots.length > 0 ? localHiddenSpots : undefined,
+    planType: normalized.planType,
+    travelPurpose: normalized.travelPurpose,
+    departureDate: normalized.departureDate,
+    returnDate: normalized.returnDate,
+    durationLabel: normalized.durationLabel,
+    mustVisitPlaces: normalized.mustVisitPlaces,
+    avoidPreferences: normalized.avoidPreferences,
+    budgetScope: input.budgetScope,
   };
 
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
   const isRegenerate = Boolean(input.avoidActivities && input.avoidActivities.length > 0);
   const isAdjustment = Boolean(input.planAdjustment);
-  const isMultiDay = TRIP_DURATION_CONFIG[input.tripDuration].dayCount > 1 && !input.spontaneous && !input.bestDay;
+  const durationConfig = resolveDurationConfig(input.tripDuration, input.customDuration);
+  const isMultiDay = durationConfig.dayCount > 1 && !input.spontaneous && !input.bestDay;
   const isImaHima = Boolean(input.spontaneous);
   const isBestDay = Boolean(input.bestDay);
 
@@ -598,68 +1019,245 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
 
   systemPrompt = `${systemPrompt} コンシェルジュモード: conciergeAnalysis を完成させてから days を設計。全 item に reservationUrl, websiteUrl, travelTimeToNext, weatherBackup を設定してください。`;
 
-  if (realPlaces) {
-    systemPrompt = `${systemPrompt} 実在スポットリストが提供されています。リスト以外の店名・施設名を一切使用しないこと。activity にはリストの名称をそのまま使用し、架空のスポットは禁止。`;
+  if (realPlaces && realPlaces.places.length > 0) {
+    systemPrompt = `${systemPrompt} 実在スポットリストが提供されています。リスト以外の店名・施設名を一切使用しないこと。activity にはリストの名称をそのまま使用し、架空のスポットは禁止。飲食店だけに偏らず、リスト内の公園・文化・観光スポットも積極的に使うこと。同じスポットを旅全体で2回以上使わないこと。`;
   }
 
-  let response: Response;
-  try {
-    response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        input: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: buildConciergePrompt(enrichedInput) },
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: includeAiAdvice ? 'nanisuru_trip_plan_with_advice' : 'nanisuru_trip_plan',
-            strict: true,
-            schema: buildPlanJsonSchema(input.tripDuration, includeAiAdvice, schemaOverrides),
-          },
-        },
-      }),
-    });
-  } catch (err) {
-    if (isNetworkError(err)) {
-      throw new AppError(APP_MESSAGES.networkError, 'NETWORK_ERROR');
-    }
-    throw classifyError(err);
-  }
+  logPlanGenerationStep('prepared', buildPlanGenerationLogPayload(normalized, {
+    realPlaces,
+    systemPrompt,
+  }));
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    parseApiError(response.status, errorBody);
-  }
-
-  const data = await response.json();
-  const plan = parseAiResponse(
-    extractResponseText(data),
+  let plan = await fetchPlanFromAi({
+    apiKey,
+    systemPrompt,
+    planInput: enrichedInput,
+    tripDuration: input.tripDuration,
     includeAiAdvice,
-    input.tripDuration,
-    input.tripDate,
+    schemaOverrides,
+    customDuration: input.customDuration,
+    tripDate: input.tripDate,
+    tripEndDate: input.tripEndDate,
     weather,
-  );
+  });
 
   if (realPlaces) {
-    plan.days = enrichPlanWithRealPlaceLinks(plan.days, realPlaces.places);
-    plan.items = flattenItineraryDays(plan.days);
-    if (realPlaces.notice || realPlaces.source) {
-      plan.details = {
-        ...plan.details,
-        placesNotice: realPlaces.notice,
-        placesSource: realPlaces.source,
+    plan = attachRealPlaces(plan, realPlaces);
+    plan = applyDuplicateDedupAndEnrich(plan, realPlaces);
+  }
+
+  const gourmetTour = isGourmetTourIntent({
+    personality: input.personality,
+    mood: input.mood,
+    travelIntent: normalized.travelPurpose,
+    customPreferences: input.customPreferences,
+  });
+
+  const shouldBalanceCheck =
+    !input.itineraryBalanceFix &&
+    !input.itineraryQualityFix &&
+    !gourmetTour &&
+    !input.spontaneous &&
+    !input.bestDay;
+
+  if (shouldBalanceCheck && analyzeItineraryBalance(plan.days).isTooFoodHeavy) {
+    if (input.abortSignal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
+    const rebalanceInput: PlanInput = {
+      ...enrichedInput,
+      itineraryBalanceFix: {
+        baseDays: plan.days,
+        baseDetails: plan.details,
+      },
+    };
+
+    plan = await fetchPlanFromAi({
+      apiKey,
+      systemPrompt: `${systemPrompt} 前回のプランは食事偏重だったため、散歩・体験・文化・景色・休憩を増やした人間らしいプランに作り直すこと。`,
+      planInput: rebalanceInput,
+      tripDuration: input.tripDuration,
+      includeAiAdvice,
+      schemaOverrides,
+      customDuration: input.customDuration,
+      tripDate: input.tripDate,
+      tripEndDate: input.tripEndDate,
+      weather,
+    });
+
+    if (realPlaces) {
+      plan = attachRealPlaces(plan, realPlaces);
+      plan = applyDuplicateDedupAndEnrich(plan, realPlaces);
+    }
+  }
+
+  if (!input.spontaneous && !input.bestDay) {
+    plan = applyDuplicateDedupAndEnrich(plan, realPlaces);
+
+    let qualityReport = validateItineraryQuality(plan.days, {
+      travelTiming: input.travelTiming,
+      dayCount: durationConfig.dayCount,
+      gourmetTour,
+    });
+    logItineraryQualityReport(qualityReport);
+
+    const canQualityFix =
+      !input.itineraryQualityFix &&
+      !input.itineraryBalanceFix &&
+      shouldAttemptQualityFix(qualityReport, { gourmetTour });
+
+    if (canQualityFix) {
+      if (input.abortSignal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      const qualityFixInput: PlanInput = {
+        ...enrichedInput,
+        itineraryQualityFix: {
+          baseDays: plan.days,
+          baseDetails: plan.details,
+          issues: qualityReport.issues,
+        },
       };
+
+      plan = await fetchPlanFromAi({
+        apiKey,
+        systemPrompt: `${systemPrompt} 前回のプラン品質に問題があったため、重複排除・エリア多様性・到着出発時間・体験バランスを改善したプランに作り直すこと。`,
+        planInput: qualityFixInput,
+        tripDuration: input.tripDuration,
+        includeAiAdvice,
+        schemaOverrides,
+        customDuration: input.customDuration,
+        tripDate: input.tripDate,
+        tripEndDate: input.tripEndDate,
+        weather,
+      });
+
+      if (realPlaces) {
+        plan = attachRealPlaces(plan, realPlaces);
+        plan = applyDuplicateDedupAndEnrich(plan, realPlaces);
+      }
+
+      qualityReport = validateItineraryQuality(plan.days, {
+        travelTiming: input.travelTiming,
+        dayCount: durationConfig.dayCount,
+        gourmetTour,
+      });
+      logItineraryQualityReport(qualityReport);
     }
   }
 
   void learnFromCustomPreferences(input.customPreferences);
 
-  return plan;
+  const isTravelPlan =
+    input.planCreationType === '旅行プラン' || input.planCreationType === '週末プラン';
+
+  const outfitAdvice = generateOutfitPackingAdvice({
+    days: plan.days,
+    weather: plan.details.weather ?? weather,
+    location: locationTrimmed,
+    planType: input.planCreationType,
+    companion: input.companion,
+    outfitStyleMode: input.outfitStyleMode,
+    dayCount: durationConfig.dayCount,
+    tripDate: input.tripDate,
+  });
+  logOutfitAdviceGenerated(outfitAdvice);
+
+  plan = {
+    ...plan,
+    details: {
+      ...plan.details,
+      budgetScope: input.budgetScope,
+      preTripPlanning: isTravelPlan
+        ? {
+            ...plan.details.preTripPlanning,
+            bookingLinks: buildDefaultPreTripBookingLinks({
+              destination: locationTrimmed,
+              departureDate: input.tripDate,
+              returnDate: input.tripEndDate,
+            }),
+          }
+        : plan.details.preTripPlanning,
+      travelTiming: input.travelTiming,
+      outfitAdvice,
+    },
+  };
+
+  const transportContext = {
+    location: locationTrimmed,
+    weather: plan.details.weather ?? weather,
+    travelTiming: input.travelTiming,
+    companion: input.companion,
+    budget: input.budget,
+  };
+
+  const canRunFinalValidation = !input.spontaneous && !input.bestDay;
+  const { plan: finalizedPlan } = await finalizeItineraryBeforeDisplay({
+    plan,
+    realPlaces,
+    travelTiming: input.travelTiming,
+    dayCount: durationConfig.dayCount,
+    gourmetTour,
+    budgetScope: input.budgetScope,
+    location: locationTrimmed,
+    companion: input.companion,
+    outfitStyleMode: input.outfitStyleMode,
+    planCreationType: input.planCreationType,
+    tripDate: input.tripDate,
+    weather: plan.details.weather ?? weather,
+    transportContext,
+    allowAiPartialFix:
+      canRunFinalValidation &&
+      !input.itineraryQualityFix &&
+      !input.itineraryBalanceFix,
+    onPartialRegenerate: canRunFinalValidation
+      ? async (instruction, basePlan) =>
+          runQualityPartialRegeneration({
+            instruction,
+            basePlan,
+            enrichedInput,
+            apiKey,
+            systemPrompt,
+            tripDuration: input.tripDuration,
+            includeAiAdvice,
+            schemaOverrides,
+            customDuration: input.customDuration,
+            tripDate: input.tripDate,
+            tripEndDate: input.tripEndDate,
+            weather,
+            realPlaces,
+            abortSignal: input.abortSignal,
+          })
+      : undefined,
+    onRegenerateDays: canRunFinalValidation
+      ? async (dayNumbers, instruction, basePlan) =>
+          runQualityPartialRegeneration({
+            instruction,
+            basePlan,
+            enrichedInput,
+            apiKey,
+            systemPrompt,
+            tripDuration: input.tripDuration,
+            includeAiAdvice,
+            schemaOverrides,
+            customDuration: input.customDuration,
+            tripDate: input.tripDate,
+            tripEndDate: input.tripEndDate,
+            weather,
+            realPlaces,
+            targetDayNumbers: dayNumbers,
+            abortSignal: input.abortSignal,
+          })
+      : undefined,
+  });
+
+  return {
+    ...finalizedPlan,
+    items: flattenItineraryDays(finalizedPlan.days),
+  };
 }
+
+/** Alias for generatePlanWithAi — accepts normalized plan creation fields. */
+export const generatePlan = generatePlanWithAi;

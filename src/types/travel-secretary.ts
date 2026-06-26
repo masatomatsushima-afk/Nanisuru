@@ -22,11 +22,14 @@ export type ActiveTripContext = {
   updatedAt: string;
 };
 
+import type { ItineraryEditProposal } from '@/types/itinerary-edit';
+
 export type SecretaryMessage = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   createdAt: string;
+  editProposal?: ItineraryEditProposal;
 };
 
 export const SECRETARY_QUICK_PROMPTS = [

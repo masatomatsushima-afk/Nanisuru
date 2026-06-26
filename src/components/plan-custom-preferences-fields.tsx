@@ -5,10 +5,17 @@ import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
 
+import {
+  SPOT_INTERESTS_LABEL,
+  SPOT_INTERESTS_PLACEHOLDER,
+} from '@/lib/location-input-copy';
+
 type PlanCustomPreferencesFieldsProps = {
   value: PlanCustomPreferences;
   onChange: (next: PlanCustomPreferences) => void;
   showCustomMood?: boolean;
+  showCustomTravelIntent?: boolean;
+  hideDesiredPlaces?: boolean;
 };
 
 function PreferenceField({
@@ -44,6 +51,8 @@ export function PlanCustomPreferencesFields({
   value,
   onChange,
   showCustomMood = true,
+  showCustomTravelIntent = false,
+  hideDesiredPlaces = false,
 }: PlanCustomPreferencesFieldsProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -62,13 +71,22 @@ export function PlanCustomPreferencesFields({
         />
       ) : null}
 
+      {showCustomTravelIntent ? (
+        <PreferenceField
+          label="その他を入力"
+          value={value.customTravelIntent ?? ''}
+          onChangeText={(text) => update({ customTravelIntent: text })}
+          placeholder="例：温泉旅、写真撮影がメイン、子ども向けの施設を中心に"
+        />
+      ) : null}
+
       <Pressable
         style={({ pressed }) => [styles.expandButton, pressed && styles.expandButtonPressed]}
         onPress={() => setExpanded((prev) => !prev)}>
         <Text style={styles.expandIcon}>{expanded ? '▾' : '▸'}</Text>
         <Text style={styles.expandLabel}>もっと詳しく希望を書く</Text>
         {!expanded &&
-        (value.desiredPlaces?.trim() || value.avoidPreferences?.trim()) ? (
+        ((!hideDesiredPlaces && value.desiredPlaces?.trim()) || value.avoidPreferences?.trim()) ? (
           <View style={styles.expandBadge}>
             <Text style={styles.expandBadgeText}>入力あり</Text>
           </View>
@@ -77,12 +95,14 @@ export function PlanCustomPreferencesFields({
 
       {expanded ? (
         <View style={styles.expandedBox}>
-          <PreferenceField
-            label="行きたい場所・気になるお店"
-            value={value.desiredPlaces ?? ''}
-            onChangeText={(text) => update({ desiredPlaces: text })}
-            placeholder="例：Brick Lane Melbourne、海が見えるカフェ、焼肉、古着屋"
-          />
+          {!hideDesiredPlaces ? (
+            <PreferenceField
+              label={SPOT_INTERESTS_LABEL}
+              value={value.desiredPlaces ?? ''}
+              onChangeText={(text) => update({ desiredPlaces: text })}
+              placeholder={SPOT_INTERESTS_PLACEHOLDER}
+            />
+          ) : null}
           <PreferenceField
             label="避けたいこと（任意）"
             value={value.avoidPreferences ?? ''}

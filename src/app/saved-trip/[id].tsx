@@ -11,11 +11,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AddTripSecretaryFolderButton } from '@/components/add-trip-secretary-folder-button';
+import { AfterPlanLaunchButton } from '@/components/after-plan-launch-button';
 import { AiAdviceSection } from '@/components/ai-advice-section';
+import { TripMemoryPanel } from '@/components/trip-memory-panel';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
 import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { ItineraryDaysView } from '@/components/itinerary-days-view';
+import { ItineraryItemEditSheet } from '@/components/itinerary-item-edit-sheet';
 import { InspiredByCredit } from '@/components/inspired-by-credit';
 import { CurrentLocationButton } from '@/components/current-location-button';
 import { PublishPlanSheet } from '@/components/publish-plan-sheet';
@@ -26,13 +30,18 @@ import { WeatherSection } from '@/components/weather-section';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { getDurationDisplayLabel } from '@/lib/trip-duration';
 import { COMPANION_SUBTITLES, PERSONALITY_SUBTITLES } from '@/lib/itineraries';
-import { formatSavedTripDate, formatTripSchedule, getTripById } from '@/lib/saved-trips';
+import { formatSavedTripDate, formatTripSchedule, getTripById, updateTrip } from '@/lib/saved-trips';
 import { ShareTripSection } from '@/components/share-trip-section';
 import { getPublishedPlanForTrip, deletePublicPlan, stopPublicPlan } from '@/lib/public-plans';
 import { MODERATION_STATUS_LABELS } from '@/types/moderation';
 import { buildActiveTripContext, saveActiveTrip } from '@/lib/active-trip';
 import { getActionErrorMessage } from '@/lib/app-errors';
+import { saveItineraryEdit } from '@/lib/itinerary-edits';
+import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
+import { buildItineraryItemId } from '@/types/itinerary-edit';
+import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 
 import type { SavedTrip } from '@/types/trip';
 import type { PublicPlan } from '@/types/public-plan';
@@ -128,6 +137,7 @@ export default function SavedTripDetailScreen() {
       ) : (
         <SavedTripDetailContent
           trip={trip}
+          onTripUpdated={setTrip}
           publishedPlan={publishedPlan}
           setPublishedPlan={setPublishedPlan}
           showPublishSheet={showPublishSheet}
@@ -143,6 +153,7 @@ export default function SavedTripDetailScreen() {
 
 function SavedTripDetailContent({
   trip,
+  onTripUpdated,
   publishedPlan,
   setPublishedPlan,
   showPublishSheet,
@@ -152,6 +163,7 @@ function SavedTripDetailContent({
   insets,
 }: {
   trip: SavedTrip;
+  onTripUpdated: (trip: SavedTrip) => void;
   publishedPlan: PublicPlan | null;
   setPublishedPlan: (plan: PublicPlan | null) => void;
   showPublishSheet: boolean;
@@ -160,9 +172,53 @@ function SavedTripDetailContent({
   setIsModerating: (value: boolean) => void;
   insets: { top: number; bottom: number };
 }) {
+  const { session, isConfigured } = useAuth();
   const { payload } = trip;
   const { details } = payload;
   const days = payload.days?.length > 0 ? payload.days : [];
+  const [editTarget, setEditTarget] = useState<ItineraryEditTarget | null>(null);
+  const [showEditSheet, setShowEditSheet] = useState(false);
+
+  const handleEditItem = (target: ItineraryEditTarget) => {
+    setEditTarget(target);
+    setShowEditSheet(true);
+  };
+
+  const handleApplyEdit = async (result: PartialItineraryEditResult, editRequest: string) => {
+    const nextPayload = applyPartialEditResult(payload, result);
+    const updated = await updateTrip(trip.id, nextPayload);
+    onTripUpdated(updated);
+
+    await saveItineraryEdit({
+      tripId: trip.id,
+      dayIndex: editTarget?.dayIndex ?? 0,
+      itemId: editTarget ? buildItineraryItemId(editTarget) : '',
+      editRequest,
+      beforeData: {
+        day: result.preview.beforeDay,
+        item: result.preview.beforeItem,
+      },
+      afterData: {
+        day: result.preview.afterDay,
+        item: result.preview.afterItem,
+      },
+    });
+
+    await saveActiveTrip(
+      buildActiveTripContext({
+        location: nextPayload.location,
+        budget: nextPayload.budget,
+        currency: nextPayload.currency,
+        people: nextPayload.people,
+        mood: nextPayload.mood,
+        companion: nextPayload.companion,
+        personality: nextPayload.personality,
+        tripDuration: nextPayload.tripDuration,
+        days: nextPayload.days,
+        details: nextPayload.details,
+      }),
+    );
+  };
 
   const runModeration = async (action: () => Promise<void>) => {
     setIsModerating(true);
@@ -201,7 +257,9 @@ function SavedTripDetailContent({
             <Text style={styles.tagText}>{payload.companion}</Text>
           </View>
           <View style={styles.tagMuted}>
-            <Text style={styles.tagMutedText}>{payload.tripDuration}</Text>
+            <Text style={styles.tagMutedText}>
+              {getDurationDisplayLabel(payload.tripDuration, payload.customDuration)}
+            </Text>
           </View>
         </View>
         <Text style={styles.subtitle}>{PERSONALITY_SUBTITLES[payload.personality]}</Text>
@@ -212,8 +270,11 @@ function SavedTripDetailContent({
         <View style={styles.creditWrap}>
           <InspiredByCredit
             metadata={payload.copyMetadata}
-            onPressCreator={() =>
-              router.push(`/creator/${payload.copyMetadata!.sourceCreatorUserId}`)
+            onPressCreator={
+              payload.copyMetadata.sourcePublicPlanId.startsWith('sample:')
+                ? undefined
+                : () =>
+                    router.push(`/creator/${payload.copyMetadata!.sourceCreatorUserId}`)
             }
           />
           <PrimaryButton
@@ -277,13 +338,45 @@ function SavedTripDetailContent({
         <Text style={styles.sectionTitle}>🗓 行程</Text>
         {days.length > 0 ? (
           <>
+            <AfterPlanLaunchButton location={payload.location} baseTripId={trip.id} />
             <CurrentLocationButton compact />
-            <ItineraryDaysView days={days} variant="detail" location={payload.location} />
+            <ItineraryDaysView
+              days={days}
+              variant="detail"
+              location={payload.location}
+              editable
+              onEditItem={handleEditItem}
+              transportContext={{
+                location: payload.location,
+                weather: details.weather,
+                travelTiming: details.travelTiming,
+                companion: payload.companion,
+                budget: payload.budget,
+              }}
+            />
           </>
         ) : (
           <Text style={styles.emptySectionText}>行程データがありません</Text>
         )}
       </View>
+
+      {session ? (
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>🛎 旅行秘書</Text>
+          <AddTripSecretaryFolderButton variant="saved-trip" trip={trip} />
+        </View>
+      ) : null}
+
+      {session ? (
+        <View style={styles.sectionCard}>
+          <TripMemoryPanel
+            trip={trip}
+            userId={session.user.id}
+            isConfigured={isConfigured}
+            compact
+          />
+        </View>
+      ) : null}
 
       {details.aiAdvice ? (
         <View style={styles.adviceWrap}>
@@ -294,7 +387,18 @@ function SavedTripDetailContent({
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>🎫 予約・アクセス</Text>
         {days.length > 0 ? (
-          <ConciergeAccessSection days={days} location={payload.location} compact />
+          <ConciergeAccessSection
+            days={days}
+            location={payload.location}
+            compact
+            transportContext={{
+              location: payload.location,
+              weather: details.weather,
+              travelTiming: details.travelTiming,
+              companion: payload.companion,
+              budget: payload.budget,
+            }}
+          />
         ) : (
           <Text style={styles.emptySectionText}>予約・アクセス情報がありません</Text>
         )}
@@ -449,6 +553,17 @@ function SavedTripDetailContent({
         onPublished={() => {
           void getPublishedPlanForTrip(trip.id).then(setPublishedPlan);
         }}
+      />
+
+      <ItineraryItemEditSheet
+        visible={showEditSheet}
+        target={editTarget}
+        payload={payload}
+        onClose={() => {
+          setShowEditSheet(false);
+          setEditTarget(null);
+        }}
+        onApply={handleApplyEdit}
       />
 
       <View style={styles.shareWrap}>
