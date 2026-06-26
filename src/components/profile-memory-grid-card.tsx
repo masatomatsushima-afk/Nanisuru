@@ -1,6 +1,6 @@
-import { Image } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { VisualCover } from '@/components/ui/visual-cover';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import type { TripMemory } from '@/types/trip-memory';
@@ -13,20 +13,18 @@ type ProfileMemoryGridCardProps = {
 export function ProfileMemoryGridCard({ memory, onPress }: ProfileMemoryGridCardProps) {
   return (
     <Pressable style={styles.card} onPress={onPress}>
-      <View style={styles.coverWrap}>
-        {memory.coverImageUrl ? (
-          <Image source={{ uri: memory.coverImageUrl }} style={styles.cover} contentFit="cover" />
-        ) : (
-          <View style={styles.coverPlaceholder}>
-            <Text style={styles.coverEmoji}>📸</Text>
-          </View>
-        )}
-        <View style={styles.overlay}>
-          <Text style={styles.overlayTitle} numberOfLines={2}>
-            {memory.title || memory.destination}
-          </Text>
-        </View>
-      </View>
+      <VisualCover
+        height={132}
+        imageUrl={memory.coverImageUrl}
+        theme="memory"
+        seed={memory.id}
+        overlay="bottom"
+        showEmoji={!memory.coverImageUrl}
+        borderRadius={NS.lifestyle.tileRadius}>
+        <Text style={styles.overlayTitle} numberOfLines={2}>
+          {memory.title || memory.destination}
+        </Text>
+      </VisualCover>
       <View style={styles.body}>
         <Text style={styles.destination} numberOfLines={1}>
           📍 {memory.destination}
@@ -51,42 +49,19 @@ const styles = StyleSheet.create({
     minWidth: '47%',
     maxWidth: '48%',
     backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.xl,
+    borderRadius: NS.lifestyle.tileRadius,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: NS.colors.border,
-    ...NS.shadow.card,
-  },
-  coverWrap: {
-    height: 150,
-    position: 'relative',
-  },
-  cover: {
-    width: '100%',
-    height: '100%',
-  },
-  coverPlaceholder: {
-    flex: 1,
-    backgroundColor: NS.colors.coralSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  coverEmoji: {
-    fontSize: 28,
-  },
-  overlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    padding: Spacing.two,
-    backgroundColor: 'rgba(15, 23, 42, 0.35)',
+    ...NS.shadow.cardLg,
+    shadowOpacity: 0.1,
   },
   overlayTitle: {
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#FFFFFF',
     lineHeight: 16,
+    textShadowColor: 'rgba(15, 23, 42, 0.35)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   body: {
     padding: Spacing.two,

@@ -1,11 +1,10 @@
-import { Image } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { VisualCover } from '@/components/ui/visual-cover';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { getPublicPlanDestination } from '@/types/public-plan';
 import type { ProfileSavedItem } from '@/types/profile-portfolio';
-import { getLocalHiddenSpotCategoryIcon } from '@/types/local-hidden-spot';
 
 type ProfileSavedGridCardProps = {
   item: ProfileSavedItem;
@@ -17,18 +16,18 @@ export function ProfileSavedGridCard({ item, onPress }: ProfileSavedGridCardProp
     const coverUrl = item.plan.images?.[0]?.imageUrl;
     return (
       <Pressable style={styles.card} onPress={onPress}>
-        <View style={styles.coverWrap}>
-          {coverUrl ? (
-            <Image source={{ uri: coverUrl }} style={styles.cover} contentFit="cover" />
-          ) : (
-            <View style={[styles.coverPlaceholder, styles.planBg]}>
-              <Text style={styles.emoji}>🗺️</Text>
-            </View>
-          )}
+        <VisualCover
+          height={112}
+          imageUrl={coverUrl}
+          category={item.plan.category}
+          seed={item.plan.id}
+          overlay="bottom"
+          showEmoji={!coverUrl}
+          borderRadius={NS.lifestyle.tileRadius}>
           <View style={styles.typeBadge}>
             <Text style={styles.typeText}>プラン</Text>
           </View>
-        </View>
+        </VisualCover>
         <Text style={styles.title} numberOfLines={2}>
           {item.plan.title}
         </Text>
@@ -42,18 +41,18 @@ export function ProfileSavedGridCard({ item, onPress }: ProfileSavedGridCardProp
   if (item.type === 'memory') {
     return (
       <Pressable style={styles.card} onPress={onPress}>
-        <View style={styles.coverWrap}>
-          {item.memory.coverImageUrl ? (
-            <Image source={{ uri: item.memory.coverImageUrl }} style={styles.cover} contentFit="cover" />
-          ) : (
-            <View style={[styles.coverPlaceholder, styles.memoryBg]}>
-              <Text style={styles.emoji}>📸</Text>
-            </View>
-          )}
+        <VisualCover
+          height={112}
+          imageUrl={item.memory.coverImageUrl}
+          theme="memory"
+          seed={item.memory.id}
+          overlay="bottom"
+          showEmoji={!item.memory.coverImageUrl}
+          borderRadius={NS.lifestyle.tileRadius}>
           <View style={styles.typeBadge}>
             <Text style={styles.typeText}>思い出</Text>
           </View>
-        </View>
+        </VisualCover>
         <Text style={styles.title} numberOfLines={2}>
           {item.memory.title || item.memory.destination}
         </Text>
@@ -66,14 +65,19 @@ export function ProfileSavedGridCard({ item, onPress }: ProfileSavedGridCardProp
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
-      <View style={styles.coverWrap}>
-        <View style={[styles.coverPlaceholder, styles.spotBg]}>
-          <Text style={styles.emoji}>{getLocalHiddenSpotCategoryIcon(item.spot.category)}</Text>
-        </View>
+      <VisualCover
+        height={112}
+        imageUrl={item.spot.imageUrl}
+        category={item.spot.category}
+        seed={item.spot.id}
+        theme="local"
+        overlay="bottom"
+        showEmoji={!item.spot.imageUrl}
+        borderRadius={NS.lifestyle.tileRadius}>
         <View style={styles.typeBadge}>
           <Text style={styles.typeText}>穴場</Text>
         </View>
-      </View>
+      </VisualCover>
       <Text style={styles.title} numberOfLines={2}>
         {item.spot.name}
       </Text>
@@ -90,43 +94,14 @@ const styles = StyleSheet.create({
     minWidth: '47%',
     maxWidth: '48%',
     backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.xl,
+    borderRadius: NS.lifestyle.tileRadius,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: NS.colors.border,
     paddingBottom: Spacing.two,
-    ...NS.shadow.card,
-  },
-  coverWrap: {
-    height: 120,
-    position: 'relative',
-    marginBottom: Spacing.two,
-  },
-  cover: {
-    width: '100%',
-    height: '100%',
-  },
-  coverPlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  planBg: {
-    backgroundColor: NS.colors.skySoft,
-  },
-  memoryBg: {
-    backgroundColor: NS.colors.coralSoft,
-  },
-  spotBg: {
-    backgroundColor: NS.colors.mintSoft,
-  },
-  emoji: {
-    fontSize: 28,
+    ...NS.shadow.cardLg,
+    shadowOpacity: 0.1,
   },
   typeBadge: {
-    position: 'absolute',
-    left: Spacing.two,
-    top: Spacing.two,
+    alignSelf: 'flex-start',
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: NS.radius.pill,
     paddingHorizontal: Spacing.two,
@@ -143,6 +118,7 @@ const styles = StyleSheet.create({
     color: NS.colors.text,
     lineHeight: 17,
     paddingHorizontal: Spacing.two,
+    marginTop: Spacing.two,
   },
   meta: {
     fontSize: 11,

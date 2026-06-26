@@ -1,6 +1,6 @@
-import { Image } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { VisualCover } from '@/components/ui/visual-cover';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { getPublicPlanDestination, type PublicPlan } from '@/types/public-plan';
@@ -16,18 +16,18 @@ export function ProfilePlanGridCard({ plan, onPress }: ProfilePlanGridCardProps)
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
-      <View style={styles.coverWrap}>
-        {coverUrl ? (
-          <Image source={{ uri: coverUrl }} style={styles.cover} contentFit="cover" />
-        ) : (
-          <View style={styles.coverPlaceholder}>
-            <Text style={styles.coverEmoji}>🗺️</Text>
-          </View>
-        )}
+      <VisualCover
+        height={120}
+        imageUrl={coverUrl}
+        category={plan.category}
+        seed={plan.id}
+        overlay="bottom"
+        showEmoji={!coverUrl}
+        borderRadius={NS.lifestyle.tileRadius}>
         <View style={styles.categoryBadge}>
           <Text style={styles.categoryText}>{plan.category}</Text>
         </View>
-      </View>
+      </VisualCover>
       <View style={styles.body}>
         <Text style={styles.title} numberOfLines={2}>
           {plan.title}
@@ -53,33 +53,13 @@ const styles = StyleSheet.create({
     minWidth: '47%',
     maxWidth: '48%',
     backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.xl,
+    borderRadius: NS.lifestyle.tileRadius,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: NS.colors.border,
-    ...NS.shadow.card,
-  },
-  coverWrap: {
-    height: 130,
-    position: 'relative',
-  },
-  cover: {
-    width: '100%',
-    height: '100%',
-  },
-  coverPlaceholder: {
-    flex: 1,
-    backgroundColor: NS.colors.skySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  coverEmoji: {
-    fontSize: 28,
+    ...NS.shadow.cardLg,
+    shadowOpacity: 0.1,
   },
   categoryBadge: {
-    position: 'absolute',
-    left: Spacing.two,
-    bottom: Spacing.two,
+    alignSelf: 'flex-start',
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: NS.radius.pill,
     paddingHorizontal: Spacing.two,

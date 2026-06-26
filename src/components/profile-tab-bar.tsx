@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
 
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
@@ -14,7 +14,11 @@ export function ProfileTabBar({ activeTab, isSelf, onChange }: ProfileTabBarProp
   const tabs = PROFILE_TABS.filter((tab) => isSelf || !tab.ownerOnly);
 
   return (
-    <View style={styles.wrap}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.scroll}
+      style={styles.wrap}>
       {tabs.map((tab) => {
         const active = activeTab === tab.id;
         return (
@@ -26,30 +30,34 @@ export function ProfileTabBar({ activeTab, isSelf, onChange }: ProfileTabBarProp
           </Pressable>
         );
       })}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: NS.colors.border,
     marginBottom: Spacing.three,
+    flexGrow: 0,
+  },
+  scroll: {
+    gap: Spacing.one,
+    paddingVertical: Spacing.one,
   },
   tab: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: Spacing.three,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.pill,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one + 2,
   },
   tabActive: {
-    borderBottomColor: NS.colors.accent,
+    backgroundColor: NS.colors.accentSoft,
+    borderColor: NS.colors.accentBorder,
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
     color: NS.colors.textMuted,
   },
   tabTextActive: {

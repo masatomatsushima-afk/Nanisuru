@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ProfileEmptyState } from '@/components/profile-empty-state';
 import { ProfileHeader } from '@/components/profile-header';
 import { ProfileMemoryGridCard } from '@/components/profile-memory-grid-card';
 import { ProfilePlanGridCard } from '@/components/profile-plan-grid-card';
@@ -24,12 +25,12 @@ import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { getActionErrorMessage } from '@/lib/app-errors';
+import { reportUser } from '@/lib/content-reports';
 import { fetchLocalHiddenSpotsByUserId } from '@/lib/local-hidden-spots';
 import { fetchUserSavedPortfolioItems } from '@/lib/profile-saves';
 import { fetchPublicPlansByUserId } from '@/lib/public-plans';
-import { reportUser } from '@/lib/content-reports';
-import { blockUser } from '@/lib/user-blocks';
 import { fetchProfilePublicMemoriesByUserId } from '@/lib/trip-memories';
+import { blockUser } from '@/lib/user-blocks';
 import { getUserProfileById } from '@/lib/user-profiles';
 import { PLAN_REPORT_REASONS } from '@/types/moderation';
 import type { ProfileSavedItem, ProfileTabId } from '@/types/profile-portfolio';
@@ -37,15 +38,6 @@ import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
 import type { PublicPlan } from '@/types/public-plan';
 import type { TripMemory } from '@/types/trip-memory';
 import type { UserProfile } from '@/types/user-profile';
-
-function ProfileEmptyState({ emoji, message }: { emoji: string; message: string }) {
-  return (
-    <View style={styles.emptyBox}>
-      <Text style={styles.emptyEmoji}>{emoji}</Text>
-      <Text style={styles.emptyText}>{message}</Text>
-    </View>
-  );
-}
 
 export default function CreatorProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -87,7 +79,12 @@ export default function CreatorProfileScreen() {
         fetchLocalHiddenSpotsByUserId(id),
       ]);
 
-      if (!loadedProfile && loadedPlans.length === 0 && loadedMemories.length === 0 && loadedSpots.length === 0) {
+      if (
+        !loadedProfile &&
+        loadedPlans.length === 0 &&
+        loadedMemories.length === 0 &&
+        loadedSpots.length === 0
+      ) {
         setNotFound(true);
         setProfile(null);
         setPlans([]);
@@ -132,33 +129,38 @@ export default function CreatorProfileScreen() {
 
   if (isLoading) {
     return (
-      <View style={[styles.centered, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={NS.colors.accent} />
-        <Text style={styles.loadingText}>プロフィールを読み込み中...</Text>
-      </View>
+      <ScreenBackground>
+        <View style={[styles.centered, { paddingTop: insets.top }]}>
+          <ActivityIndicator size="large" color={NS.colors.accent} />
+          <Text style={styles.loadingText}>プロフィールを読み込み中...</Text>
+        </View>
+      </ScreenBackground>
     );
   }
 
   if (loadError) {
     return (
-      <View style={[styles.centered, styles.container, { paddingTop: insets.top + Spacing.four }]}>
-        <ErrorStateCard message={loadError} onRetry={() => void loadProfile()} />
-        <Pressable style={styles.homeButton} onPress={() => router.back()}>
-          <Text style={styles.homeButtonText}>戻る</Text>
-        </Pressable>
-      </View>
+      <ScreenBackground>
+        <View style={[styles.centered, { paddingTop: insets.top + Spacing.four }]}>
+          <ErrorStateCard message={loadError} onRetry={() => void loadProfile()} />
+          <Pressable style={styles.backBtn} onPress={() => router.back()}>
+            <Text style={styles.backBtnText}>戻る</Text>
+          </Pressable>
+        </View>
+      </ScreenBackground>
     );
   }
 
   if (notFound) {
     return (
-      <View style={[styles.centered, styles.container, { paddingTop: insets.top + Spacing.four }]}>
-        <Text style={styles.notFoundIcon}>👤</Text>
-        <Text style={styles.errorTitle}>プロフィールが見つかりません</Text>
-        <Pressable style={styles.homeButton} onPress={() => router.back()}>
-          <Text style={styles.homeButtonText}>戻る</Text>
-        </Pressable>
-      </View>
+      <ScreenBackground>
+        <View style={[styles.centered, { paddingTop: insets.top + Spacing.four }]}>
+          <ProfileEmptyState emoji="👤" title="プロフィールが見つかりません" />
+          <Pressable style={styles.backBtn} onPress={() => router.back()}>
+            <Text style={styles.backBtnText}>戻る</Text>
+          </Pressable>
+        </View>
+      </ScreenBackground>
     );
   }
 
@@ -190,7 +192,7 @@ export default function CreatorProfileScreen() {
     switch (activeTab) {
       case 'plans':
         return plans.length === 0 ? (
-          <ProfileEmptyState emoji="🗺️" message="まだ公開プランはありません" />
+          <ProfileEmptyState emoji="🗺️" title="まだ公開プランはありません" />
         ) : (
           <View style={styles.grid}>
             {plans.map((plan) => (
@@ -204,7 +206,7 @@ export default function CreatorProfileScreen() {
         );
       case 'memories':
         return memories.length === 0 ? (
-          <ProfileEmptyState emoji="📸" message="まだ思い出はありません" />
+          <ProfileEmptyState emoji="📸" title="まだ思い出はありません" />
         ) : (
           <View style={styles.grid}>
             {memories.map((memory) => (
@@ -218,7 +220,7 @@ export default function CreatorProfileScreen() {
         );
       case 'spots':
         return spots.length === 0 ? (
-          <ProfileEmptyState emoji="🌿" message="まだ穴場スポットはありません" />
+          <ProfileEmptyState emoji="🌿" title="まだ穴場スポットはありません" />
         ) : (
           <View style={styles.grid}>
             {spots.map((spot, index) => (
@@ -233,7 +235,7 @@ export default function CreatorProfileScreen() {
         );
       case 'saved':
         return savedItems.length === 0 ? (
-          <ProfileEmptyState emoji="🔖" message="まだ保存したコンテンツはありません" />
+          <ProfileEmptyState emoji="🔖" title="まだ保存したコンテンツはありません" />
         ) : (
           <View style={styles.grid}>
             {savedItems.map((item) => (
@@ -261,13 +263,13 @@ export default function CreatorProfileScreen() {
         contentContainerStyle={[
           styles.content,
           {
-            paddingTop: insets.top + Spacing.three,
+            paddingTop: insets.top + Spacing.two,
             paddingBottom: insets.bottom + Spacing.five,
           },
         ]}
         showsVerticalScrollIndicator={false}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>← 戻る</Text>
+        <Pressable style={styles.backLink} onPress={() => router.back()}>
+          <Text style={styles.backLinkText}>← 戻る</Text>
         </Pressable>
 
         <ProfileHeader
@@ -323,7 +325,10 @@ export default function CreatorProfileScreen() {
                       onPress: () => {
                         void blockUser(displayProfile.userId)
                           .then(() => {
-                            Alert.alert('ブロックしました', 'このユーザーのコンテンツは表示されなくなりました。');
+                            Alert.alert(
+                              'ブロックしました',
+                              'このユーザーのコンテンツは表示されなくなりました。',
+                            );
                             router.back();
                           })
                           .catch((error) => {
@@ -361,88 +366,60 @@ export default function CreatorProfileScreen() {
   );
 }
 
-const accent = NS.colors.accent;
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: 'transparent',
   },
   centered: {
     flex: 1,
-    backgroundColor: NS.colors.bg,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.four,
   },
   content: {
-    paddingHorizontal: Spacing.four,
-    maxWidth: 520,
+    paddingHorizontal: NS.layout.screenPadding,
+    maxWidth: NS.layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
+    gap: Spacing.two,
   },
   loadingText: {
     color: NS.colors.textSecondary,
     marginTop: Spacing.three,
     fontSize: 14,
   },
-  backButton: {
+  backLink: {
     alignSelf: 'flex-start',
-    paddingVertical: Spacing.two,
-    marginBottom: Spacing.two,
+    paddingVertical: Spacing.one,
   },
-  backButtonText: {
-    color: accent,
-    fontSize: 16,
-    fontWeight: '600',
+  backLinkText: {
+    color: NS.colors.accent,
+    fontSize: 15,
+    fontWeight: '700',
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.three,
+    gap: Spacing.two,
     justifyContent: 'space-between',
   },
-  emptyBox: {
-    backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.xl,
-    borderWidth: 1,
-    borderColor: NS.colors.border,
-    padding: Spacing.six,
-    alignItems: 'center',
-    gap: Spacing.two,
-  },
-  emptyEmoji: {
-    fontSize: 32,
-  },
-  emptyText: {
-    color: NS.colors.textMuted,
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  notFoundIcon: {
-    fontSize: 40,
-    marginBottom: Spacing.three,
-  },
-  errorTitle: {
-    color: NS.colors.text,
-    fontSize: 20,
-    fontWeight: '800',
-    marginBottom: Spacing.four,
-  },
-  homeButton: {
+  backBtn: {
+    marginTop: Spacing.four,
     backgroundColor: NS.colors.accentSoft,
-    borderRadius: NS.radius.md,
+    borderRadius: NS.radius.pill,
     paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
+    paddingVertical: Spacing.two + 2,
     borderWidth: 1,
     borderColor: NS.colors.accentBorder,
   },
-  homeButtonText: {
-    color: accent,
-    fontSize: 15,
-    fontWeight: '700',
+  backBtnText: {
+    color: NS.colors.accent,
+    fontSize: 14,
+    fontWeight: '800',
   },
   safetySection: {
-    marginTop: Spacing.five,
+    marginTop: Spacing.four,
     gap: Spacing.two,
     paddingTop: Spacing.four,
     borderTopWidth: 1,
@@ -452,20 +429,19 @@ const styles = StyleSheet.create({
     color: NS.colors.textMuted,
     fontSize: 12,
     fontWeight: '700',
-    marginBottom: Spacing.one,
   },
   safetyButton: {
     backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.md,
+    borderRadius: NS.radius.pill,
     borderWidth: 1,
     borderColor: NS.colors.border,
-    paddingVertical: Spacing.three,
+    paddingVertical: Spacing.two + 2,
     paddingHorizontal: Spacing.four,
   },
   safetyButtonText: {
     color: NS.colors.textSecondary,
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     textAlign: 'center',
   },
 });

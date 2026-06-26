@@ -1,9 +1,9 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { NS, getChipPalette } from '@/constants/nanisuru-ui';
+import { VisualCover } from '@/components/ui/visual-cover';
+import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
-import { getLocalHiddenSpotCategoryIcon } from '@/types/local-hidden-spot';
 
 type ProfileSpotGridCardProps = {
   spot: LocalHiddenSpot;
@@ -12,17 +12,21 @@ type ProfileSpotGridCardProps = {
 };
 
 export function ProfileSpotGridCard({ spot, index, onPress }: ProfileSpotGridCardProps) {
-  const palette = getChipPalette(index);
-  const icon = getLocalHiddenSpotCategoryIcon(spot.category);
-
   return (
     <Pressable style={styles.card} onPress={onPress}>
-      <View style={[styles.hero, { backgroundColor: palette.bg }]}>
-        <Text style={styles.heroIcon}>{icon}</Text>
-        <View style={[styles.categoryBadge, { borderColor: palette.border }]}>
-          <Text style={[styles.categoryText, { color: palette.text }]}>{spot.category}</Text>
+      <VisualCover
+        height={96}
+        imageUrl={spot.imageUrl}
+        category={spot.category}
+        seed={spot.id}
+        theme="local"
+        overlay="bottom"
+        showEmoji={!spot.imageUrl}
+        borderRadius={NS.lifestyle.tileRadius}>
+        <View style={styles.categoryBadge}>
+          <Text style={styles.categoryText}>{spot.category}</Text>
         </View>
-      </View>
+      </VisualCover>
       <View style={styles.body}>
         <Text style={styles.title} numberOfLines={2}>
           {spot.name}
@@ -54,34 +58,22 @@ const styles = StyleSheet.create({
     minWidth: '47%',
     maxWidth: '48%',
     backgroundColor: NS.colors.bgElevated,
-    borderRadius: NS.radius.xl,
+    borderRadius: NS.lifestyle.tileRadius,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: NS.colors.border,
-    ...NS.shadow.card,
-  },
-  hero: {
-    height: 90,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  heroIcon: {
-    fontSize: 30,
+    ...NS.shadow.cardLg,
+    shadowOpacity: 0.1,
   },
   categoryBadge: {
-    position: 'absolute',
-    right: Spacing.two,
-    top: Spacing.two,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.92)',
     borderRadius: NS.radius.pill,
     paddingHorizontal: Spacing.two,
     paddingVertical: 3,
-    borderWidth: 1,
   },
   categoryText: {
     fontSize: 10,
     fontWeight: '800',
+    color: '#047857',
   },
   body: {
     padding: Spacing.two,
@@ -104,7 +96,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   tag: {
-    backgroundColor: NS.colors.bgInput,
+    backgroundColor: NS.colors.mintSoft,
     borderRadius: NS.radius.pill,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -112,7 +104,7 @@ const styles = StyleSheet.create({
   tagText: {
     fontSize: 9,
     fontWeight: '700',
-    color: NS.colors.textMuted,
+    color: '#047857',
   },
   statsRow: {
     flexDirection: 'row',

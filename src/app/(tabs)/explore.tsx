@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -10,28 +10,30 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DiscoverLocalSpotsSection } from '@/components/discover-local-spots-section';
-import { DiscoverTripMemoriesSection } from '@/components/discover-trip-memories-section';
-import { DiscoverEmptyInspirationSection } from '@/components/discover-empty-inspiration-section';
-import { DiscoverRankingSection } from '@/components/discover-ranking-section';
-import { DiscoverRecommendationsSection } from '@/components/discover-recommendations-section';
+import {
+  DiscoverCategoryChips,
+  type DiscoverTopCategoryId,
+} from '@/components/discover/discover-category-chips';
+import { DiscoverCompactPlanCard } from '@/components/discover/discover-compact-plan-card';
+import { DiscoverEmptyState } from '@/components/discover/discover-empty-state';
+import { DiscoverFeaturedRow } from '@/components/discover/discover-featured-row';
+import { DiscoverHeader } from '@/components/discover/discover-header';
+import { DiscoverLocalCompact } from '@/components/discover/discover-local-compact';
+import { DiscoverMemoriesCompact } from '@/components/discover/discover-memories-compact';
 import { DiscoverSearchFilters } from '@/components/discover-search-filters';
-import { DiscoverTrendingSection } from '@/components/discover-trending-section';
-import { PublicPlanCard } from '@/components/public-plan-card';
+import { LifestyleSectionHeader } from '@/components/ui/lifestyle-section-header';
 import { ScreenBackground } from '@/components/ui/screen-background';
-import { FadeInView } from '@/components/ui/fade-in-view';
-import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
+import { PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { useUserLocation } from '@/contexts/user-location-context';
 import { applyDiscoverFilters, countActiveDiscoverFilters } from '@/lib/discover-filters';
-import { buildDiscoverRecommendations } from '@/lib/discover-recommendations';
+import { buildTrendingPlans } from '@/lib/discover-ranking';
 import {
-  buildPopularCreatorIds,
-  buildRankedPlans,
-  buildTrendingPlans,
-} from '@/lib/discover-ranking';
+  filtersForDiscoverCategory,
+  isMemoryCategory,
+} from '@/lib/discover-top-category';
 import { notifyRankingEntries } from '@/lib/notifications';
 import { fetchPublicPlans } from '@/lib/public-plans';
 import {
@@ -39,7 +41,6 @@ import {
   type DiscoverFilterState,
 } from '@/types/discover-filters';
 import type { RankedPublicPlan } from '@/types/discover-ranking';
-import type { DiscoverRecommendationsResult } from '@/types/discover-recommendations';
 import type { PublicPlan } from '@/types/public-plan';
 
 export default function DiscoverScreen() {
@@ -47,15 +48,18 @@ export default function DiscoverScreen() {
   const { isConfigured, session } = useAuth();
   const { location, fetchLocation } = useUserLocation();
   const currentUserId = session?.user.id ?? null;
+  const scrollRef = useRef<ScrollView>(null);
+  const memoriesAnchorY = useRef(0);
+
   const [allPlans, setAllPlans] = useState<PublicPlan[]>([]);
   const [filters, setFilters] = useState<DiscoverFilterState>(DEFAULT_DISCOVER_FILTERS);
+  const [topCategory, setTopCategory] = useState<DiscoverTopCategoryId>('recommend');
   const [trending, setTrending] = useState<RankedPublicPlan[]>([]);
-  const [recommendations, setRecommendations] = useState<DiscoverRecommendationsResult | null>(null);
-  const [isRecommendationsLoading, setIsRecommendationsLoading] = useState(false);
-  const [popularCreatorIds, setPopularCreatorIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
 
   const displayedPlans = useMemo(
     () => applyDiscoverFilters(allPlans, filters),
@@ -63,36 +67,11 @@ export default function DiscoverScreen() {
   );
 
   const hasActiveFilters = countActiveDiscoverFilters(filters) > 0;
-
-  const loadRecommendations = useCallback(
-    async (plans: PublicPlan[], trendingPlans: RankedPublicPlan[]) => {
-      setIsRecommendationsLoading(true);
-      try {
-        setRecommendations(
-          await buildDiscoverRecommendations({
-            plans,
-            trendingPlans,
-            currentUserId,
-            filters,
-            location,
-          }),
-        );
-      } catch {
-        setRecommendations(null);
-      } finally {
-        setIsRecommendationsLoading(false);
-      }
-    },
-    [currentUserId, filters, location],
-  );
+  const showMemoriesSection = isMemoryCategory(topCategory);
 
   const loadRankingMeta = useCallback(async (plans: PublicPlan[]) => {
-    const [trendingPlans, overallRanked] = await Promise.all([
-      buildTrendingPlans(plans),
-      buildRankedPlans(plans, 'overall', 'week'),
-    ]);
+    const trendingPlans = await buildTrendingPlans(plans);
     setTrending(trendingPlans);
-    setPopularCreatorIds(buildPopularCreatorIds(overallRanked));
 
     if (currentUserId) {
       void notifyRankingEntries(
@@ -106,17 +85,12 @@ export default function DiscoverScreen() {
       if (!isConfigured) {
         setAllPlans([]);
         setTrending([]);
-        setRecommendations(null);
-        setPopularCreatorIds(new Set());
         setIsLoading(false);
         return;
       }
 
-      if (refresh) {
-        setIsRefreshing(true);
-      } else {
-        setIsLoading(true);
-      }
+      if (refresh) setIsRefreshing(true);
+      else setIsLoading(true);
       setError(null);
 
       try {
@@ -127,8 +101,6 @@ export default function DiscoverScreen() {
         setError(err instanceof Error ? err.message : '公開プランの取得に失敗しました');
         setAllPlans([]);
         setTrending([]);
-        setRecommendations(null);
-        setPopularCreatorIds(new Set());
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
@@ -145,181 +117,186 @@ export default function DiscoverScreen() {
   );
 
   useEffect(() => {
-    if (isConfigured) {
-      void loadPlans();
-    }
+    if (isConfigured) void loadPlans();
   }, [isConfigured, loadPlans]);
 
-  useEffect(() => {
-    if (!isConfigured || allPlans.length === 0) return;
-    void loadRecommendations(allPlans, trending);
-  }, [filters, location, isConfigured, allPlans, trending, loadRecommendations]);
-
-  const handleFollowChange = (
-    planId: string,
-    next: { isFollowing: boolean; followerCount: number },
-  ) => {
-    setAllPlans((prev) =>
-      prev.map((plan) =>
-        plan.id === planId
-          ? {
-              ...plan,
-              isFollowingCreator: next.isFollowing,
-              creatorFollowerCount: next.followerCount,
-            }
-          : plan,
-      ),
-    );
+  const handleTopCategoryChange = (categoryId: DiscoverTopCategoryId) => {
+    setTopCategory(categoryId);
+    setFilters(filtersForDiscoverCategory(categoryId));
+    if (isMemoryCategory(categoryId)) {
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({
+          y: Math.max(memoriesAnchorY.current - Spacing.four, 0),
+          animated: true,
+        });
+      });
+    }
   };
 
-  return (
-    <ScreenBackground>
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[
-        styles.content,
-        {
-          paddingTop: insets.top + Spacing.four,
-          paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
-        },
-      ]}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={() => void loadPlans(true)}
-          tintColor={NS.colors.accent}
+  const renderBody = () => {
+    if (!isConfigured) {
+      return (
+        <DiscoverEmptyState
+          emoji="⚙️"
+          title="Supabase の設定が必要です"
+          description="発見タブを使うには public_plans テーブルを作成してください。"
         />
-      }>
-      <FadeInView>
-        <View style={styles.heroGlow} />
-        <Text style={styles.eyebrow}>✨ DISCOVER</Text>
-        <Text style={styles.title}>次の行き先、見つけよう</Text>
-        <Text style={styles.subtitle}>
-          写真とタグで、みんなの旅行・お出かけプランからインスピレーションを。
-        </Text>
-      </FadeInView>
+      );
+    }
 
-      {isConfigured ? (
-        <FadeInView delay={25}>
-          <DiscoverTripMemoriesSection
-            isConfigured={isConfigured}
-            isLoggedIn={Boolean(session)}
-            onRequireLogin={() => router.push('/login')}
+    if (isLoading) {
+      return (
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator size="large" color={NS.colors.accent} />
+          <Text style={styles.loadingText}>読み込み中...</Text>
+        </View>
+      );
+    }
+
+    if (error) {
+      return (
+        <DiscoverEmptyState
+          emoji="⚠️"
+          title="読み込みに失敗しました"
+          description={error}
+          buttonLabel="もう一度試す"
+          onAction={() => void loadPlans()}
+        />
+      );
+    }
+
+    if (allPlans.length === 0) {
+      return (
+        <>
+          <DiscoverEmptyState
+            title="まだ投稿がありません"
+            description="最初のおすすめプランを投稿してみませんか？"
+            buttonLabel="投稿する"
+            onAction={() => {
+              if (!session) router.push('/login');
+              else router.push('/');
+            }}
           />
-        </FadeInView>
-      ) : null}
-
-      {isConfigured ? (
-        <FadeInView delay={30}>
-          <DiscoverLocalSpotsSection
+          <DiscoverLocalCompact
             isConfigured={isConfigured}
             isLoggedIn={Boolean(session)}
             areaHint={location?.city ?? location?.label}
             onRequireLogin={() => router.push('/login')}
           />
-        </FadeInView>
-      ) : null}
+        </>
+      );
+    }
 
-      {!isConfigured ? (
-        <PremiumCard style={styles.noticeCard}>
-          <Text style={styles.noticeTitle}>Supabase の設定が必要です</Text>
-          <Text style={styles.noticeText}>
-            発見タブを使うには public_plans テーブルを作成してください。
-          </Text>
-        </PremiumCard>
-      ) : isLoading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={NS.colors.accent} />
-          <Text style={styles.loadingText}>プランを読み込み中...</Text>
+    return (
+      <>
+        {!showMemoriesSection ? (
+          <>
+            <DiscoverFeaturedRow trending={trending} />
+
+            <View style={styles.section}>
+              <LifestyleSectionHeader
+                title="プラン一覧"
+                subtitle={`${displayedPlans.length}件のプラン`}
+              />
+              {displayedPlans.length === 0 ? (
+                <DiscoverEmptyState
+                  emoji="🔍"
+                  title="条件に合うプランがありません"
+                  description="フィルターを変えて、もう一度探してみてください。"
+                  buttonLabel={hasActiveFilters ? 'フィルターをリセット' : undefined}
+                  onAction={
+                    hasActiveFilters ? () => setFilters(DEFAULT_DISCOVER_FILTERS) : undefined
+                  }
+                />
+              ) : (
+                <View style={styles.feedGrid}>
+                  {displayedPlans.map((plan, index) => (
+                    <DiscoverCompactPlanCard
+                      key={plan.id}
+                      plan={plan}
+                      variant="grid"
+                      colorIndex={index}
+                      onPress={() => router.push(`/public-plan/${plan.id}`)}
+                      onCreatorPress={() => router.push(`/creator/${plan.userId}`)}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
+          </>
+        ) : null}
+
+        <View
+          onLayout={(event) => {
+            memoriesAnchorY.current = event.nativeEvent.layout.y;
+          }}>
+          <DiscoverMemoriesCompact />
         </View>
-      ) : error ? (
-        <PremiumCard style={styles.noticeCard}>
-          <Text style={styles.noticeTitle}>読み込みに失敗しました</Text>
-          <Text style={styles.noticeText}>{error}</Text>
-          <PrimaryButton label="もう一度試す" onPress={() => void loadPlans()} />
-        </PremiumCard>
-      ) : allPlans.length === 0 ? (
-        <DiscoverEmptyInspirationSection
+
+        <DiscoverLocalCompact
+          isConfigured={isConfigured}
+          isLoggedIn={Boolean(session)}
+          areaHint={location?.city ?? location?.label}
+          onRequireLogin={() => router.push('/login')}
+        />
+      </>
+    );
+  };
+
+  return (
+    <ScreenBackground>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.container}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => void loadPlans(true)}
+            tintColor={NS.colors.accent}
+          />
+        }>
+        <DiscoverHeader
+          onSearchPress={() => {
+            setShowSearch((prev) => !prev);
+            if (!showSearch) setShowFilters(false);
+          }}
+          onFilterPress={() => {
+            setShowFilters((prev) => !prev);
+            if (!showFilters) setShowSearch(false);
+          }}
+          filterActive={hasActiveFilters || showFilters}
           isLoggedIn={Boolean(session)}
           onRequireLogin={() => router.push('/login')}
         />
-      ) : (
-        <>
-          <DiscoverRecommendationsSection
-            recommendations={recommendations}
-            isLoading={isRecommendationsLoading}
-            allPlans={allPlans}
-            currentUserId={currentUserId}
-            filters={filters}
-            location={location}
-            popularCreatorIds={popularCreatorIds}
-            onFollowChange={handleFollowChange}
-            onRequireLogin={() => router.push('/login')}
-          />
 
-          <DiscoverTrendingSection
-            trending={trending}
-            popularCreatorIds={popularCreatorIds}
-            currentUserId={currentUserId}
-            onFollowChange={handleFollowChange}
-            onRequireLogin={() => router.push('/login')}
-          />
+        <DiscoverCategoryChips activeId={topCategory} onChange={handleTopCategoryChange} />
 
-          <DiscoverRankingSection
-            plans={allPlans}
-            popularCreatorIds={popularCreatorIds}
-            currentUserId={currentUserId}
-            onFollowChange={handleFollowChange}
-            onRequireLogin={() => router.push('/login')}
-            onPressPlan={(planId) => router.push(`/public-plan/${planId}`)}
-          />
+        {showSearch || showFilters ? (
+          <View style={styles.filtersWrap}>
+            <DiscoverSearchFilters value={filters} onChange={setFilters} />
+          </View>
+        ) : null}
 
-          <DiscoverSearchFilters value={filters} onChange={setFilters} />
+        {renderBody()}
 
-          {displayedPlans.length === 0 ? (
-            <PremiumCard style={styles.emptyCard}>
-              <Text style={styles.emptyIcon}>🔍</Text>
-              <Text style={styles.emptyTitle}>
-                条件に合うプランが見つかりませんでした。条件を変えて探してみてください。
-              </Text>
-              {hasActiveFilters ? (
-                <PrimaryButton
-                  label="フィルターをリセット"
-                  variant="secondary"
-                  onPress={() => setFilters(DEFAULT_DISCOVER_FILTERS)}
-                />
-              ) : null}
-            </PremiumCard>
-          ) : (
-            <View style={styles.feed}>
-              <Text style={styles.resultCount}>{displayedPlans.length}件のプラン</Text>
-              {displayedPlans.map((plan, index) => (
-                <PublicPlanCard
-                  key={plan.id}
-                  plan={plan}
-                  index={index}
-                  currentUserId={currentUserId}
-                  showPopularCreatorBadge={popularCreatorIds.has(plan.userId)}
-                  onPress={() => router.push(`/public-plan/${plan.id}`)}
-                  onFollowChange={handleFollowChange}
-                  onRequireLogin={() => router.push('/login')}
-                />
-              ))}
-            </View>
-          )}
-        </>
-      )}
-
-      <FadeInView delay={180}>
-        <PremiumCard variant="flat" style={styles.ctaCard} onPress={() => router.push('/')}>
-          <Text style={styles.ctaTitle}>自分だけのプランを作る</Text>
-          <Text style={styles.ctaText}>AIがあなたの好みに合わせて、オリジナルプランを提案します。</Text>
-          <Text style={styles.ctaLink}>プランを生成 →</Text>
-        </PremiumCard>
-      </FadeInView>
-    </ScrollView>
+        {isConfigured && allPlans.length > 0 ? (
+          <View style={styles.bottomCta}>
+            <PrimaryButton
+              label="自分だけのプランを作る"
+              onPress={() => router.push('/')}
+              variant="warm"
+            />
+          </View>
+        ) : null}
+      </ScrollView>
     </ScreenBackground>
   );
 }
@@ -334,32 +311,10 @@ const styles = StyleSheet.create({
     maxWidth: NS.layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
+    gap: Spacing.three,
   },
-  heroGlow: {
-    position: 'absolute',
-    top: -20,
-    left: -20,
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: NS.colors.accentGlow,
-  },
-  eyebrow: {
-    color: NS.colors.accent,
-    ...NS.typography.eyebrow,
-    marginBottom: Spacing.two,
-  },
-  title: {
-    color: NS.colors.text,
-    ...NS.typography.title,
-    marginBottom: Spacing.two,
-  },
-  subtitle: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    marginBottom: Spacing.four,
-    maxWidth: 340,
-    lineHeight: 22,
+  filtersWrap: {
+    marginTop: -Spacing.one,
   },
   loadingWrap: {
     alignItems: 'center',
@@ -368,77 +323,20 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     color: NS.colors.textSecondary,
-    fontSize: 14,
+    fontSize: 13,
   },
-  feed: {
-    marginTop: Spacing.three,
+  section: {
+    gap: Spacing.two,
   },
-  resultCount: {
-    color: NS.colors.textMuted,
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: Spacing.three,
-    letterSpacing: 0.4,
+  feedGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.one,
   },
-  noticeCard: {
-    padding: Spacing.four,
-    marginTop: Spacing.three,
-    marginBottom: Spacing.three,
-  },
-  noticeTitle: {
-    color: NS.colors.text,
-    fontSize: 16,
-    fontWeight: '800',
-    marginBottom: Spacing.two,
-  },
-  noticeText: {
-    color: NS.colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 22,
-    marginBottom: Spacing.three,
-  },
-  emptyCard: {
-    padding: Spacing.five,
-    alignItems: 'center',
-    marginTop: Spacing.three,
-    marginBottom: Spacing.three,
-  },
-  emptyIcon: {
-    fontSize: 36,
-    marginBottom: Spacing.two,
-  },
-  emptyTitle: {
-    color: NS.colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: Spacing.three,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  emptyText: {
-    color: NS.colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 22,
-    textAlign: 'center',
-    marginBottom: Spacing.four,
-  },
-  ctaCard: {
-    padding: Spacing.four,
+  bottomCta: {
     marginTop: Spacing.two,
-  },
-  ctaTitle: {
-    color: NS.colors.text,
-    ...NS.typography.titleSm,
-    marginBottom: Spacing.two,
-  },
-  ctaText: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    marginBottom: Spacing.three,
-  },
-  ctaLink: {
-    color: NS.colors.accent,
-    fontSize: 15,
-    fontWeight: '700',
+    paddingHorizontal: Spacing.one,
   },
 });

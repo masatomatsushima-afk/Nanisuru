@@ -1,212 +1,145 @@
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { PremiumCard } from '@/components/ui/premium-card';
-import { NS, getChipPalette, gradientStyle } from '@/constants/nanisuru-ui';
+import { HOME_PASTEL } from '@/constants/home-layout';
+import { NS, getChipPalette } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import type { MemoryDisplayChip } from '@/lib/travel-memory-display';
 
+const DEFAULT_CHIPS = ['映え', 'カフェ', 'のんびり', '海辺', '温泉'] as const;
+
 type TravelMemoryHomeCardProps = {
   preferenceChips: MemoryDisplayChip[];
-  placeChips: MemoryDisplayChip[];
-  totalPlaceCount: number;
   hasMemory: boolean;
   isLoading?: boolean;
 };
 
-function MemoryChip({
-  chip,
-  colorIndex,
-}: {
-  chip: MemoryDisplayChip;
-  colorIndex: number;
-}) {
+function PreferenceChip({ label, colorIndex }: { label: string; colorIndex: number }) {
   const palette = getChipPalette(colorIndex);
 
   return (
-    <View
-      style={[
-        styles.chip,
-        {
-          backgroundColor: palette.bg,
-          borderColor: palette.border,
-        },
-      ]}>
-      <Text style={styles.chipIcon}>{chip.icon}</Text>
-      <Text style={[styles.chipLabel, { color: palette.text }]} numberOfLines={1}>
-        {chip.label}
-      </Text>
+    <View style={[styles.chip, { backgroundColor: palette.bg, borderColor: palette.border }]}>
+      <Text style={[styles.chipLabel, { color: palette.text }]}>{label}</Text>
     </View>
   );
 }
 
 export function TravelMemoryHomeCard({
   preferenceChips,
-  placeChips,
-  totalPlaceCount,
   hasMemory,
   isLoading = false,
 }: TravelMemoryHomeCardProps) {
-  const handleEdit = () => {
-    router.push('/(tabs)/profile');
-  };
+  const displayChips = hasMemory
+    ? preferenceChips.slice(0, 5).map((chip) => chip.label)
+    : [...DEFAULT_CHIPS];
 
   return (
-    <PremiumCard style={styles.card} variant="accent">
-      <View style={[styles.accentBar, gradientStyle('skyButton')]} />
-
-      <View style={styles.headerRow}>
+    <View style={styles.card}>
+      <View style={styles.bgDot} />
+      <View style={styles.header}>
         <View style={styles.headerText}>
-          <Text style={styles.eyebrow}>AI MEMORY</Text>
-          <Text style={styles.title}>あなた向けに調整中 ✨</Text>
-          <Text style={styles.helper}>
-            この好みをもとに、AIがプランを少し調整します
+          <Text style={styles.title}>💛 あなたの好み</Text>
+          <Text style={styles.subtitle}>
+            これまでの保存や閲覧から、あなたの「好き」をまとめました
           </Text>
         </View>
         <Pressable
-          style={({ pressed }) => [styles.editButton, pressed && styles.editButtonPressed]}
-          onPress={handleEdit}
-          accessibilityRole="button"
+          style={({ pressed }) => [styles.editBtn, pressed && styles.editBtnPressed]}
+          onPress={() => router.push('/(tabs)/profile')}
           accessibilityLabel="好みを編集">
-          <Text style={styles.editButtonText}>好みを編集</Text>
+          <Text style={styles.editBtnText}>編集</Text>
         </Pressable>
       </View>
 
       {isLoading ? (
         <Text style={styles.loadingText}>読み込み中...</Text>
-      ) : !hasMemory ? (
-        <Text style={styles.emptyText}>
-          まだ好みは少ないです。プランを作るほどAIがあなたに合わせてくれます。
-        </Text>
       ) : (
-        <View style={styles.body}>
-          {preferenceChips.length > 0 ? (
-            <View style={styles.chipRow}>
-              {preferenceChips.map((chip, index) => (
-                <MemoryChip key={chip.id} chip={chip} colorIndex={index} />
-              ))}
-            </View>
-          ) : null}
-
-          {placeChips.length > 0 ? (
-            <View style={styles.placeSection}>
-              <Text style={styles.placeHeading}>
-                最近気になった場所 {Math.max(totalPlaceCount, placeChips.length)}件
-              </Text>
-              <View style={styles.chipRow}>
-                {placeChips.map((chip, index) => (
-                  <MemoryChip
-                    key={chip.id}
-                    chip={chip}
-                    colorIndex={preferenceChips.length + index}
-                  />
-                ))}
-              </View>
-            </View>
-          ) : null}
+        <View style={styles.chipRow}>
+          {displayChips.map((label, index) => (
+            <PreferenceChip key={`${label}-${index}`} label={label} colorIndex={index} />
+          ))}
         </View>
       )}
-    </PremiumCard>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    padding: Spacing.three + 2,
-    marginBottom: Spacing.three,
+    backgroundColor: HOME_PASTEL.cream,
+    borderRadius: 18,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two + 4,
+    gap: Spacing.two,
+    borderWidth: 1,
+    borderColor: HOME_PASTEL.creamBorder,
+    overflow: 'hidden',
+    ...NS.shadow.card,
+    shadowOpacity: 0.06,
   },
-  accentBar: {
+  bgDot: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 4,
-    opacity: 0.85,
+    top: -12,
+    right: 24,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(251, 191, 36, 0.15)',
   },
-  headerRow: {
+  header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: Spacing.two,
-    marginBottom: Spacing.two,
+    zIndex: 1,
   },
   headerText: {
     flex: 1,
-    gap: 4,
-  },
-  eyebrow: {
-    color: NS.colors.accent,
-    ...NS.typography.eyebrow,
-    fontSize: 10,
+    gap: 3,
   },
   title: {
     color: NS.colors.text,
-    fontSize: 17,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '900',
     letterSpacing: -0.2,
   },
-  helper: {
-    color: NS.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 2,
+  subtitle: {
+    color: NS.colors.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+    lineHeight: 14,
   },
-  editButton: {
-    backgroundColor: NS.colors.bgElevated,
+  editBtn: {
+    backgroundColor: '#FFFFFF',
     borderRadius: NS.radius.pill,
     paddingHorizontal: Spacing.two + 2,
     paddingVertical: Spacing.one + 2,
     borderWidth: 1,
-    borderColor: NS.colors.borderStrong,
-    ...NS.shadow.card,
+    borderColor: 'rgba(251, 146, 60, 0.2)',
   },
-  editButtonPressed: {
+  editBtnPressed: {
     opacity: 0.88,
   },
-  editButtonText: {
-    color: NS.colors.text,
+  editBtnText: {
+    color: NS.colors.orange,
     fontSize: 11,
     fontWeight: '800',
-  },
-  body: {
-    gap: Spacing.two,
   },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.one + 2,
+    zIndex: 1,
   },
   chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
     borderRadius: NS.radius.pill,
     borderWidth: 1,
     paddingHorizontal: Spacing.two,
-    paddingVertical: 6,
-    maxWidth: '100%',
-  },
-  chipIcon: {
-    fontSize: 12,
+    paddingVertical: 5,
   },
   chipLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    flexShrink: 1,
-  },
-  placeSection: {
-    gap: Spacing.one,
-    marginTop: Spacing.one,
-  },
-  placeHeading: {
-    color: NS.colors.textSecondary,
     fontSize: 11,
     fontWeight: '700',
-  },
-  emptyText: {
-    color: NS.colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 20,
   },
   loadingText: {
     color: NS.colors.textMuted,

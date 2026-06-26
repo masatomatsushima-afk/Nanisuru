@@ -74,7 +74,6 @@ import {
 import { PLAN_LOADING_STAGES } from '@/lib/plan-generation-progress';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { WeatherSection } from '@/components/weather-section';
-import { TravelMemoryHomeCard } from '@/components/travel-memory-home-card';
 import { buildTravelMemoryDisplayData } from '@/lib/travel-memory-display';
 import { consumePendingLocalSpotForPlan } from '@/lib/plan-local-spot-intent';
 import { getTravelMemories } from '@/lib/travel-memory';
@@ -130,7 +129,8 @@ import { createDefaultTravelTiming, type TravelTimingSettings } from '@/types/tr
 import type { OutfitStyleMode } from '@/types/outfit-advice';
 import { generateOutfitPackingAdvice } from '@/lib/outfit-packing-advice';
 import { ScreenBackground } from '@/components/ui/screen-background';
-import { HomeHeroSection } from '@/components/home-hero-section';
+import { HomeFeed } from '@/components/home/home-feed';
+import { HOME_LAYOUT } from '@/constants/home-layout';
 
 const accent = NS.colors.accent;
 
@@ -826,18 +826,8 @@ export default function HomeScreen() {
     if (showItinerary) resetPlan();
   };
 
-  const handleHomePrimaryPress = () => {
-    handlePlanTypeChange('今日のお出かけ');
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({
-        y: Math.max(formAnchorY.current - Spacing.four, 0),
-        animated: true,
-      });
-    });
-  };
-
-  const handleTravelPressFromHero = () => {
-    handlePlanTypeChange('旅行プラン');
+  const handleScrollToForm = (nextType: PlanCreationType = '今日のお出かけ') => {
+    handlePlanTypeChange(nextType);
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({
         y: Math.max(formAnchorY.current - Spacing.four, 0),
@@ -1146,29 +1136,21 @@ export default function HomeScreen() {
         contentContainerStyle={[
           styles.content,
           {
-            paddingTop: insets.top + Spacing.four,
-            paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
+            paddingTop: 0,
+            paddingBottom: insets.bottom + BottomTabInset + Spacing.six,
           },
         ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-        <HomeHeroSection
-          onPrimaryPress={handleHomePrimaryPress}
-          onTravelPress={handleTravelPressFromHero}
+        <View style={styles.homeFeedWrap}>
+        <HomeFeed
+          onScrollToForm={handleScrollToForm}
+          onTravelPress={() => handleScrollToForm('旅行プラン')}
           afterPlanLocation={location.trim() || undefined}
+          memoryDisplay={memoryDisplay}
+          isMemoryLoading={isMemoryLoading}
         />
-
-        {userPreferences && memoryDisplay ? (
-          <FadeInView delay={40}>
-            <TravelMemoryHomeCard
-              preferenceChips={memoryDisplay.preferenceChips}
-              placeChips={memoryDisplay.placeChips}
-              totalPlaceCount={memoryDisplay.totalPlaceCount}
-              hasMemory={memoryDisplay.hasMemory}
-              isLoading={isMemoryLoading}
-            />
-          </FadeInView>
-        ) : null}
+        </View>
 
         <View
           onLayout={(event) => {
@@ -1176,7 +1158,7 @@ export default function HomeScreen() {
           }}>
           <SectionHeader
             title="プランを作る"
-            subtitle="行き先や気分を入れるだけ。あとはお任せ"
+            subtitle="行き先と気分を入れて、あなただけの過ごし方を"
           />
 
           <View style={styles.formCard}>
@@ -1482,9 +1464,13 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     paddingHorizontal: Spacing.four,
-    maxWidth: 480,
+    maxWidth: 540,
     width: '100%',
     alignSelf: 'center',
+  },
+  homeFeedWrap: {
+    marginHorizontal: -(Spacing.four - HOME_LAYOUT.horizontalPadding),
+    paddingHorizontal: HOME_LAYOUT.horizontalPadding,
   },
   hero: {
     marginBottom: Spacing.five,

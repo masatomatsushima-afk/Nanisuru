@@ -1,47 +1,121 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState, type MutableRefObject } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BetaTestEntryButton } from '@/components/beta-test-entry-button';
 import { NotificationEntryButton } from '@/components/notification-entry-button';
-import { ScreenBackground } from '@/components/ui/screen-background';
-import { FadeInView } from '@/components/ui/fade-in-view';
-import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
+import { ProfileEmptyState } from '@/components/profile-empty-state';
+import { ProfileHeader } from '@/components/profile-header';
+import { ProfileMemoryGridCard } from '@/components/profile-memory-grid-card';
+import { ProfileOwnerActions } from '@/components/profile-owner-actions';
+import { ProfilePlanGridCard } from '@/components/profile-plan-grid-card';
+import { ProfileSavedGridCard } from '@/components/profile-saved-grid-card';
+import { ProfileSpotGridCard } from '@/components/profile-spot-grid-card';
+import { ProfileTabBar } from '@/components/profile-tab-bar';
 import { PublicProfileEditor } from '@/components/public-profile-editor';
-import { TravelPreferencesEditor } from '@/components/travel-preferences-editor';
 import { RatingTendencySection } from '@/components/rating-tendency-section';
+import { TravelPreferencesEditor } from '@/components/travel-preferences-editor';
 import { UserPreferencesSection } from '@/components/user-preferences-section';
+import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
+import { ScreenBackground } from '@/components/ui/screen-background';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
-import { getAuthProviderLabel, getUserDisplayName, getUserInitial } from '@/lib/auth';
+import { getAuthProviderLabel, getUserDisplayName } from '@/lib/auth';
+import { fetchLocalHiddenSpotsByUserId } from '@/lib/local-hidden-spots';
+import { fetchUserSavedPortfolioItems } from '@/lib/profile-saves';
+import { fetchPublicPlansByUserId } from '@/lib/public-plans';
+import { fetchProfilePublicMemoriesByUserId } from '@/lib/trip-memories';
 import { getUserPreferences } from '@/lib/user-memory';
+import { ensureUserProfile } from '@/lib/user-profiles';
+import type { ProfileSavedItem, ProfileTabId } from '@/types/profile-portfolio';
+import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
+import type { PublicPlan } from '@/types/public-plan';
+import type { TripMemory } from '@/types/trip-memory';
+import type { UserProfile } from '@/types/user-profile';
 import type { UserPreferences } from '@/types/user-memory';
-
-function ProfileInfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
-    </View>
-  );
-}
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { user, isConfigured, signOut } = useAuth();
+  const scrollRef = useRef<ScrollView>(null);
+  const profileEditorY = useRef(0);
+  const preferencesEditorY = useRef(0);
+  const privacySectionY = useRef(0);
+
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [memories, setMemories] = useState<TripMemory[]>([]);
+  const [spots, setSpots] = useState<LocalHiddenSpot[]>([]);
+  const [savedItems, setSavedItems] = useState<ProfileSavedItem[]>([]);
+  const [activeTab, setActiveTab] = useState<ProfileTabId>('plans');
+  const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
+
+  const scrollTo = (yRef: MutableRefObject<number>) => {
+    scrollRef.current?.scrollTo({
+      y: Math.max(yRef.current - Spacing.three, 0),
+      animated: true,
+    });
+  };
 
   const loadPreferences = useCallback(async () => {
     setUserPreferences(await getUserPreferences());
   }, []);
 
+  const loadPortfolio = useCallback(async () => {
+    if (!user || !isConfigured) {
+      setProfile(null);
+      setPlans([]);
+      setMemories([]);
+      setSpots([]);
+      setSavedItems([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const [loadedProfile, loadedPlans, loadedMemories, loadedSpots, loadedSaved] =
+        await Promise.all([
+          ensureUserProfile(),
+          fetchPublicPlansByUserId(user.id),
+          fetchProfilePublicMemoriesByUserId(user.id),
+          fetchLocalHiddenSpotsByUserId(user.id),
+          fetchUserSavedPortfolioItems().catch(() => [] as ProfileSavedItem[]),
+        ]);
+
+      setProfile({ ...loadedProfile, isSelf: true });
+      setPlans(loadedPlans);
+      setMemories(loadedMemories);
+      setSpots(loadedSpots);
+      setSavedItems(loadedSaved);
+    } catch {
+      setProfile(null);
+      setPlans([]);
+      setMemories([]);
+      setSpots([]);
+      setSavedItems([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isConfigured, user]);
+
   useFocusEffect(
     useCallback(() => {
-      loadPreferences();
-    }, [loadPreferences]),
+      void loadPreferences();
+      void loadPortfolio();
+    }, [loadPortfolio, loadPreferences]),
   );
 
   const handleSignOut = async () => {
@@ -67,201 +141,283 @@ export default function ProfileScreen() {
     ]);
   };
 
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'plans':
+        return plans.length === 0 ? (
+          <ProfileEmptyState
+            emoji="🗺️"
+            title="まだ公開プランがありません"
+            description="プランを作って公開すると、ここに表示されます。"
+            buttonLabel="プランを作る"
+            onAction={() => router.push('/')}
+          />
+        ) : (
+          <View style={styles.grid}>
+            {plans.map((plan) => (
+              <ProfilePlanGridCard
+                key={plan.id}
+                plan={plan}
+                onPress={() => router.push(`/public-plan/${plan.id}`)}
+              />
+            ))}
+          </View>
+        );
+      case 'memories':
+        return memories.length === 0 ? (
+          <ProfileEmptyState
+            emoji="📸"
+            title="まだ思い出がありません"
+            description="旅の写真やメモをアルバム形式で残してみましょう。"
+            buttonLabel="思い出を追加"
+            onAction={() => router.push('/memories')}
+          />
+        ) : (
+          <View style={styles.grid}>
+            {memories.map((memory) => (
+              <ProfileMemoryGridCard
+                key={memory.id}
+                memory={memory}
+                onPress={() => router.push(`/memory/${memory.id}`)}
+              />
+            ))}
+          </View>
+        );
+      case 'spots':
+        return spots.length === 0 ? (
+          <ProfileEmptyState
+            emoji="🌿"
+            title="まだ穴場スポットがありません"
+            description="地元のおすすめスポットをシェアしてみませんか？"
+            buttonLabel="穴場を投稿"
+            onAction={() => router.push('/local-spot/submit')}
+          />
+        ) : (
+          <View style={styles.grid}>
+            {spots.map((spot, index) => (
+              <ProfileSpotGridCard
+                key={spot.id}
+                spot={spot}
+                index={index}
+                onPress={() => router.push(`/local-spot/${spot.id}`)}
+              />
+            ))}
+          </View>
+        );
+      case 'saved':
+        return savedItems.length === 0 ? (
+          <ProfileEmptyState
+            emoji="🔖"
+            title="まだ保存したコンテンツがありません"
+            description="気になるプランや思い出を保存すると、ここに表示されます。"
+            buttonLabel="発見タブで探す"
+            onAction={() => router.push('/(tabs)/explore')}
+          />
+        ) : (
+          <View style={styles.grid}>
+            {savedItems.map((item) => (
+              <ProfileSavedGridCard
+                key={`${item.type}-${item.type === 'plan' ? item.plan.id : item.type === 'memory' ? item.memory.id : item.spot.id}`}
+                item={item}
+                onPress={() => {
+                  if (item.type === 'plan') router.push(`/public-plan/${item.plan.id}`);
+                  else if (item.type === 'memory') router.push(`/memory/${item.memory.id}`);
+                  else router.push(`/local-spot/${item.spot.id}`);
+                }}
+              />
+            ))}
+          </View>
+        );
+      default:
+        return null;
+    }
+  };
+
   if (!user) {
     return (
       <ScreenBackground>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={[
-          styles.content,
-          {
-            paddingTop: insets.top + Spacing.four,
-            paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
-          },
-        ]}>
-        <FadeInView>
-        <Text style={styles.eyebrow}>👤 MY PAGE</Text>
-        <Text style={styles.title}>マイページ</Text>
-        <Text style={styles.subtitle}>あなたの旅の設定と保存プラン</Text>
-        </FadeInView>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={[
+            styles.content,
+            {
+              paddingTop: insets.top + Spacing.three,
+              paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
+            },
+          ]}
+          showsVerticalScrollIndicator={false}>
+          <Text style={styles.screenTitle}>マイページ</Text>
 
-        <FadeInView delay={80}>
           <PremiumCard style={styles.guestCard}>
-            <Text style={styles.guestIcon}>👤</Text>
+            <Text style={styles.guestEmoji}>👤</Text>
             <Text style={styles.guestTitle}>ログインしていません</Text>
             <Text style={styles.guestText}>
-              アカウントにログインすると、プロフィール情報や保存したプランを確認できます。
+              ログインすると、公開プランや思い出、保存したコンテンツを確認できます。
             </Text>
-            <PrimaryButton label="ログイン" onPress={() => router.push('/login')} />
+            <PrimaryButton label="ログイン" onPress={() => router.push('/login')} variant="warm" />
             <Pressable style={styles.signUpLink} onPress={() => router.push('/sign-up')}>
               <Text style={styles.signUpLinkText}>新規登録はこちら</Text>
             </Pressable>
           </PremiumCard>
-        </FadeInView>
 
-        <FadeInView delay={105}>
           <BetaTestEntryButton />
-        </FadeInView>
 
-        {userPreferences ? (
-          <FadeInView delay={120}>
-            <UserPreferencesSection preferences={userPreferences} />
-          </FadeInView>
-        ) : null}
+          {userPreferences ? <UserPreferencesSection preferences={userPreferences} /> : null}
 
-        <FadeInView delay={140}>
           <RatingTendencySection isLoggedIn={false} isConfigured={isConfigured} />
-        </FadeInView>
 
-        <FadeInView delay={150}>
           <PublicProfileEditor
             isLoggedIn={false}
             isConfigured={isConfigured}
             onRequireLogin={() => router.push('/login')}
           />
-        </FadeInView>
 
-        <FadeInView delay={160}>
           <TravelPreferencesEditor
             isLoggedIn={false}
             isConfigured={isConfigured}
             onRequireLogin={() => router.push('/login')}
           />
-        </FadeInView>
-      </ScrollView>
+        </ScrollView>
       </ScreenBackground>
     );
   }
 
-  const displayName = getUserDisplayName(user);
+  const displayProfile: UserProfile =
+    profile ??
+    ({
+      userId: user.id,
+      displayName: getUserDisplayName(user),
+      bio: '',
+      styleTags: [],
+      isLocalContributor: false,
+      localExpertAreas: [],
+      followerCount: 0,
+      followingCount: 0,
+      publicPlanCount: plans.length,
+      publicMemoryCount: memories.length,
+      localSpotCount: spots.length,
+      createdAt: user.created_at ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isSelf: true,
+    } satisfies UserProfile);
+
   const providerLabel = getAuthProviderLabel(user);
-  const joinedDate = user.created_at
-    ? new Date(user.created_at).toLocaleDateString('ja-JP', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      })
-    : '—';
 
   return (
     <ScreenBackground>
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[
-        styles.content,
-        {
-          paddingTop: insets.top + Spacing.four,
-          paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
-        },
-      ]}
-      showsVerticalScrollIndicator={false}>
-      <FadeInView>
-        <Text style={styles.eyebrow}>👤 MY PAGE</Text>
-        <Text style={styles.title}>マイページ</Text>
-        <Text style={styles.subtitle}>プロフィール・設定・旅の好みを管理</Text>
-      </FadeInView>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.container}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: insets.top + Spacing.two,
+            paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.topBar}>
+          <View>
+            <Text style={styles.screenTitle}>マイページ</Text>
+            <Text style={styles.screenSubtitle}>あなたの旅の記録</Text>
+          </View>
+        </View>
 
-      <FadeInView delay={50}>
-        <BetaTestEntryButton />
-      </FadeInView>
-
-      <FadeInView delay={40}>
         <NotificationEntryButton isConfigured={isConfigured} />
-      </FadeInView>
 
-      <FadeInView delay={60}>
-        <PremiumCard style={styles.profileCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{getUserInitial(user)}</Text>
+        {isLoading ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator size="large" color={NS.colors.accent} />
+            <Text style={styles.loadingText}>読み込み中...</Text>
           </View>
-          <Text style={styles.displayName}>{displayName}</Text>
-          <Text style={styles.email}>{user.email ?? 'メールアドレス非公開'}</Text>
-          <View style={styles.providerBadge}>
-            <Text style={styles.providerBadgeText}>{providerLabel}でログイン中</Text>
-          </View>
-        </PremiumCard>
-      </FadeInView>
+        ) : (
+          <>
+            <ProfileHeader
+              profile={displayProfile}
+              isLoggedIn
+              onRequireLogin={() => router.push('/login')}
+              onFollowChange={() => {}}
+              onEditPress={() => scrollTo(profileEditorY)}
+            />
 
-      <FadeInView delay={120}>
-        <PremiumCard style={styles.detailsCard}>
-          <Text style={styles.sectionTitle}>アカウント情報</Text>
-          <ProfileInfoRow label="表示名" value={displayName} />
-          <ProfileInfoRow label="メール" value={user.email ?? '非公開'} />
-          <ProfileInfoRow label="ログイン方法" value={providerLabel} />
-          <ProfileInfoRow label="登録日" value={joinedDate} />
-        </PremiumCard>
-      </FadeInView>
+            <ProfileOwnerActions
+              onEditProfile={() => scrollTo(profileEditorY)}
+              onEditPreferences={() => scrollTo(preferencesEditorY)}
+              onPrivacySettings={() => scrollTo(privacySectionY)}
+            />
 
-      {userPreferences ? (
-        <FadeInView delay={150}>
-          <UserPreferencesSection preferences={userPreferences} />
-        </FadeInView>
-      ) : null}
+            <ProfileTabBar activeTab={activeTab} isSelf onChange={setActiveTab} />
 
-      <FadeInView delay={155}>
-        <RatingTendencySection isLoggedIn isConfigured={isConfigured} />
-      </FadeInView>
+            {renderTabContent()}
+          </>
+        )}
 
-      <FadeInView delay={162}>
-        <PublicProfileEditor
-          isLoggedIn
-          isConfigured={isConfigured}
-          onRequireLogin={() => router.push('/login')}
-        />
-      </FadeInView>
+        <View
+          onLayout={(event) => {
+            privacySectionY.current = event.nativeEvent.layout.y;
+          }}
+          style={styles.settingsSection}>
+          <PremiumCard style={styles.previewCard}>
+            <Text style={styles.previewEmoji}>✨</Text>
+            <Text style={styles.previewTitle}>公開プロフィール</Text>
+            <Text style={styles.previewText}>
+              他のユーザーから見えるプロフィールを確認できます。プランや思い出の公開設定も各投稿から変更できます。
+            </Text>
+            <PrimaryButton
+              label="公開プロフィールを見る"
+              onPress={() => router.push(`/creator/${user.id}`)}
+              variant="warm"
+            />
+          </PremiumCard>
+        </View>
 
-      <FadeInView delay={165}>
-        <TravelPreferencesEditor
-          isLoggedIn
-          isConfigured={isConfigured}
-          onRequireLogin={() => router.push('/login')}
-        />
-      </FadeInView>
-
-      <FadeInView delay={168}>
-        <PremiumCard style={styles.memoriesCard}>
-          <Text style={styles.memoriesEmoji}>📔</Text>
-          <Text style={styles.sectionTitle}>思い出</Text>
-          <Text style={styles.memoriesText}>
-            旅の写真・動画・メモをアルバム形式で残せます。2026年の思い出もここから振り返れます。
-          </Text>
-          <PrimaryButton label="思い出アルバムを見る" onPress={() => router.push('/memories')} />
-        </PremiumCard>
-      </FadeInView>
-
-      <FadeInView delay={170}>
-        <PremiumCard style={styles.memoriesCard}>
-          <Text style={styles.memoriesEmoji}>✨</Text>
-          <Text style={styles.sectionTitle}>公開プロフィール</Text>
-          <Text style={styles.memoriesText}>
-            あなたの公開プラン・思い出・穴場が、他のユーザーからどう見えるか確認できます。
-          </Text>
-          <PrimaryButton
-            label="公開プロフィールを見る"
-            onPress={() => router.push(`/creator/${user.id}`)}
+        <View
+          onLayout={(event) => {
+            profileEditorY.current = event.nativeEvent.layout.y;
+          }}>
+          <PublicProfileEditor
+            isLoggedIn
+            isConfigured={isConfigured}
+            onRequireLogin={() => router.push('/login')}
           />
-        </PremiumCard>
-      </FadeInView>
+        </View>
 
-      {!isConfigured ? (
-        <FadeInView delay={160}>
-          <View style={styles.notice}>
-            <Text style={styles.noticeText}>Supabaseの設定を確認してください</Text>
-          </View>
-        </FadeInView>
-      ) : null}
+        {userPreferences ? <UserPreferencesSection preferences={userPreferences} /> : null}
 
-      <FadeInView delay={180}>
-        <View style={styles.signOutWrap}>
+        <RatingTendencySection isLoggedIn isConfigured={isConfigured} />
+
+        <View
+          onLayout={(event) => {
+            preferencesEditorY.current = event.nativeEvent.layout.y;
+          }}>
+          <TravelPreferencesEditor
+            isLoggedIn
+            isConfigured={isConfigured}
+            onRequireLogin={() => router.push('/login')}
+          />
+        </View>
+
+        <BetaTestEntryButton />
+
+        <PremiumCard style={styles.accountCard}>
+          <Text style={styles.accountTitle}>アカウント</Text>
+          <Text style={styles.accountMeta}>
+            {user.email ?? 'メール非公開'} · {providerLabel}
+          </Text>
           <PrimaryButton
             label={isSigningOut ? 'ログアウト中...' : 'ログアウト'}
             onPress={handleSignOut}
             disabled={isSigningOut}
             variant="secondary"
           />
-        </View>
-      </FadeInView>
-    </ScrollView>
+        </PremiumCard>
+
+        {!isConfigured ? (
+          <View style={styles.notice}>
+            <Text style={styles.noticeText}>Supabaseの設定を確認してください</Text>
+          </View>
+        ) : null}
+      </ScrollView>
     </ScreenBackground>
   );
 }
@@ -276,148 +432,111 @@ const styles = StyleSheet.create({
     maxWidth: NS.layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
-  },
-  eyebrow: {
-    color: NS.colors.accent,
-    ...NS.typography.eyebrow,
-    marginBottom: Spacing.two,
-  },
-  title: {
-    color: NS.colors.text,
-    ...NS.typography.title,
-    marginBottom: Spacing.two,
-  },
-  subtitle: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    marginBottom: Spacing.five,
-  },
-  profileCard: {
-    padding: Spacing.five,
-    alignItems: 'center',
-    marginBottom: Spacing.three,
-  },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: NS.colors.accentSoft,
-    borderWidth: 2,
-    borderColor: NS.colors.accentBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.three,
-  },
-  avatarText: {
-    color: NS.colors.accent,
-    fontSize: 32,
-    fontWeight: '800',
-  },
-  displayName: {
-    color: NS.colors.text,
-    ...NS.typography.headline,
-    marginBottom: Spacing.one,
-  },
-  email: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    marginBottom: Spacing.three,
-  },
-  providerBadge: {
-    backgroundColor: NS.colors.accentSoft,
-    borderRadius: NS.radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: NS.colors.accentBorder,
-  },
-  providerBadgeText: {
-    color: NS.colors.accent,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  detailsCard: {
-    padding: Spacing.four,
-    marginBottom: Spacing.four,
-  },
-  sectionTitle: {
-    color: NS.colors.text,
-    ...NS.typography.headline,
-    marginBottom: Spacing.three,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
     gap: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderBottomWidth: 1,
-    borderBottomColor: NS.colors.border,
   },
-  infoLabel: {
-    color: NS.colors.textSecondary,
-    fontSize: 14,
-    flex: 1,
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  infoValue: {
+  screenTitle: {
     color: NS.colors.text,
-    fontSize: 14,
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  screenSubtitle: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
     fontWeight: '600',
-    flex: 1.2,
-    textAlign: 'right',
+    marginTop: 2,
+  },
+  loadingWrap: {
+    alignItems: 'center',
+    paddingVertical: Spacing.six,
+    gap: Spacing.two,
+  },
+  loadingText: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    justifyContent: 'space-between',
+  },
+  settingsSection: {
+    marginTop: Spacing.two,
+  },
+  previewCard: {
+    padding: Spacing.four,
+    gap: Spacing.two,
+    alignItems: 'center',
+  },
+  previewEmoji: {
+    fontSize: 28,
+  },
+  previewTitle: {
+    color: NS.colors.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  previewText: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  accountCard: {
+    padding: Spacing.four,
+    gap: Spacing.two,
+  },
+  accountTitle: {
+    color: NS.colors.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  accountMeta: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
   },
   guestCard: {
     padding: Spacing.five,
     alignItems: 'center',
-    gap: Spacing.three,
+    gap: Spacing.two,
   },
-  guestIcon: {
-    fontSize: 48,
+  guestEmoji: {
+    fontSize: 40,
   },
   guestTitle: {
     color: NS.colors.text,
-    ...NS.typography.headline,
+    fontSize: 18,
+    fontWeight: '900',
   },
   guestText: {
     color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
+    fontSize: 13,
+    lineHeight: 20,
     textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: Spacing.two,
   },
   signUpLink: {
-    paddingVertical: Spacing.two,
+    paddingVertical: Spacing.one,
   },
   signUpLinkText: {
     color: NS.colors.accent,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   notice: {
     backgroundColor: NS.colors.dangerSoft,
     borderRadius: NS.radius.md,
     padding: Spacing.three,
-    marginBottom: Spacing.four,
   },
   noticeText: {
     color: NS.colors.textSecondary,
     fontSize: 13,
     textAlign: 'center',
-  },
-  memoriesCard: {
-    padding: Spacing.four,
-    marginBottom: Spacing.four,
-    gap: Spacing.two,
-  },
-  memoriesEmoji: {
-    fontSize: 28,
-  },
-  memoriesText: {
-    color: NS.colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  signOutWrap: {
-    marginTop: Spacing.two,
   },
 });

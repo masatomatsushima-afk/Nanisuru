@@ -103,7 +103,13 @@ export const NS = {
   layout: {
     maxWidth: 480,
     screenPadding: Spacing.four,
-    sectionGap: Spacing.four,
+    sectionGap: Spacing.five,
+  },
+  lifestyle: {
+    cardRadius: 24,
+    tileRadius: 22,
+    heroRadius: 28,
+    sectionGap: 20,
   },
   typography: {
     eyebrow: {
@@ -208,9 +214,15 @@ export function gradientStyle(kind: keyof typeof NS.gradient): ViewStyle {
 export const cardStyle: ViewStyle = {
   backgroundColor: NS.colors.bgElevated,
   borderRadius: NS.radius.lg,
-  borderWidth: 1,
-  borderColor: NS.colors.border,
   ...NS.shadow.card,
+  shadowOpacity: 0.08,
+};
+
+export const lifestyleCardStyle: ViewStyle = {
+  backgroundColor: NS.colors.bgElevated,
+  borderRadius: NS.lifestyle.cardRadius,
+  ...NS.shadow.cardLg,
+  shadowOpacity: 0.1,
 };
 
 export const inputStyle: ViewStyle = {
