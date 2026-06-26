@@ -1137,7 +1137,7 @@ export default function HomeScreen() {
           styles.content,
           {
             paddingTop: 0,
-            paddingBottom: insets.bottom + BottomTabInset + Spacing.six,
+            paddingBottom: insets.bottom + BottomTabInset + 28,
           },
         ]}
         keyboardShouldPersistTaps="handled"
