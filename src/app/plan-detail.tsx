@@ -27,12 +27,13 @@ import { NS } from '@/constants/nanisuru-ui';
 import { parseCurrencyCode } from '@/constants/currency';
 import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import { saveItineraryEdit } from '@/lib/itinerary-edits';
+import { updateTrip } from '@/lib/saved-trips';
 import { buildItineraryItemId } from '@/types/itinerary-edit';
 import { parseItineraryDays, isTripDurationOption } from '@/lib/trip-duration';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
 import { COMPANION_OPTIONS, isDateRelatedCompanion, PERSONALITY_OPTIONS } from '@/types/plan';
-import type { SavedTripPayload } from '@/types/trip';
+import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { WeatherReplanPreviewSuccess } from '@/types/weather-replan';
 
 const accent = NS.colors.accent;
@@ -84,6 +85,9 @@ export default function PlanDetailScreen() {
     days: string;
     items: string;
     details: string;
+    savedTripId?: string;
+    travelPurpose?: string;
+    budgetIncludes?: string;
   }>();
 
   const companion = COMPANION_OPTIONS.includes(params.companion as CompanionOption)
@@ -120,6 +124,15 @@ export default function PlanDetailScreen() {
   const [editTarget, setEditTarget] = useState<ItineraryEditTarget | null>(null);
   const [showEditSheet, setShowEditSheet] = useState(false);
   const [editDetails, setEditDetails] = useState<PlanDetails | null>(details);
+  const [savedTripId, setSavedTripId] = useState<string | null>(params.savedTripId?.trim() || null);
+  const [preserveSavedAt, setPreserveSavedAt] = useState<string | undefined>(undefined);
+  const travelPurpose = params.travelPurpose?.trim() || undefined;
+  let budgetIncludes: import('@/lib/travel-budget-includes').TravelBudgetIncludeOption[] | undefined;
+  try {
+    budgetIncludes = params.budgetIncludes ? JSON.parse(params.budgetIncludes) : undefined;
+  } catch {
+    budgetIncludes = undefined;
+  }
   const tripDuration = isTripDurationOption(params.tripDuration ?? '')
     ? (params.tripDuration as TripDurationOption)
     : details?.tripDuration ?? '1日';
@@ -144,6 +157,19 @@ export default function PlanDetailScreen() {
     setDays(nextPayload.days);
     setLocalItems(nextPayload.items);
     setEditDetails(nextPayload.details);
+    if (savedTripId) {
+      try {
+        const updated = await updateTrip(
+          savedTripId,
+          { ...nextPayload, budgetIncludes, travelPurpose, savedAt: preserveSavedAt },
+          undefined,
+          preserveSavedAt,
+        );
+        setPreserveSavedAt(updated.payload.savedAt);
+      } catch {
+        // Keep local edits even if background sync fails.
+      }
+    }
   };
 
   const handleApplyEdit = async (result: PartialItineraryEditResult, editRequest: string) => {
@@ -165,8 +191,28 @@ export default function PlanDetailScreen() {
     setLocalItems(nextPayload.items);
     setEditDetails(nextPayload.details);
 
+    if (savedTripId) {
+      try {
+        const updated = await updateTrip(
+          savedTripId,
+          {
+            ...nextPayload,
+            budgetIncludes,
+            travelPurpose,
+            savedAt: preserveSavedAt,
+          },
+          undefined,
+          preserveSavedAt,
+        );
+        setPreserveSavedAt(updated.payload.savedAt);
+      } catch {
+        // Keep local edits even if background sync fails.
+      }
+    }
+
     if (editTarget) {
       await saveItineraryEdit({
+        tripId: savedTripId ?? undefined,
         dayIndex: editTarget.dayIndex,
         itemId: buildItineraryItemId(editTarget),
         editRequest,
@@ -207,6 +253,14 @@ export default function PlanDetailScreen() {
     days,
     items: localItems,
     details: planDetails,
+    budgetIncludes,
+    travelPurpose,
+    savedAt: preserveSavedAt,
+  };
+
+  const handleTripSaved = (trip: SavedTrip) => {
+    setSavedTripId(trip.id);
+    setPreserveSavedAt(trip.payload.savedAt);
   };
 
   return (
@@ -359,10 +413,21 @@ export default function PlanDetailScreen() {
               days={days}
               items={localItems}
               details={planDetails}
+              budgetIncludes={budgetIncludes}
+              travelPurpose={travelPurpose}
+              savedTripId={savedTripId}
+              preserveSavedAt={preserveSavedAt}
+              label="このプランを保存"
+              variant="primary"
+              onSaved={handleTripSaved}
             />
           </View>
           <View style={styles.shareButtonWrap}>
-            <AddTripSecretaryFolderButton variant="plan-payload" payload={planPayload} />
+            <AddTripSecretaryFolderButton
+              variant="plan-payload"
+              payload={planPayload}
+              savedTripId={savedTripId}
+            />
           </View>
           <View style={styles.shareButtonWrap}>
             <ShareTripSection

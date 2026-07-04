@@ -9,6 +9,7 @@ import type {
 } from '@/types/plan';
 import type { PlanCopyMetadata } from '@/types/plan-copy';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import type { TravelBudgetIncludeOption } from '@/lib/travel-budget-includes';
 import type { CustomTripDuration } from '@/types/trip-schedule';
 
 export type SavedTripPayload = {
@@ -27,6 +28,12 @@ export type SavedTripPayload = {
   copyMetadata?: PlanCopyMetadata;
   customPreferences?: PlanCustomPreferences;
   notes?: string;
+  budgetIncludes?: TravelBudgetIncludeOption[];
+  travelPurpose?: string;
+  /** ISO timestamp — set on first save */
+  savedAt?: string;
+  /** ISO timestamp — updated on each save */
+  updatedAt?: string;
 };
 
 export type SavedTrip = {

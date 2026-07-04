@@ -3,6 +3,7 @@ import {
   createTripFolderInputFromPayload,
   createTripFolderInputFromSavedTrip,
 } from '@/lib/trip-folder-context';
+import { buildCurrentPlanPayload, buildTripFolderTitle } from '@/lib/save-plan-state';
 import { getDurationDisplayLabel } from '@/lib/trip-duration';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type {
@@ -170,6 +171,119 @@ export async function createTripFolder(input: CreateTripFolderInput): Promise<Tr
   }
 
   return rowToFolder(data as FolderRow);
+}
+
+export async function findTripFolderByPlanIdentity(
+  payload: SavedTripPayload,
+): Promise<TripFolder | null> {
+  assertConfigured();
+  const userId = await getCurrentUserId();
+  if (!userId) return null;
+
+  const destination = payload.location.trim();
+  if (!destination) return null;
+
+  const departure = payload.details.tripDate?.trim() ?? '';
+  const returnDate = payload.details.tripEndDate?.trim() ?? '';
+
+  const supabase = getSupabase();
+  let query = supabase
+    .from('trip_folders')
+    .select(SELECT_FOLDER)
+    .eq('user_id', userId)
+    .eq('destination', destination);
+
+  if (departure) {
+    query = query.eq('departure_date', departure);
+  }
+  if (returnDate) {
+    query = query.eq('return_date', returnDate);
+  }
+
+  const { data, error } = await query.order('updated_at', { ascending: false }).limit(1).maybeSingle();
+  if (error || !data) return null;
+  return rowToFolder(data as FolderRow);
+}
+
+export async function linkTripFolderToSavedTrip(
+  folderId: string,
+  savedTripId: string,
+): Promise<TripFolder | null> {
+  assertConfigured();
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error('ログインが必要です');
+
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('trip_folders')
+    .update({
+      saved_trip_id: savedTripId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', folderId)
+    .eq('user_id', userId)
+    .select(SELECT_FOLDER)
+    .single();
+
+  if (error || !data) return null;
+  return rowToFolder(data as FolderRow);
+}
+
+export type TripFolderAttachResult = {
+  folder: TripFolder;
+  created: boolean;
+  updated: boolean;
+};
+
+export async function createOrAttachTripFolder(options: {
+  payload: SavedTripPayload;
+  savedTripId?: string | null;
+  title?: string;
+}): Promise<TripFolderAttachResult> {
+  const folderPayload = buildCurrentPlanPayload(options.payload);
+  const folderTitle = options.title?.trim() || buildTripFolderTitle(folderPayload);
+
+  const folderPayloadLog = {
+    title: folderTitle,
+    destination: folderPayload.location,
+    departureDate: folderPayload.details.tripDate,
+    returnDate: folderPayload.details.tripEndDate,
+    savedTripId: options.savedTripId ?? null,
+    itemCount: folderPayload.items.length,
+    dayCount: folderPayload.days.length,
+  };
+  console.log('[TripFolder] create or attach', folderPayloadLog);
+
+  if (options.savedTripId) {
+    const byTrip = await getTripFolderBySavedTripId(options.savedTripId);
+    if (byTrip) {
+      const updated = await updateTripFolderPlanPayload(byTrip.id, folderPayload);
+      const folder = updated ?? byTrip;
+      console.log('[TripFolder] success', { folderId: folder.id, action: 'updated-by-trip' });
+      return { folder, created: false, updated: true };
+    }
+  }
+
+  const existing = await findTripFolderByPlanIdentity(folderPayload);
+  if (existing) {
+    const updated = await updateTripFolderPlanPayload(existing.id, folderPayload);
+    let folder = updated ?? existing;
+    if (options.savedTripId && !folder.savedTripId) {
+      const linked = await linkTripFolderToSavedTrip(folder.id, options.savedTripId);
+      if (linked) folder = linked;
+    }
+    console.log('[TripFolder] success', { folderId: folder.id, action: 'updated-by-identity' });
+    return { folder, created: false, updated: true };
+  }
+
+  const input = createTripFolderInputFromPayload(folderPayload, folderTitle);
+  const folder = await createTripFolder({
+    ...input,
+    savedTripId: options.savedTripId ?? undefined,
+    planPayload: folderPayload,
+  });
+  console.log('[TripFolder] success', { folderId: folder.id, action: 'created' });
+  return { folder, created: true, updated: false };
 }
 
 export async function createTripFolderFromSavedTrip(trip: SavedTrip): Promise<TripFolder> {

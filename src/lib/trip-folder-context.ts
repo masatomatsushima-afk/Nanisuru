@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { buildActiveTripContext, buildSecretaryTripBrief } from '@/lib/active-trip';
+import { buildTripFolderTitle } from '@/lib/save-plan-state';
 import { getDurationDisplayLabel } from '@/lib/trip-duration';
 import { getPublishedPlanForTrip } from '@/lib/public-plans';
 import { formatTripDateRangeLabel, formatTripScheduleSummary } from '@/lib/trip-schedule';
@@ -15,7 +16,7 @@ export type TripFolderEnrichedContext = {
 };
 
 function buildFolderTitleFromPayload(payload: SavedTripPayload, fallbackTitle?: string): string {
-  return fallbackTitle?.trim() || payload.location || '旅行';
+  return fallbackTitle?.trim() || buildTripFolderTitle(payload);
 }
 
 export async function buildTripFolderEnrichedContext(
@@ -55,6 +56,16 @@ export async function buildTripFolderEnrichedContext(
   sections.push(`期間: ${folder.durationLabel}`);
   sections.push(`同行: ${folder.companionType}`);
   sections.push(`予算: ${folder.budget || '未設定'} ${folder.currency}`);
+
+  if (payload?.travelPurpose?.trim()) {
+    sections.push(`旅行目的: ${payload.travelPurpose.trim()}`);
+  }
+  if (payload?.budgetIncludes?.length) {
+    sections.push(`予算に含める: ${payload.budgetIncludes.join('、')}`);
+  }
+  if (payload?.updatedAt) {
+    sections.push(`プラン最終更新: ${payload.updatedAt}`);
+  }
 
   if (tripContext) {
     sections.push('\n' + buildSecretaryTripBrief(tripContext));

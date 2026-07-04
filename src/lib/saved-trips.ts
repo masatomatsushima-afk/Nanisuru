@@ -1,4 +1,7 @@
+// Persisted in Supabase table `trips` (see supabase/trips.sql).
+// Optional normalized schema: supabase/saved_travel_plans.sql (not wired in app yet).
 import { buildFavoriteTitle } from '@/lib/favorites-storage';
+import { buildCurrentPlanPayload } from '@/lib/save-plan-state';
 import { getDurationDisplayLabel } from '@/lib/trip-duration';
 import { formatTripDateRangeLabel, formatTripScheduleSummary } from '@/lib/trip-schedule';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
@@ -43,11 +46,14 @@ export async function saveTrip(input: CreateSavedTripInput): Promise<SavedTrip> 
     throw new Error('ログインが必要です');
   }
 
+  const payload = buildCurrentPlanPayload(input);
+  console.log('[SavePlan] current plan state', payload);
+
   const title = buildFavoriteTitle(
-    input.location,
-    input.personality,
-    input.companion,
-    getDurationDisplayLabel(input.tripDuration, input.customDuration),
+    payload.location,
+    payload.personality,
+    payload.companion,
+    getDurationDisplayLabel(payload.tripDuration, payload.customDuration),
   );
 
   const { data, error } = await supabase
@@ -55,7 +61,7 @@ export async function saveTrip(input: CreateSavedTripInput): Promise<SavedTrip> 
     .insert({
       user_id: user.id,
       title,
-      payload: input,
+      payload,
     })
     .select('id, user_id, title, payload, created_at')
     .single();
@@ -64,7 +70,20 @@ export async function saveTrip(input: CreateSavedTripInput): Promise<SavedTrip> 
     throw new Error(error?.message ?? 'プランの保存に失敗しました');
   }
 
-  return rowToSavedTrip(data as TripRow);
+  const saved = rowToSavedTrip(data as TripRow);
+  console.log('[SavePlan] save success', saved);
+  return saved;
+}
+
+export async function saveOrUpdateTrip(
+  tripId: string | null | undefined,
+  input: CreateSavedTripInput,
+  options?: { preserveSavedAt?: string },
+): Promise<SavedTrip> {
+  if (tripId?.trim()) {
+    return updateTrip(tripId, input, undefined, options?.preserveSavedAt);
+  }
+  return saveTrip(input);
 }
 
 export async function getTripById(tripId: string): Promise<SavedTrip | null> {
@@ -139,6 +158,7 @@ export async function updateTrip(
   tripId: string,
   input: SavedTripPayload,
   title?: string,
+  preserveSavedAt?: string,
 ): Promise<SavedTrip> {
   assertTripsConfigured();
 
@@ -152,20 +172,26 @@ export async function updateTrip(
     throw new Error('ログインが必要です');
   }
 
+  const payload = buildCurrentPlanPayload({
+    ...input,
+    preserveSavedAt: preserveSavedAt ?? input.savedAt,
+  });
+  console.log('[SavePlan] current plan state', payload);
+
   const resolvedTitle =
     title ??
     buildFavoriteTitle(
-      input.location,
-      input.personality,
-      input.companion,
-      getDurationDisplayLabel(input.tripDuration, input.customDuration),
+      payload.location,
+      payload.personality,
+      payload.companion,
+      getDurationDisplayLabel(payload.tripDuration, payload.customDuration),
     );
 
   const { data, error } = await supabase
     .from('trips')
     .update({
       title: resolvedTitle,
-      payload: input,
+      payload,
     })
     .eq('id', tripId)
     .eq('user_id', user.id)
@@ -176,7 +202,9 @@ export async function updateTrip(
     throw new Error(error?.message ?? 'プランの更新に失敗しました');
   }
 
-  return rowToSavedTrip(data as TripRow);
+  const saved = rowToSavedTrip(data as TripRow);
+  console.log('[SavePlan] save success', saved);
+  return saved;
 }
 
 export async function deleteTrip(tripId: string): Promise<void> {

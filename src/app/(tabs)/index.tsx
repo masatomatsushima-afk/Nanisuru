@@ -118,6 +118,7 @@ import { saveWeatherReplan } from '@/lib/weather-replans';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import { buildItineraryItemId } from '@/types/itinerary-edit';
 import { saveItineraryEdit } from '@/lib/itinerary-edits';
+import { updateTrip } from '@/lib/saved-trips';
 import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import type {
   CompanionOption,
@@ -247,6 +248,8 @@ function ItineraryTimeline({
   isRegenerating,
   planType,
   onPlanUpdated,
+  budgetIncludes,
+  travelPurpose,
 }: {
   companion: CompanionOption;
   personality: PersonalityOption;
@@ -264,9 +267,12 @@ function ItineraryTimeline({
   isRegenerating: boolean;
   planType: PlanCreationType;
   onPlanUpdated?: (days: ItineraryDay[], items: ItineraryItem[], details: PlanDetails) => void;
+  budgetIncludes?: import('@/lib/travel-budget-includes').TravelBudgetIncludeOption[];
+  travelPurpose?: string;
 }) {
   const [showSuccess, setShowSuccess] = useState(false);
   const [savedTripId, setSavedTripId] = useState<string | null>(null);
+  const [preserveSavedAt, setPreserveSavedAt] = useState<string | undefined>(undefined);
   const [pendingRatingId, setPendingRatingId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<ItineraryEditTarget | null>(null);
   const [showEditSheet, setShowEditSheet] = useState(false);
@@ -284,11 +290,28 @@ function ItineraryTimeline({
     days,
     items,
     details,
+    budgetIncludes,
+    travelPurpose,
+  };
+
+  const syncSavedTripPayload = async (payload: SavedTripPayload) => {
+    if (!savedTripId) return;
+    try {
+      await updateTrip(savedTripId, payload, undefined, preserveSavedAt);
+    } catch {
+      // Local UI remains usable even if background sync fails.
+    }
   };
 
   const handleApplyEdit = async (result: PartialItineraryEditResult, editRequest: string) => {
     const nextPayload = applyPartialEditResult(editPayload, result);
     onPlanUpdated?.(nextPayload.days, nextPayload.items, nextPayload.details);
+    await syncSavedTripPayload({
+      ...nextPayload,
+      budgetIncludes,
+      travelPurpose,
+      savedAt: preserveSavedAt,
+    });
 
     if (savedTripId && editTarget) {
       await saveItineraryEdit({
@@ -315,6 +338,12 @@ function ItineraryTimeline({
     preview: WeatherReplanPreviewSuccess,
   ) => {
     onPlanUpdated?.(nextPayload.days, nextPayload.items, nextPayload.details);
+    await syncSavedTripPayload({
+      ...nextPayload,
+      budgetIncludes,
+      travelPurpose,
+      savedAt: preserveSavedAt,
+    });
     if (savedTripId) {
       await saveWeatherReplan({
         tripId: savedTripId,
@@ -364,6 +393,7 @@ function ItineraryTimeline({
 
   const handleTripSaved = (trip: SavedTrip) => {
     setSavedTripId(trip.id);
+    setPreserveSavedAt(trip.payload.savedAt);
     if (pendingRatingId) {
       void linkPlanRatingToTrip(pendingRatingId, trip.id);
     }
@@ -540,6 +570,10 @@ function ItineraryTimeline({
             days={days}
             items={items}
             details={details}
+            budgetIncludes={budgetIncludes}
+            travelPurpose={travelPurpose}
+            savedTripId={savedTripId}
+            preserveSavedAt={preserveSavedAt}
             onSaved={handleTripSaved}
           />
         </View>
@@ -1615,6 +1649,8 @@ export default function HomeScreen() {
                 onRegenerate={handleRegenerate}
                 isRegenerating={isLoading}
                 planType={planType}
+                budgetIncludes={travelBudgetIncludes}
+                travelPurpose={travelPurpose ?? undefined}
                 onPlanUpdated={(nextDays, nextItems, nextDetails) => {
                   setDays(nextDays);
                   setItinerary(nextItems);

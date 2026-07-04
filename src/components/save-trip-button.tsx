@@ -5,8 +5,9 @@ import { Alert } from 'react-native';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { useAuth } from '@/contexts/auth-context';
-import { saveTrip } from '@/lib/saved-trips';
+import { saveOrUpdateTrip } from '@/lib/saved-trips';
 import type { CurrencyCode } from '@/constants/currency';
+import type { TravelBudgetIncludeOption } from '@/lib/travel-budget-includes';
 import type {
   CompanionOption,
   ItineraryDay,
@@ -15,6 +16,8 @@ import type {
   PlanDetails,
   TripDurationOption,
 } from '@/types/plan';
+import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import type { CustomTripDuration } from '@/types/trip-schedule';
 import type { SavedTrip } from '@/types/trip';
 
 type SaveTripButtonProps = {
@@ -26,10 +29,17 @@ type SaveTripButtonProps = {
   companion: CompanionOption;
   personality: PersonalityOption;
   tripDuration: TripDurationOption;
-  customDuration?: import('@/types/trip-schedule').CustomTripDuration;
+  customDuration?: CustomTripDuration;
   days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;
+  budgetIncludes?: TravelBudgetIncludeOption[];
+  travelPurpose?: string;
+  customPreferences?: PlanCustomPreferences;
+  savedTripId?: string | null;
+  preserveSavedAt?: string;
+  label?: string;
+  variant?: 'primary' | 'secondary';
   onSaved?: (trip: SavedTrip) => void;
 };
 
@@ -46,6 +56,13 @@ export function SaveTripButton({
   days,
   items,
   details,
+  budgetIncludes,
+  travelPurpose,
+  customPreferences,
+  savedTripId,
+  preserveSavedAt,
+  label,
+  variant = 'secondary',
   onSaved,
 }: SaveTripButtonProps) {
   const { session, isConfigured } = useAuth();
@@ -73,7 +90,7 @@ export function SaveTripButton({
 
     setIsSaving(true);
     try {
-      const saved = await saveTrip({
+      const saved = await saveOrUpdateTrip(savedTripId, {
         location,
         budget,
         currency,
@@ -86,13 +103,15 @@ export function SaveTripButton({
         days,
         items,
         details,
-      });
+        budgetIncludes,
+        travelPurpose,
+        customPreferences,
+      }, { preserveSavedAt });
       onSaved?.(saved);
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 1600);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'プランの保存に失敗しました';
-      Alert.alert('保存エラー', message);
+    } catch {
+      Alert.alert('保存に失敗しました', '保存に失敗しました。もう一度お試しください');
     } finally {
       setIsSaving(false);
     }
@@ -100,12 +119,12 @@ export function SaveTripButton({
 
   return (
     <>
-      <SuccessOverlay visible={showSaved} message="プランを保存しました！" />
+      <SuccessOverlay visible={showSaved} message="プランを保存しました" />
       <PrimaryButton
-        label={isSaving ? '保存中...' : 'プランを保存'}
+        label={isSaving ? '保存中…' : (label ?? 'このプランを保存')}
         onPress={handleSave}
         disabled={isSaving}
-        variant="secondary"
+        variant={variant}
       />
     </>
   );

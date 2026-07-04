@@ -5,31 +5,47 @@ import { Alert } from 'react-native';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { useAuth } from '@/contexts/auth-context';
 import {
-  createTripFolderFromPayload,
+  createOrAttachTripFolder,
   createTripFolderFromSavedTrip,
   getTripFolderBySavedTripId,
 } from '@/lib/trip-folders';
+import { setLastSelectedTripFolderId } from '@/lib/trip-folder-context';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
+import type { TripFolder } from '@/types/trip-folder';
 
 type AddTripSecretaryFolderButtonProps =
   | {
       variant: 'saved-trip';
       trip: SavedTrip;
       label?: string;
+      onFolderAttached?: (folder: TripFolder) => void;
     }
   | {
       variant: 'plan-payload';
       payload: SavedTripPayload;
+      savedTripId?: string | null;
       title?: string;
       label?: string;
+      onFolderAttached?: (folder: TripFolder) => void;
     };
 
 export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButtonProps) {
   const { session, isConfigured } = useAuth();
   const [busy, setBusy] = useState(false);
-  const label =
-    props.label ??
-    (props.variant === 'saved-trip' ? '旅行秘書フォルダに追加' : 'この旅行の秘書を作る');
+  const label = props.label ?? '旅行秘書フォルダに追加';
+
+  const openAssistant = async (folderId: string) => {
+    await setLastSelectedTripFolderId(folderId);
+    router.push('/(tabs)/ai');
+  };
+
+  const showSuccess = (folder: TripFolder) => {
+    props.onFolderAttached?.(folder);
+    Alert.alert('旅行秘書フォルダに追加しました', 'この旅行の文脈でAI旅行秘書が相談に乗ります。', [
+      { text: 'OK' },
+      { text: '旅行秘書を開く', onPress: () => void openAssistant(folder.id) },
+    ]);
+  };
 
   const handlePress = async () => {
     if (!session) {
@@ -46,23 +62,31 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
       if (props.variant === 'saved-trip') {
         const existing = await getTripFolderBySavedTripId(props.trip.id);
         if (existing) {
-          Alert.alert('追加済み', 'このプランはすでに旅行秘書フォルダにあります。', [
-            { text: 'OK' },
-            { text: '秘書を開く', onPress: () => router.push('/(tabs)/ai') },
-          ]);
+          const result = await createOrAttachTripFolder({
+            payload: props.trip.payload,
+            savedTripId: props.trip.id,
+            title: props.trip.title,
+          });
+          showSuccess(result.folder);
           return;
         }
-        await createTripFolderFromSavedTrip(props.trip);
-      } else {
-        await createTripFolderFromPayload(props.payload, props.title);
+        const folder = await createTripFolderFromSavedTrip(props.trip);
+        console.log('[TripFolder] success', { folderId: folder.id, action: 'created-from-trip' });
+        showSuccess(folder);
+        return;
       }
 
-      Alert.alert('作成しました', 'AI旅行秘書タブでこの旅行フォルダを選んで相談できます。', [
-        { text: 'OK' },
-        { text: '秘書を開く', onPress: () => router.push('/(tabs)/ai') },
-      ]);
+      const result = await createOrAttachTripFolder({
+        payload: props.payload,
+        savedTripId: props.savedTripId,
+        title: props.title,
+      });
+      showSuccess(result.folder);
     } catch (error) {
-      Alert.alert('エラー', error instanceof Error ? error.message : 'フォルダの作成に失敗しました');
+      Alert.alert(
+        'エラー',
+        error instanceof Error ? error.message : '旅行秘書フォルダへの追加に失敗しました',
+      );
     } finally {
       setBusy(false);
     }
@@ -70,7 +94,7 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
 
   return (
     <PrimaryButton
-      label={busy ? '作成中...' : label}
+      label={busy ? '追加中…' : label}
       onPress={() => void handlePress()}
       disabled={busy}
       variant="secondary"
