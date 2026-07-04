@@ -14,7 +14,7 @@ import { formatCombinedMood } from './custom-preferences';
 import { getDurationDisplayLabel } from './trip-duration';
 import { validateTripSchedule } from './trip-schedule';
 import type { TripScheduleEditorValue } from '@/types/trip-schedule';
-import { AppError, APP_MESSAGES } from './app-errors';
+import { APP_MESSAGES, AppError, extractPlanGenerationErrorDetail } from './app-errors';
 
 export type NormalizedPlanGenerationInput = {
   planType?: PlanCreationType;
@@ -60,11 +60,28 @@ export function logPlanGenerationError(
   error: unknown,
   payload?: Record<string, unknown>,
 ): void {
-  const message = error instanceof Error ? error.message : String(error);
-  const stack = error instanceof Error ? error.stack : undefined;
+  const detail = extractPlanGenerationErrorDetail(error);
+  const record =
+    error && typeof error === 'object'
+      ? (error as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+
+  if (step === 'weather_fetch' || /天気情報|天気予報/.test(detail)) {
+    console.warn(`${LOG_PREFIX} weather warning (non-fatal)`, {
+      message: detail,
+      ...(payload ?? {}),
+    });
+    return;
+  }
+
   console.error(`${LOG_PREFIX} ERROR ${step}`, {
-    message,
-    stack,
+    message: detail,
+    name: error instanceof Error ? error.name : record.name,
+    status: record.status,
+    code: record.code,
+    type: record.type,
+    stack: error instanceof Error ? error.stack : undefined,
+    raw: error,
     ...(payload ?? {}),
   });
 }

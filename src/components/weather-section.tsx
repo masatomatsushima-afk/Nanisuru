@@ -14,6 +14,8 @@ type WeatherSectionProps = {
 };
 
 export function WeatherSection({ weather, compact = false }: WeatherSectionProps) {
+  const unavailable = weather.available === false;
+
   return (
     <View style={[styles.container, compact && styles.containerCompact]}>
       <View style={styles.header}>
@@ -21,26 +23,33 @@ export function WeatherSection({ weather, compact = false }: WeatherSectionProps
         <Text style={styles.title}>天気予報</Text>
         <Text style={styles.location}>{weather.locationName}</Text>
         {!compact ? <Text style={styles.summary}>{weather.summary}</Text> : null}
+        {unavailable ? (
+          <Text style={styles.unavailableNote}>
+            天気情報が取得できなかったため、天候に左右されにくいプランも含めています
+          </Text>
+        ) : null}
       </View>
 
-      <View style={styles.dayList}>
-        {weather.days.map((day) => (
-          <View key={day.date} style={styles.dayRow}>
-            <Text style={styles.dayIcon}>{getWeatherIcon(day.category)}</Text>
-            <View style={styles.dayContent}>
-              <Text style={styles.dayLabel}>{day.label}</Text>
-              <Text style={styles.dayCondition}>
-                {day.condition} · {day.summary}
-              </Text>
-              {day.preferIndoor ? (
-                <Text style={styles.dayHintIndoor}>屋内スポット優先</Text>
-              ) : day.preferOutdoor ? (
-                <Text style={styles.dayHintOutdoor}>屋外スポット優先</Text>
-              ) : null}
+      {!unavailable && weather.days.length > 0 ? (
+        <View style={styles.dayList}>
+          {weather.days.map((day) => (
+            <View key={day.date} style={styles.dayRow}>
+              <Text style={styles.dayIcon}>{getWeatherIcon(day.category)}</Text>
+              <View style={styles.dayContent}>
+                <Text style={styles.dayLabel}>{day.label}</Text>
+                <Text style={styles.dayCondition}>
+                  {day.condition} · {day.summary}
+                </Text>
+                {day.preferIndoor ? (
+                  <Text style={styles.dayHintIndoor}>屋内スポット優先</Text>
+                ) : day.preferOutdoor ? (
+                  <Text style={styles.dayHintOutdoor}>屋外スポット優先</Text>
+                ) : null}
+              </View>
             </View>
-          </View>
-        ))}
-      </View>
+          ))}
+        </View>
+      ) : null}
 
       {compact ? <Text style={styles.compactSummary}>{weather.summary}</Text> : null}
     </View>
@@ -83,6 +92,12 @@ const styles = StyleSheet.create({
     ...NS.typography.bodySm,
     marginTop: Spacing.two,
     lineHeight: 22,
+  },
+  unavailableNote: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: Spacing.two,
   },
   compactSummary: {
     color: NS.colors.textSecondary,

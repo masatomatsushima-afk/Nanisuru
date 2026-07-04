@@ -117,6 +117,7 @@ export function PlanLoadingScreen({
         <View style={[styles.card, gradientStyle('hero')]}>
           <Text style={styles.brand}>✨ Nanisuru</Text>
           <Text style={styles.headline}>{uiState.headline}</Text>
+          {uiState.subtitle ? <Text style={styles.subtitle}>{uiState.subtitle}</Text> : null}
           <Text style={styles.estimate}>{uiState.estimateLabel}</Text>
           <Text style={styles.remaining}>{uiState.remainingLabel}</Text>
 
@@ -206,6 +207,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: Spacing.three,
     fontWeight: '800',
+  },
+  subtitle: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+    textAlign: 'center',
+    marginTop: Spacing.one,
+    fontWeight: '600',
   },
   estimate: {
     color: NS.colors.coral,

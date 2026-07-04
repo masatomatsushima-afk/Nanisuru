@@ -24,7 +24,7 @@ import {
 } from './best-day';
 import { buildConciergePrompt, type PlanInput } from './prompts';
 import { flattenItineraryDays, resolveDurationConfig } from './trip-duration';
-import { fetchWeatherForecast, getTodayIsoDate, type WeatherForecast } from './weather';
+import { fetchWeatherForecast, getTodayIsoDate, resolveWeatherLocation, createUnavailableWeatherForecast, type WeatherForecast } from './weather';
 import { getUserPreferences } from './user-memory';
 import { getTravelMemories } from './travel-memory';
 import {
@@ -50,7 +50,7 @@ import {
 import { finalizeItineraryBeforeDisplay } from './finalize-itinerary';
 import { isAbortError } from './plan-generation-progress';
 import { inferCurrencyFromLocation } from './location-currency';
-import { APP_MESSAGES, AppError, classifyError, isNetworkError } from './app-errors';
+import { APP_MESSAGES, AppError, isNetworkError, OpenAiRequestError } from './app-errors';
 import { learnFromCustomPreferences } from './custom-preferences';
 import {
   buildPlanGenerationLogPayload,
@@ -287,6 +287,27 @@ function symbolHint(_key: string): string {
   return '現地通貨記号付き';
 }
 
+const TOUR_SUGGESTION_ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    dayNumber: {
+      type: ['number', 'null'],
+      description: 'Suggested day number (1-based), or null if not tied to a specific day',
+    },
+    title: { type: 'string', description: 'Tour suggestion title in Japanese' },
+    description: {
+      type: 'string',
+      description: 'Why this tour fits the trip in Japanese, mention booking if needed',
+    },
+    needsBooking: {
+      type: 'boolean',
+      description: 'True if advance booking is likely required',
+    },
+  },
+  required: ['dayNumber', 'title', 'description', 'needsBooking'],
+  additionalProperties: false,
+} as const;
+
 function buildPlanJsonSchema(
   tripDuration: TripDurationOption,
   includeAiAdvice: boolean,
@@ -376,23 +397,7 @@ function buildPlanJsonSchema(
   if (options?.includeTourSuggestions) {
     properties.tourSuggestions = {
       type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          dayNumber: { type: 'number', description: 'Optional day number for the suggestion' },
-          title: { type: 'string', description: 'Tour suggestion title in Japanese' },
-          description: {
-            type: 'string',
-            description: 'Why this tour fits the trip in Japanese, mention booking if needed',
-          },
-          needsBooking: {
-            type: 'boolean',
-            description: 'True if advance booking is likely required',
-          },
-        },
-        required: ['title', 'description', 'needsBooking'],
-        additionalProperties: false,
-      },
+      items: TOUR_SUGGESTION_ITEM_SCHEMA,
       minItems: 1,
       maxItems: 4,
       description: 'Optional tour and local experience suggestions for multi-day trips',
@@ -572,7 +577,12 @@ function parseAiResponse(
       highlights: parsed.highlights ?? [],
       rainyDayAlternatives: parsed.rainyDayAlternatives ?? [],
       aiAdvice: includeAiAdvice ? parsed.aiAdvice : undefined,
-      tourSuggestions: parsed.tourSuggestions,
+      tourSuggestions: parsed.tourSuggestions?.map((suggestion) => ({
+        dayNumber: suggestion.dayNumber ?? undefined,
+        title: suggestion.title,
+        description: suggestion.description,
+        needsBooking: suggestion.needsBooking,
+      })),
       travelTiming,
     },
   };
@@ -603,39 +613,30 @@ function extractResponseText(data: unknown): string {
   throw new Error('AIからの応答が空でした');
 }
 
-function parseApiError(status: number, body: string): never {
-  logPlanGenerationError('openai_api_response', new Error(`HTTP ${status}`), {
-    status,
-    body: body.slice(0, 2000),
+function logFetchPlanFromAiRawError(error: unknown): void {
+  const record =
+    error && typeof error === 'object'
+      ? (error as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+
+  console.error('[fetchPlanFromAi] RAW ERROR', {
+    name: error instanceof Error ? error.name : record.name,
+    message: error instanceof Error ? error.message : String(error),
+    status: record.status,
+    code: record.code,
+    type: record.type,
+    stack: error instanceof Error ? error.stack : undefined,
+    raw: error,
   });
+}
 
-  if (status === 0 || status >= 500) {
-    throw new AppError(APP_MESSAGES.openAiApiFailed, 'OPENAI_FAILED');
-  }
-
-  try {
-    const error = JSON.parse(body) as { error?: { message?: string; type?: string } };
-    const message = error.error?.message;
-    if (message) {
-      if (/rate limit|timeout|overloaded|server/i.test(message)) {
-        throw new AppError(APP_MESSAGES.openAiApiFailed, 'OPENAI_FAILED');
-      }
-      if (/json_schema|schema|required|invalid/i.test(message)) {
-        throw new AppError(
-          `AIプランの形式エラーが発生しました。(${message.slice(0, 120)})`,
-          'OPENAI_FAILED',
-        );
-      }
-      throw new AppError(
-        `AI APIエラー: ${message.slice(0, 160)}`,
-        'OPENAI_FAILED',
-      );
-    }
-  } catch (parseErr) {
-    if (parseErr instanceof AppError) throw parseErr;
-  }
-
-  throw new AppError(APP_MESSAGES.openAiApiFailed, 'OPENAI_FAILED');
+function throwOpenAiHttpError(status: number, statusText: string, errorBody: string): never {
+  console.error('[fetchPlanFromAi] OpenAI response error', {
+    status,
+    statusText,
+    body: errorBody,
+  });
+  throw new OpenAiRequestError(status, statusText, errorBody);
 }
 
 async function fetchPlanFromAi(params: {
@@ -664,6 +665,36 @@ async function fetchPlanFromAi(params: {
     promptLength: userPrompt.length,
   });
 
+  const model = 'gpt-4o-mini';
+  const schemaName = params.includeAiAdvice ? 'nanisuru_trip_plan_with_advice' : 'nanisuru_trip_plan';
+  const requestPayload = {
+    model,
+    input: [
+      { role: 'system', content: params.systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: schemaName,
+        strict: true,
+        schema: buildPlanJsonSchema(
+          params.tripDuration,
+          params.includeAiAdvice,
+          params.schemaOverrides,
+          params.customDuration,
+          params.planInput.budgetScope,
+          { includeTourSuggestions },
+        ),
+      },
+    },
+  };
+
+  console.log('[fetchPlanFromAi] start');
+  console.log('[fetchPlanFromAi] hasOpenAIKey', Boolean(process.env.EXPO_PUBLIC_OPENAI_API_KEY));
+  console.log('[fetchPlanFromAi] model', model);
+  console.log('[fetchPlanFromAi] request payload', requestPayload);
+
   let response: Response;
   try {
     response = await fetch('https://api.openai.com/v1/responses', {
@@ -673,30 +704,10 @@ async function fetchPlanFromAi(params: {
         Authorization: `Bearer ${params.apiKey}`,
       },
       signal: params.planInput.abortSignal,
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        input: [
-          { role: 'system', content: params.systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: params.includeAiAdvice ? 'nanisuru_trip_plan_with_advice' : 'nanisuru_trip_plan',
-            strict: true,
-            schema: buildPlanJsonSchema(
-              params.tripDuration,
-              params.includeAiAdvice,
-              params.schemaOverrides,
-              params.customDuration,
-              params.planInput.budgetScope,
-              { includeTourSuggestions },
-            ),
-          },
-        },
-      }),
+      body: JSON.stringify(requestPayload),
     });
   } catch (err) {
+    logFetchPlanFromAiRawError(err);
     logPlanGenerationError('openai_fetch', err);
     if (params.planInput.abortSignal?.aborted || isAbortError(err)) {
       throw err;
@@ -704,12 +715,12 @@ async function fetchPlanFromAi(params: {
     if (isNetworkError(err)) {
       throw new AppError(APP_MESSAGES.networkError, 'NETWORK_ERROR');
     }
-    throw classifyError(err);
+    throw err instanceof Error ? err : new Error(String(err));
   }
 
   if (!response.ok) {
-    const errorBody = await response.text();
-    parseApiError(response.status, errorBody);
+    const errorText = await response.text();
+    throwOpenAiHttpError(response.status, response.statusText, errorText);
   }
 
   const data = await response.json();
@@ -725,8 +736,9 @@ async function fetchPlanFromAi(params: {
       params.planInput.travelTiming,
     );
   } catch (err) {
+    logFetchPlanFromAiRawError(err);
     logPlanGenerationError('openai_parse', err, { responsePreview: JSON.stringify(data).slice(0, 800) });
-    throw new AppError(APP_MESSAGES.openAiApiFailed, 'OPENAI_FAILED');
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }
 
@@ -867,28 +879,47 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
 
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
-    throw new AppError(APP_MESSAGES.openAiNotConfigured, 'OPENAI_FAILED');
+    console.error('[fetchPlanFromAi] missing API key', {
+      hasEnvVar: Boolean(process.env.EXPO_PUBLIC_OPENAI_API_KEY),
+    });
+    throw new Error(
+      'EXPO_PUBLIC_OPENAI_API_KEY is missing or invalid. Add it to .env and restart Expo with npx expo start -c',
+    );
   }
 
-  let weather: WeatherForecast | undefined;
+  let weather: WeatherForecast;
   const locationTrimmed = normalized.location;
   if (!locationTrimmed) {
     throw new AppError(APP_MESSAGES.locationRequired, 'NO_PLACES_FOUND');
   }
 
-  let realPlaces;
   try {
+    const weatherLocation = resolveWeatherLocation(locationTrimmed);
     weather = await fetchWeatherForecast({
       location: locationTrimmed,
       startDate: input.tripDate,
       tripDuration: input.tripDuration,
       endDate: input.tripEndDate,
       customDuration: input.customDuration,
-    }).catch((err) => {
-      logPlanGenerationError('weather_fetch', err);
-      return undefined;
     });
 
+    if (!weather.available) {
+      console.warn('[Weather] using fallback weather context', {
+        destination: locationTrimmed,
+        weatherLocation,
+        searchLocation: weather.searchLocation,
+      });
+    }
+  } catch (error) {
+    console.warn('[Weather] fetch failed, continuing without weather', error);
+    weather = createUnavailableWeatherForecast(
+      locationTrimmed,
+      resolveWeatherLocation(locationTrimmed),
+    );
+  }
+
+  let realPlaces;
+  try {
     realPlaces = await fetchRealPlacesForLocation(locationTrimmed);
     logPlanGenerationStep('places', {
       count: realPlaces.places.length,
@@ -897,7 +928,7 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
       sample: realPlaces.places.slice(0, 3).map((place) => place.name),
     });
   } catch (err) {
-    logPlanGenerationError('places_fetch', err);
+    console.warn('[Places] fetch failed, continuing with fallback places context', err);
     if (err instanceof AppError && err.code === 'NO_PLACES_FOUND') {
       throw err;
     }

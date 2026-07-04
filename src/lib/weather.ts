@@ -3,7 +3,7 @@ import type { CustomTripDuration } from '@/types/trip-schedule';
 
 import { getDayCountForDuration } from './trip-duration';
 
-export type WeatherCategory = 'sunny' | 'partly_cloudy' | 'cloudy' | 'rainy' | 'snow';
+export type WeatherCategory = 'sunny' | 'partly_cloudy' | 'cloudy' | 'rainy' | 'snow' | 'unknown';
 
 export type WeatherDayForecast = {
   date: string;
@@ -19,11 +19,19 @@ export type WeatherDayForecast = {
 };
 
 export type WeatherForecast = {
+  available: boolean;
   locationName: string;
+  /** Geocoding query used when different from the trip destination (e.g. 韓国 → Seoul). */
+  searchLocation?: string;
   days: WeatherDayForecast[];
   summary: string;
   hasRainExpected: boolean;
   isMostlySunny: boolean;
+  temperature?: number | null;
+  minTemperature?: number | null;
+  maxTemperature?: number | null;
+  rainChance?: number | null;
+  condition?: WeatherCategory;
 };
 
 type GeocodingResponse = {
@@ -45,6 +53,94 @@ type ForecastResponse = {
     precipitation_probability_max: number[];
   };
 };
+
+type CountryWeatherMapping = {
+  patterns: RegExp[];
+  city: string;
+};
+
+const COUNTRY_WEATHER_MAPPINGS: CountryWeatherMapping[] = [
+  {
+    patterns: [
+      /^韓国(?:旅行|観光|ツアー)?$/i,
+      /^korea$/i,
+      /^south\s*korea$/i,
+      /^대한민국$/i,
+      /^republic of korea$/i,
+    ],
+    city: 'Seoul',
+  },
+  {
+    patterns: [/^日本(?:旅行|観光|ツアー)?$/i, /^japan$/i, /^にほん$/i, /^ニホン$/i],
+    city: 'Tokyo',
+  },
+  {
+    patterns: [/^オーストラリア(?:旅行|観光|ツアー)?$/i, /^australia$/i],
+    city: 'Sydney',
+  },
+  {
+    patterns: [/^タイ(?:旅行|観光|ツアー)?$/i, /^thailand$/i],
+    city: 'Bangkok',
+  },
+  {
+    patterns: [/^フランス(?:旅行|観光|ツアー)?$/i, /^france$/i],
+    city: 'Paris',
+  },
+  {
+    patterns: [
+      /^アメリカ(?:旅行|観光|ツアー)?$/i,
+      /^usa$/i,
+      /^u\.?s\.?a\.?$/i,
+      /^united\s*states$/i,
+      /^united\s*states of america$/i,
+      /^america$/i,
+    ],
+    city: 'New York',
+  },
+];
+
+function stripTravelSuffix(destination: string): string {
+  return destination
+    .replace(/(旅行|観光|ツアー|trip|travel|へ|への)$/i, '')
+    .trim();
+}
+
+/** Map broad country/region names to a default city for weather geocoding only. */
+export function resolveWeatherLocation(destination: string): string {
+  const normalized = destination.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  if (!normalized) return destination;
+
+  const stripped = stripTravelSuffix(normalized);
+  const candidates = [normalized, stripped, normalized.toLowerCase(), stripped.toLowerCase()];
+
+  for (const entry of COUNTRY_WEATHER_MAPPINGS) {
+    if (entry.patterns.some((pattern) => candidates.some((value) => pattern.test(value)))) {
+      return entry.city;
+    }
+  }
+
+  return normalized;
+}
+
+export function createUnavailableWeatherForecast(
+  destination: string,
+  searchLocation?: string,
+): WeatherForecast {
+  return {
+    available: false,
+    locationName: destination,
+    searchLocation,
+    days: [],
+    summary: '天気情報は取得できませんでした',
+    hasRainExpected: false,
+    isMostlySunny: false,
+    temperature: null,
+    minTemperature: null,
+    maxTemperature: null,
+    rainChance: null,
+    condition: 'unknown',
+  };
+}
 
 export function formatIsoDate(date: Date): string {
   const year = date.getFullYear();
@@ -120,30 +216,41 @@ function classifyDay(
   return { preferIndoor, preferOutdoor };
 }
 
-async function geocodeLocation(location: string): Promise<{ name: string; latitude: number; longitude: number }> {
+async function geocodeLocation(
+  location: string,
+): Promise<{ name: string; latitude: number; longitude: number } | null> {
   const query = location.trim();
-  const url =
-    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}` +
-    '&count=5&language=ja&format=json';
+  if (!query) return null;
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error('場所の天気情報を取得できませんでした');
+  try {
+    const url =
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}` +
+      '&count=5&language=ja&format=json';
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.warn('[Weather] geocode request failed', { query, status: response.status });
+      return null;
+    }
+
+    const data = (await response.json()) as GeocodingResponse;
+    const result = data.results?.[0];
+
+    if (!result) {
+      console.warn('[Weather] geocode returned no results', { query });
+      return null;
+    }
+
+    const name = [result.name, result.admin1, result.country].filter(Boolean).join('・');
+    return {
+      name,
+      latitude: result.latitude,
+      longitude: result.longitude,
+    };
+  } catch (error) {
+    console.warn('[Weather] geocode failed', { query, error });
+    return null;
   }
-
-  const data = (await response.json()) as GeocodingResponse;
-  const result = data.results?.[0];
-
-  if (!result) {
-    throw new Error(`「${query}」の天気情報が見つかりませんでした`);
-  }
-
-  const name = [result.name, result.admin1, result.country].filter(Boolean).join('・');
-  return {
-    name,
-    latitude: result.latitude,
-    longitude: result.longitude,
-  };
 }
 
 async function fetchDailyForecast(
@@ -151,23 +258,30 @@ async function fetchDailyForecast(
   longitude: number,
   startDate: string,
   endDate: string,
-): Promise<ForecastResponse['daily']> {
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
-    `&timezone=auto&start_date=${startDate}&end_date=${endDate}`;
+): Promise<ForecastResponse['daily'] | null> {
+  try {
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+      '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+      `&timezone=auto&start_date=${startDate}&end_date=${endDate}`;
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error('天気予報の取得に失敗しました');
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.warn('[Weather] forecast request failed', { status: response.status });
+      return null;
+    }
+
+    const data = (await response.json()) as ForecastResponse;
+    if (!data.daily?.time?.length) {
+      console.warn('[Weather] forecast returned no daily data');
+      return null;
+    }
+
+    return data.daily;
+  } catch (error) {
+    console.warn('[Weather] forecast fetch failed', error);
+    return null;
   }
-
-  const data = (await response.json()) as ForecastResponse;
-  if (!data.daily?.time?.length) {
-    throw new Error('天気予報データがありません');
-  }
-
-  return data.daily;
 }
 
 function buildOverallSummary(days: WeatherDayForecast[]): string {
@@ -199,22 +313,28 @@ function buildOverallSummary(days: WeatherDayForecast[]): string {
   return `${days.length}日間の天気を確認しました。日ごとに最適なスポットを提案します。`;
 }
 
-export async function fetchWeatherForecast(input: {
-  location: string;
-  startDate: string;
-  tripDuration: TripDurationOption;
-  endDate?: string;
-  customDuration?: CustomTripDuration | null;
-}): Promise<WeatherForecast> {
-  const { startDate, endDate } = getTripDateRange(input.startDate, input.tripDuration, {
-    endDate: input.endDate,
-    customDuration: input.customDuration,
-  });
-  const geocoded = await geocodeLocation(input.location);
-  const daily = await fetchDailyForecast(geocoded.latitude, geocoded.longitude, startDate, endDate);
+async function fetchWeatherForecastForQuery(
+  tripDestination: string,
+  geocodeQuery: string,
+  input: {
+    startDate: string;
+    endDate: string;
+  },
+): Promise<WeatherForecast | null> {
+  const geocoded = await geocodeLocation(geocodeQuery);
+  if (!geocoded) {
+    return null;
+  }
+
+  const daily = await fetchDailyForecast(
+    geocoded.latitude,
+    geocoded.longitude,
+    input.startDate,
+    input.endDate,
+  );
 
   if (!daily) {
-    throw new Error('天気予報データがありません');
+    return null;
   }
 
   const days: WeatherDayForecast[] = daily.time.map((date, index) => {
@@ -240,14 +360,72 @@ export async function fetchWeatherForecast(input: {
   });
 
   const summary = buildOverallSummary(days);
+  const firstDay = days[0];
 
   return {
-    locationName: geocoded.name,
+    available: true,
+    locationName: tripDestination,
+    searchLocation: geocodeQuery !== tripDestination ? geocodeQuery : undefined,
     days,
-    summary,
+    summary: geocodeQuery !== tripDestination
+      ? `${summary}（天気参照: ${geocoded.name}）`
+      : summary,
     hasRainExpected: days.some((day) => day.preferIndoor),
     isMostlySunny: days.every((day) => day.preferOutdoor),
+    temperature: firstDay ? firstDay.temperatureMax : null,
+    minTemperature: firstDay ? firstDay.temperatureMin : null,
+    maxTemperature: firstDay ? firstDay.temperatureMax : null,
+    rainChance: firstDay ? firstDay.precipitationProbability : null,
+    condition: firstDay?.category,
   };
+}
+
+/**
+ * Fetch weather for a trip destination. Never throws — returns unavailable fallback on failure.
+ * Broad destinations (countries) are mapped to a default city via resolveWeatherLocation.
+ * The trip destination label is preserved; only the geocoding query may differ.
+ */
+export async function fetchWeatherForecast(input: {
+  location: string;
+  startDate: string;
+  tripDuration: TripDurationOption;
+  endDate?: string;
+  customDuration?: CustomTripDuration | null;
+}): Promise<WeatherForecast> {
+  const tripDestination = input.location.trim();
+  if (!tripDestination) {
+    return createUnavailableWeatherForecast(tripDestination);
+  }
+
+  try {
+    const { startDate, endDate } = getTripDateRange(input.startDate, input.tripDuration, {
+      endDate: input.endDate,
+      customDuration: input.customDuration,
+    });
+
+    const resolvedQuery = resolveWeatherLocation(tripDestination);
+    const queries =
+      resolvedQuery === tripDestination ? [tripDestination] : [resolvedQuery, tripDestination];
+
+    for (const query of queries) {
+      const forecast = await fetchWeatherForecastForQuery(tripDestination, query, {
+        startDate,
+        endDate,
+      });
+      if (forecast) {
+        return forecast;
+      }
+      console.warn('[Weather] fetch failed, continuing without weather', { query, tripDestination });
+    }
+
+    return createUnavailableWeatherForecast(tripDestination, resolvedQuery);
+  } catch (error) {
+    console.warn('[Weather] fetch failed, continuing without weather', error);
+    return createUnavailableWeatherForecast(
+      tripDestination,
+      resolveWeatherLocation(tripDestination),
+    );
+  }
 }
 
 export function getWeatherIcon(category: WeatherCategory): string {
@@ -262,7 +440,13 @@ export function getWeatherIcon(category: WeatherCategory): string {
       return '🌧';
     case 'snow':
       return '❄️';
+    case 'unknown':
+      return '🌤';
     default:
       return '🌤';
   }
+}
+
+export function isWeatherFetchErrorMessage(message: string): boolean {
+  return /天気情報|天気予報|weather/i.test(message);
 }

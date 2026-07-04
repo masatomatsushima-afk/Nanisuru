@@ -56,6 +56,85 @@ export class AppError extends Error {
   }
 }
 
+export class OpenAiRequestError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+  readonly body: string;
+
+  constructor(status: number, statusText: string, body: string) {
+    super(formatOpenAiHttpErrorMessage(status, statusText, body));
+    this.name = 'OpenAiRequestError';
+    this.status = status;
+    this.statusText = statusText;
+    this.body = body;
+  }
+}
+
+export function formatOpenAiHttpErrorMessage(
+  status: number,
+  statusText: string,
+  errorBody: string,
+): string {
+  if (!errorBody.trim()) {
+    return `OpenAI request failed: ${status} ${statusText}`;
+  }
+
+  try {
+    const parsed = JSON.parse(errorBody) as {
+      error?: { message?: string; type?: string; code?: string };
+    };
+    const apiError = parsed.error;
+    if (apiError?.message) {
+      return [
+        `OpenAI ${status} ${statusText}`,
+        apiError.type ? `type=${apiError.type}` : null,
+        apiError.code ? `code=${apiError.code}` : null,
+        apiError.message,
+      ]
+        .filter(Boolean)
+        .join(' | ');
+    }
+  } catch {
+    // Not JSON — return raw body below.
+  }
+
+  return errorBody;
+}
+
+export function extractPlanGenerationErrorDetail(error: unknown): string {
+  if (error instanceof OpenAiRequestError) {
+    return `[HTTP ${error.status} ${error.statusText}] ${error.message}\n\n${error.body}`;
+  }
+
+  if (error instanceof AppError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    const message = error.message;
+    try {
+      const parsed = JSON.parse(message) as {
+        error?: { message?: string; type?: string; code?: string };
+      };
+      if (parsed.error?.message) {
+        const apiError = parsed.error;
+        return [
+          apiError.type ? `type=${apiError.type}` : null,
+          apiError.code ? `code=${apiError.code}` : null,
+          apiError.message,
+        ]
+          .filter(Boolean)
+          .join(' | ');
+      }
+    } catch {
+      // Not JSON.
+    }
+    return message;
+  }
+
+  return String(error);
+}
+
 const NETWORK_PATTERNS = [
   /network request failed/i,
   /failed to fetch/i,
@@ -102,17 +181,26 @@ export function classifyError(error: unknown): AppError {
   if (message === APP_MESSAGES.authRequired || /ログインが必要/.test(message)) {
     return new AppError(APP_MESSAGES.authRequired, 'AUTH_REQUIRED');
   }
-  if (message === APP_MESSAGES.dataNotFound || /見つかりません/.test(message)) {
+  if (message === APP_MESSAGES.dataNotFound) {
+    return new AppError(message, 'NOT_FOUND');
+  }
+  if (/見つかりません/.test(message) && !/天気情報|天気予報/.test(message)) {
     return new AppError(message, 'NOT_FOUND');
   }
   if (SUPABASE_PATTERNS.some((pattern) => pattern.test(message))) {
     return new AppError(APP_MESSAGES.supabaseFailed, 'SUPABASE_FAILED');
   }
-  if (OPENAI_PATTERNS.some((pattern) => pattern.test(message))) {
-    return new AppError(APP_MESSAGES.openAiFailed, 'OPENAI_FAILED');
+  if (error instanceof OpenAiRequestError || OPENAI_PATTERNS.some((pattern) => pattern.test(message))) {
+    return new AppError(message, 'OPENAI_FAILED');
   }
 
   return new AppError(message, 'UNKNOWN');
+}
+
+export function formatPlanGenerationDevError(userMessage: string, error: unknown): string {
+  if (!__DEV__) return userMessage;
+  const detail = extractPlanGenerationErrorDetail(error);
+  return `${userMessage}\n\n開発用エラー:\n${detail}`;
 }
 
 export function getErrorMessage(error: unknown): string {
@@ -121,11 +209,15 @@ export function getErrorMessage(error: unknown): string {
 
 export function getPlanGenerationErrorMessage(error: unknown): string {
   const classified = classifyError(error);
+  const detail = extractPlanGenerationErrorDetail(error);
 
   switch (classified.code) {
     case 'INPUT_INCOMPLETE':
       return classified.message || APP_MESSAGES.inputIncomplete;
     case 'OPENAI_FAILED':
+      if (__DEV__) {
+        return `${APP_MESSAGES.openAiApiFailed}\n\n開発用エラー:\n${detail}`;
+      }
       return APP_MESSAGES.openAiApiFailed;
     case 'PLACES_API_FAILED':
       return APP_MESSAGES.placesApiFailed;

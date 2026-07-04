@@ -392,7 +392,19 @@ ${accommodationRule}
       : tripDateLabel;
 
   const weatherSection = input.weather
-    ? `
+    ? input.weather.available === false
+      ? `
+
+## 天気予報（取得不可・必ず反映）
+天気情報は取得できなかったため、天候に左右されにくい候補も含めてください。
+${input.weather.summary}
+
+### 天気不明時のスポット選定
+- **屋内・屋外をバランスよく**組み合わせ、天候が変わっても柔軟に楽しめるプランにすること
+- 各スポットの weatherBackup に、雨や暑さなど天候変化時の代替案を必ず記載すること
+- rainyDayAlternatives には、雨の日でも楽しめる具体的な代替スポットを記載すること
+- plannerMessage に「天候に左右されにくい過ごし方もご提案します」等の一言を含めること`
+      : `
 
 ## 天気予報（${input.weather.locationName}・必ず反映）
 ${input.weather.summary}

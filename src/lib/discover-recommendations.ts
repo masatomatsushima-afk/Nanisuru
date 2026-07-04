@@ -135,15 +135,12 @@ async function fetchWeatherForLocation(
   const query = location?.city || location?.label || areaQuery.trim();
   if (!query) return null;
 
-  try {
-    return await fetchWeatherForecast({
-      location: query,
-      startDate: getTodayIsoDate(),
-      tripDuration: '半日',
-    });
-  } catch {
-    return null;
-  }
+  const forecast = await fetchWeatherForecast({
+    location: query,
+    startDate: getTodayIsoDate(),
+    tripDuration: '半日',
+  });
+  return forecast.available ? forecast : null;
 }
 
 export async function buildRecommendationContext(

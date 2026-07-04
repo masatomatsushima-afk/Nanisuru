@@ -13,32 +13,32 @@ export type GenerationTimeEstimate = {
 export const PLAN_LOADING_STAGES = [
   {
     icon: '📍',
-    label: '実在スポットを探しています',
+    label: '実在スポットを探しています…',
     hint: 'Google Places から実在スポットを取得中',
   },
   {
+    icon: '🌤',
+    label: '天気を確認しています…',
+    hint: '旅行期間の天気予報を確認中',
+  },
+  {
     icon: '🧭',
-    label: 'AIが旅行全体の流れを設計しています',
+    label: '旅行の流れを設計しています…',
     hint: '日程全体のテーマと流れを組み立て中',
   },
   {
-    icon: '🗓',
-    label: '各日のプランを作成しています',
-    hint: '日ごとのスポットと体験を配置中',
-  },
-  {
     icon: '💰',
-    label: '予算を最適化しています',
-    hint: '選択した予算項目に合わせて配分中',
+    label: '予算を調整しています…',
+    hint: '選択した予算に合わせて配分中',
   },
   {
     icon: '🗺',
-    label: 'ルート情報を準備しています',
+    label: '移動ルートを整えています…',
     hint: '移動しやすい順序と時間を調整中',
   },
   {
     icon: '✨',
-    label: '最終チェック中です',
+    label: '最終チェック中…',
     hint: 'プラン全体を確認しています',
   },
 ] as const;
@@ -132,6 +132,7 @@ export type PlanLoadingUiState = {
   step: number;
   progress: number;
   headline: string;
+  subtitle?: string;
   estimateLabel: string;
   remainingLabel: string;
   statusHint: string;
@@ -150,6 +151,8 @@ export function createPlanGenerationProgress(input: {
   tripDuration: TripDurationOption;
   customDuration?: CustomTripDuration | null;
   durationLabel: string;
+  headline?: string;
+  subtitle?: string;
   onUpdate: (state: PlanLoadingUiState) => void;
 }): PlanGenerationProgressHandle {
   const estimate = getGenerationTimeEstimate(input.tripDuration, input.customDuration);
@@ -168,7 +171,8 @@ export function createPlanGenerationProgress(input: {
     input.onUpdate({
       step,
       progress,
-      headline: buildLoadingHeadline(input.durationLabel),
+      headline: input.headline ?? buildLoadingHeadline(input.durationLabel),
+      subtitle: input.subtitle,
       estimateLabel: buildEstimateMessage(estimate),
       remainingLabel: longRunning
         ? '完成まであと少し'
@@ -194,7 +198,7 @@ export function createPlanGenerationProgress(input: {
         const rawProgress = elapsedSec / estimate.maxSeconds;
         const easedProgress = Math.min(0.92, rawProgress * 0.88 + 0.04);
         emit(easedProgress);
-      }, 450);
+      }, 1000);
     },
     stop() {
       stopped = true;
@@ -212,10 +216,11 @@ export function createPlanGenerationProgress(input: {
       input.onUpdate({
         step: PLAN_LOADING_STAGES.length - 1,
         progress: 1,
-        headline: buildLoadingHeadline(input.durationLabel),
+        headline: input.headline ?? buildLoadingHeadline(input.durationLabel),
+        subtitle: input.subtitle,
         estimateLabel: '完成しました',
         remainingLabel: 'もうすぐ表示します',
-        statusHint: '最終チェック中です',
+        statusHint: PLAN_LOADING_STAGES[PLAN_LOADING_STAGES.length - 1].hint,
         isLongRunning: false,
         showMultiDayNote: false,
       });

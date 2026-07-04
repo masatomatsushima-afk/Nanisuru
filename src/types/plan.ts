@@ -94,26 +94,8 @@ export type BudgetBreakdown = {
   customItems?: BudgetCustomLineItem[];
 };
 
-export type WeatherDayForecast = {
-  date: string;
-  label: string;
-  condition: string;
-  category: 'sunny' | 'partly_cloudy' | 'cloudy' | 'rainy' | 'snow';
-  temperatureMax: number;
-  temperatureMin: number;
-  precipitationProbability: number;
-  preferIndoor: boolean;
-  preferOutdoor: boolean;
-  summary: string;
-};
-
-export type WeatherForecast = {
-  locationName: string;
-  days: WeatherDayForecast[];
-  summary: string;
-  hasRainExpected: boolean;
-  isMostlySunny: boolean;
-};
+export type WeatherDayForecast = import('@/lib/weather').WeatherDayForecast;
+export type WeatherForecast = import('@/lib/weather').WeatherForecast;
 
 export type PlanDetails = {
   totalBudget: string;

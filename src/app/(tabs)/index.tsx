@@ -21,7 +21,7 @@ import {
   type CurrencyCode,
 } from '@/constants/currency';
 import { AppErrorBanner } from '@/components/app-error-banner';
-import { APP_MESSAGES, getPlanGenerationErrorMessage, isSupabaseError } from '@/lib/app-errors';
+import { APP_MESSAGES, getPlanGenerationErrorMessage, isSupabaseError, formatPlanGenerationDevError, extractPlanGenerationErrorDetail } from '@/lib/app-errors';
 import { linkPlanRatingToTrip } from '@/lib/plan-rating';
 import { formatCombinedMood } from '@/lib/custom-preferences';
 import {
@@ -65,11 +65,9 @@ import { ItineraryItemEditSheet } from '@/components/itinerary-item-edit-sheet';
 import { CurrentLocationButton } from '@/components/current-location-button';
 import { PlanCustomPreferencesFields } from '@/components/plan-custom-preferences-fields';
 import {
-  PlanLoadingScreen,
   createPlanGenerationProgress,
   isAbortError,
   type PlanGenerationProgressHandle,
-  type PlanLoadingUiState,
 } from '@/components/plan-loading-screen';
 import { PLAN_LOADING_STAGES } from '@/lib/plan-generation-progress';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
@@ -88,6 +86,8 @@ import { getAllActivities, getDurationBadgeLabel } from '@/lib/trip-duration';
 import {
   createDefaultTripSchedule,
   resolveTripSchedule,
+  syncScheduleOnDepartureChange,
+  syncScheduleOnReturnChange,
   syncScheduleOnPresetChange,
   validateTripSchedule,
 } from '@/lib/trip-schedule';
@@ -128,9 +128,56 @@ import type { TripScheduleEditorValue } from '@/types/trip-schedule';
 import { createDefaultTravelTiming, type TravelTimingSettings } from '@/types/travel-timing';
 import type { OutfitStyleMode } from '@/types/outfit-advice';
 import { generateOutfitPackingAdvice } from '@/lib/outfit-packing-advice';
-import { ScreenBackground } from '@/components/ui/screen-background';
-import { HomeFeed } from '@/components/home/home-feed';
-import { HOME_LAYOUT } from '@/constants/home-layout';
+import { ReferenceHomeScreen } from '@/components/home/reference-home-screen';
+import { PlanGenerationOverlay } from '@/components/plan-generation-overlay';
+import {
+  TRAVEL_SHEET_PURPOSE_OPTIONS,
+  TravelPlanSheetForm,
+} from '@/components/home/travel-plan-sheet-form';
+import type { HomePlanMode } from '@/components/home/home-action-config';
+import {
+  applyNormalizedTravelPlanFormState,
+  buildTravelPlanSubmitPayload,
+  getFirstTravelPlanValidationError,
+  isTravelPlanFormValid,
+  validateTravelPlanForm,
+} from '@/lib/travel-plan-form-validation';
+
+const TRAVEL_PLAN_USER_ERROR = 'AIプラン生成に失敗しました。入力内容を確認してもう一度お試しください。';
+
+const waitForOverlayPaint = () =>
+  new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      setTimeout(resolve, 50);
+    });
+  });
+
+type TravelPlanSubmitSnapshot = {
+  location: string;
+  budget: string;
+  people: string;
+  travelTiming: TravelTimingSettings;
+  travelIntent: TravelIntentOption | '';
+  customPreferences: PlanCustomPreferences;
+};
+
+function logTravelPlanGenerationError(error: unknown): void {
+  const detail = extractPlanGenerationErrorDetail(error);
+  const record =
+    error && typeof error === 'object'
+      ? (error as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+
+  console.error('[TravelPlanForm] generation error', {
+    message: detail,
+    name: error instanceof Error ? error.name : record.name,
+    status: record.status,
+    code: record.code,
+    type: record.type,
+    stack: error instanceof Error ? error.stack : undefined,
+    raw: error,
+  });
+}
 
 const accent = NS.colors.accent;
 
@@ -651,16 +698,7 @@ function PlanTypeCard({
   );
 }
 
-const INITIAL_LOADING_UI: PlanLoadingUiState = {
-  step: 0,
-  progress: 0,
-  headline: 'プランを作成中です',
-  estimateLabel: '完成まで約30秒かかります',
-  remainingLabel: '準備中…',
-  statusHint: PLAN_LOADING_STAGES[0].hint,
-  isLongRunning: false,
-  showMultiDayNote: false,
-};
+const INITIAL_GENERATION_STEP = 0;
 
 export default function HomeScreen() {
   const [planType, setPlanType] = useState<PlanCreationType>('今日のお出かけ');
@@ -689,17 +727,20 @@ export default function HomeScreen() {
   const [itinerary, setItinerary] = useState<ItineraryItem[]>([]);
   const [planDetails, setPlanDetails] = useState<PlanDetails | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingUiState, setLoadingUiState] = useState<PlanLoadingUiState>(INITIAL_LOADING_UI);
+  const [generationStepIndex, setGenerationStepIndex] = useState(INITIAL_GENERATION_STEP);
   const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
   const [travelMemories, setTravelMemories] = useState<import('@/types/travel-memory').TravelMemory[]>([]);
   const [isMemoryLoading, setIsMemoryLoading] = useState(false);
+  const [openedPlanMode, setOpenedPlanMode] = useState<HomePlanMode | null>(null);
+  const [travelValidationAttempted, setTravelValidationAttempted] = useState(false);
+  const [selectedTravelPurposeId, setSelectedTravelPurposeId] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
+  const generationInFlightRef = useRef(false);
   const generationAbortRef = useRef<AbortController | null>(null);
   const progressHandleRef = useRef<PlanGenerationProgressHandle | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
-  const formAnchorY = useRef(0);
+  const travelSubmitSnapshotRef = useRef<TravelPlanSubmitSnapshot | null>(null);
 
   const stopGenerationProgress = () => {
     progressHandleRef.current?.stop();
@@ -707,11 +748,29 @@ export default function HomeScreen() {
     generationAbortRef.current = null;
   };
 
+  const resetStaleGenerationUi = useCallback(() => {
+    if (generationInFlightRef.current) return;
+    setIsLoading(false);
+    setGenerationStepIndex(INITIAL_GENERATION_STEP);
+    stopGenerationProgress();
+  }, []);
+
+  const showGenerationOverlay = useCallback(async () => {
+    setScheduleError(null);
+    setIsLoading(true);
+    setError(null);
+    setSaveWarning(null);
+    setShowItinerary(false);
+    setGenerationStepIndex(INITIAL_GENERATION_STEP);
+    await waitForOverlayPaint();
+  }, []);
+
   const handleCancelGeneration = () => {
     generationAbortRef.current?.abort();
     stopGenerationProgress();
+    generationInFlightRef.current = false;
     setIsLoading(false);
-    setLoadingUiState(INITIAL_LOADING_UI);
+    setGenerationStepIndex(INITIAL_GENERATION_STEP);
   };
 
   const refreshUserPreferences = useCallback(async () => {
@@ -826,14 +885,37 @@ export default function HomeScreen() {
     if (showItinerary) resetPlan();
   };
 
-  const handleScrollToForm = (nextType: PlanCreationType = '今日のお出かけ') => {
-    handlePlanTypeChange(nextType);
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({
-        y: Math.max(formAnchorY.current - Spacing.four, 0),
-        animated: true,
-      });
-    });
+  const handlePlanFormOpen = (mode: HomePlanMode, planType: PlanCreationType) => {
+    resetStaleGenerationUi();
+    handlePlanTypeChange(planType);
+    setOpenedPlanMode(mode);
+    if (mode === 'travel') {
+      setTravelValidationAttempted(false);
+      setSelectedTravelPurposeId(null);
+    }
+  };
+
+  const handlePlanFormClose = () => {
+    resetStaleGenerationUi();
+    generationInFlightRef.current = false;
+    setOpenedPlanMode(null);
+    setTravelValidationAttempted(false);
+    setSelectedTravelPurposeId(null);
+  };
+
+  const handleTravelPurposeSelect = (option: (typeof TRAVEL_SHEET_PURPOSE_OPTIONS)[number]) => {
+    setSelectedTravelPurposeId(option.id);
+    if (option.travelIntent) {
+      setTravelIntent(option.travelIntent);
+      setCustomPreferences((prev) => ({ ...prev, customTravelIntent: undefined }));
+    } else {
+      setTravelIntent('');
+      setCustomPreferences((prev) => ({
+        ...prev,
+        customTravelIntent: option.purposeCustom,
+      }));
+    }
+    if (showItinerary) resetPlan();
   };
 
   const handleTravelIntentSelect = (option: TravelIntentOption) => {
@@ -848,10 +930,18 @@ export default function HomeScreen() {
   const fetchPlan = async (avoidActivities?: string[], signal?: AbortSignal) => {
     if (!companion) throw new Error('Companion not selected');
 
+    const snap = travelSubmitSnapshotRef.current;
+    const effectiveLocation = snap?.location ?? location;
+    const effectiveBudget = snap?.budget ?? budget;
+    const effectivePeople = snap?.people ?? people;
+    const effectiveTravelTiming = snap?.travelTiming ?? travelTiming;
+    const effectiveTravelIntent = snap?.travelIntent ?? travelIntent;
+    const effectiveCustomPreferences = snap?.customPreferences ?? customPreferences;
+
     const resolvedPersonality = resolvePersonalityForPlan({
       planType,
       personality,
-      travelIntent,
+      travelIntent: effectiveTravelIntent,
     });
 
     const scheduleValidation = validateTripSchedule(tripSchedule);
@@ -860,15 +950,15 @@ export default function HomeScreen() {
     }
 
     const travelPurpose = formatCombinedTravelIntent(
-      travelIntent,
-      customPreferences.customTravelIntent,
-    );
+      effectiveTravelIntent,
+      effectiveCustomPreferences.customTravelIntent,
+    ) || 'AIに任せる';
 
     const plan = await generatePlanWithAi({
-      location,
-      budget,
+      location: effectiveLocation,
+      budget: effectiveBudget,
       currency,
-      people,
+      people: effectivePeople,
       companion,
       personality: resolvedPersonality,
       tripDuration: resolvedSchedule.durationPreset,
@@ -876,7 +966,7 @@ export default function HomeScreen() {
       tripEndDate: resolvedSchedule.returnDate,
       customDuration: resolvedSchedule.customDuration,
       mood: showsTravelIntentQuestion(planType) ? '' : mood,
-      travelIntent: showsTravelIntentQuestion(planType) ? travelIntent : '',
+      travelIntent: showsTravelIntentQuestion(planType) ? effectiveTravelIntent : '',
       travelPurpose,
       planCreationType: planType,
       planType,
@@ -884,14 +974,14 @@ export default function HomeScreen() {
       returnDate: resolvedSchedule.returnDate,
       durationLabel: resolvedSchedule.durationLabel,
       companionType: companion,
-      mustVisitPlaces: customPreferences.desiredPlaces,
-      avoidPreferences: customPreferences.avoidPreferences,
+      mustVisitPlaces: effectiveCustomPreferences.desiredPlaces,
+      avoidPreferences: effectiveCustomPreferences.avoidPreferences,
       budgetScope,
-      customPreferences,
+      customPreferences: effectiveCustomPreferences,
       avoidActivities,
       abortSignal: signal,
       travelTiming:
-        planType === '旅行プラン' || planType === '週末プラン' ? travelTiming : undefined,
+        planType === '旅行プラン' || planType === '週末プラン' ? effectiveTravelTiming : undefined,
       outfitStyleMode,
     });
     return { days: plan.days, items: plan.items, details: plan.details };
@@ -947,49 +1037,76 @@ export default function HomeScreen() {
     await refreshMemorySummary();
   };
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (options?: { overlayReady?: boolean }) => {
+    const snap = travelSubmitSnapshotRef.current;
+    const effectiveTravelIntent = snap?.travelIntent ?? travelIntent;
+    const effectiveCustomPreferences = snap?.customPreferences ?? customPreferences;
+
+    if (generationInFlightRef.current) {
+      console.log('[GenerateButton] blocked: generation already in flight');
+      return;
+    }
+
     if (
       !canGeneratePlan({
         planType,
         companion,
         personality,
         mood,
-        travelIntent,
-        customPreferences,
-      }) ||
-      isLoading
+        travelIntent: effectiveTravelIntent,
+        customPreferences: effectiveCustomPreferences,
+      })
     ) {
+      console.log('[GenerateButton] blocked: canGeneratePlan', {
+        planType,
+        companion,
+        personality,
+        mood,
+        travelIntent: effectiveTravelIntent,
+        customTravelIntent: effectiveCustomPreferences.customTravelIntent,
+      });
+      if (openedPlanMode === 'travel') {
+        setError(TRAVEL_PLAN_USER_ERROR);
+      }
       return;
     }
 
     const scheduleValidation = validateTripSchedule(tripSchedule);
     if (scheduleValidation) {
+      console.log('[GenerateButton] blocked: scheduleValidation', scheduleValidation);
       setScheduleError(scheduleValidation);
       return;
     }
 
-    setScheduleError(null);
-    setIsLoading(true);
-    setError(null);
-    setSaveWarning(null);
-    setShowItinerary(false);
-
-    const abortController = new AbortController();
-    generationAbortRef.current = abortController;
-    const progress = createPlanGenerationProgress({
-      tripDuration: resolvedSchedule.durationPreset,
-      customDuration: resolvedSchedule.customDuration,
-      durationLabel: resolvedSchedule.durationLabel,
-      onUpdate: (state) => {
-        setLoadingUiState(state);
-      },
-    });
-    progressHandleRef.current = progress;
-    progress.start();
+    generationInFlightRef.current = true;
 
     try {
+      if (!options?.overlayReady) {
+        await showGenerationOverlay();
+      }
+
+      const abortController = new AbortController();
+      generationAbortRef.current = abortController;
+      const progress = createPlanGenerationProgress({
+        tripDuration: resolvedSchedule.durationPreset,
+        customDuration: resolvedSchedule.customDuration,
+        durationLabel: resolvedSchedule.durationLabel,
+        ...(openedPlanMode === 'travel'
+          ? {
+              headline: 'プランを作成中',
+              subtitle: 'あなたにぴったりの旅を組み立てています',
+            }
+          : {}),
+        onUpdate: (state) => {
+          setGenerationStepIndex((prev) => (prev === state.step ? prev : state.step));
+        },
+      });
+      progressHandleRef.current = progress;
+      progress.start();
+
       const plan = await fetchPlan(undefined, abortController.signal);
       progress.complete();
+      setGenerationStepIndex(PLAN_LOADING_STAGES.length - 1);
 
       setDays(plan.days);
       setItinerary(plan.items);
@@ -1010,13 +1127,25 @@ export default function HomeScreen() {
       if (isAbortError(err)) {
         return;
       }
-      logPlanGenerationError('generate_plan', err);
-      setError(getPlanGenerationErrorMessage(err));
+      if (openedPlanMode === 'travel') {
+        logTravelPlanGenerationError(err);
+        logPlanGenerationError('travel_plan_generate', err, {
+          location: travelSubmitSnapshotRef.current?.location ?? location,
+          budget: travelSubmitSnapshotRef.current?.budget ?? budget,
+          people: travelSubmitSnapshotRef.current?.people ?? people,
+        });
+        setError(formatPlanGenerationDevError(TRAVEL_PLAN_USER_ERROR, err));
+      } else {
+        logPlanGenerationError('generate_plan', err);
+        setError(getPlanGenerationErrorMessage(err));
+      }
       setShowItinerary(false);
     } finally {
+      travelSubmitSnapshotRef.current = null;
       stopGenerationProgress();
+      generationInFlightRef.current = false;
       setIsLoading(false);
-      setLoadingUiState(INITIAL_LOADING_UI);
+      setGenerationStepIndex(INITIAL_GENERATION_STEP);
     }
   };
 
@@ -1031,6 +1160,7 @@ export default function HomeScreen() {
         customPreferences,
       }) ||
       isLoading ||
+      generationInFlightRef.current ||
       days.length === 0
     ) {
       return;
@@ -1042,28 +1172,28 @@ export default function HomeScreen() {
       return;
     }
 
-    setScheduleError(null);
-    setIsLoading(true);
-    setError(null);
-    setSaveWarning(null);
-
-    const avoidActivities = getAllActivities(days);
-    const abortController = new AbortController();
-    generationAbortRef.current = abortController;
-    const progress = createPlanGenerationProgress({
-      tripDuration: resolvedSchedule.durationPreset,
-      customDuration: resolvedSchedule.customDuration,
-      durationLabel: resolvedSchedule.durationLabel,
-      onUpdate: (state) => {
-        setLoadingUiState(state);
-      },
-    });
-    progressHandleRef.current = progress;
-    progress.start();
+    generationInFlightRef.current = true;
 
     try {
+      await showGenerationOverlay();
+
+      const avoidActivities = getAllActivities(days);
+      const abortController = new AbortController();
+      generationAbortRef.current = abortController;
+      const progress = createPlanGenerationProgress({
+        tripDuration: resolvedSchedule.durationPreset,
+        customDuration: resolvedSchedule.customDuration,
+        durationLabel: resolvedSchedule.durationLabel,
+        onUpdate: (state) => {
+          setGenerationStepIndex((prev) => (prev === state.step ? prev : state.step));
+        },
+      });
+      progressHandleRef.current = progress;
+      progress.start();
+
       const plan = await fetchPlan(avoidActivities, abortController.signal);
       progress.complete();
+      setGenerationStepIndex(PLAN_LOADING_STAGES.length - 1);
 
       setDays(plan.days);
       setItinerary(plan.items);
@@ -1088,8 +1218,9 @@ export default function HomeScreen() {
       setError(getPlanGenerationErrorMessage(err));
     } finally {
       stopGenerationProgress();
+      generationInFlightRef.current = false;
       setIsLoading(false);
-      setLoadingUiState(INITIAL_LOADING_UI);
+      setGenerationStepIndex(INITIAL_GENERATION_STEP);
     }
   };
 
@@ -1120,357 +1251,578 @@ export default function HomeScreen() {
       ? '日帰りの日程を設定（カレンダーから選択できます）'
       : '出発日と帰宅日、旅行の長さを設定';
 
-  return (
-    <ScreenBackground>
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <PlanLoadingScreen
-        visible={isLoading}
-        uiState={loadingUiState}
-        onCancel={handleCancelGeneration}
+  const travelValidationErrors = useMemo(
+    () =>
+      validateTravelPlanForm({
+        destination: location,
+        departureDate: tripSchedule.departureDate,
+        returnDate: tripSchedule.returnDate,
+        arrivalTime: travelTiming.arrivalTime,
+        departureTime: travelTiming.departureTime,
+        budget,
+        currency,
+        peopleCount: people,
+        companionType: companion,
+        travelIntent,
+        customPreferences,
+      }),
+    [
+      location,
+      tripSchedule.departureDate,
+      tripSchedule.returnDate,
+      travelTiming.arrivalTime,
+      travelTiming.departureTime,
+      budget,
+      currency,
+      people,
+      companion,
+      travelIntent,
+      customPreferences,
+    ],
+  );
+
+  const travelFormReady = isTravelPlanFormValid(travelValidationErrors);
+  const travelGenerateDisabledReason = isLoading
+    ? 'プラン生成中'
+    : getFirstTravelPlanValidationError(travelValidationErrors);
+
+  const handleTravelGenerate = async () => {
+    console.log('[GenerateButton] clicked');
+
+    const formState = {
+      destination: location,
+      departureDate: tripSchedule.departureDate,
+      returnDate: tripSchedule.returnDate,
+      arrivalTime: travelTiming.arrivalTime,
+      departureTime: travelTiming.departureTime,
+      budget,
+      currency,
+      peopleCount: people,
+      companionType: companion,
+      travelIntent,
+      customPreferences,
+    };
+
+    console.log('[GenerateButton] disabled state', {
+      disabled: !travelFormReady || isLoading,
+      isGeneratingPlan: isLoading,
+      validationErrors: travelValidationErrors,
+      formState,
+    });
+
+    setTravelValidationAttempted(true);
+
+    if (generationInFlightRef.current) {
+      console.log('[GenerateButton] blocked: generation already in flight');
+      return;
+    }
+
+    if (!isTravelPlanFormValid(travelValidationErrors)) {
+      console.log('[GenerateButton] blocked: validation', travelValidationErrors);
+      return;
+    }
+
+    const formInput = formState;
+
+    const normalizedState = applyNormalizedTravelPlanFormState(formInput);
+
+    let nextTravelIntent = travelIntent;
+    let nextCustomPreferences = normalizedState.customPreferences;
+    let nextPurposeId = selectedTravelPurposeId;
+
+    if (!formatCombinedTravelIntent(nextTravelIntent, nextCustomPreferences.customTravelIntent)) {
+      nextTravelIntent = '';
+      nextCustomPreferences = {
+        ...nextCustomPreferences,
+        customTravelIntent: 'AIに任せる',
+      };
+      nextPurposeId = 'ai';
+    }
+
+    const nextTravelTiming: TravelTimingSettings = {
+      ...travelTiming,
+      arrivalTime: normalizedState.arrivalTime,
+      departureTime: normalizedState.departureTime,
+    };
+
+    travelSubmitSnapshotRef.current = {
+      location: normalizedState.location,
+      budget: normalizedState.budget,
+      people: normalizedState.people,
+      travelTiming: nextTravelTiming,
+      travelIntent: nextTravelIntent,
+      customPreferences: nextCustomPreferences,
+    };
+
+    const payload = buildTravelPlanSubmitPayload({
+      ...formInput,
+      destination: normalizedState.location,
+      arrivalTime: normalizedState.arrivalTime,
+      departureTime: normalizedState.departureTime,
+      budget: normalizedState.budget,
+      peopleCount: normalizedState.people,
+      travelIntent: nextTravelIntent,
+      customPreferences: nextCustomPreferences,
+    });
+
+    console.log('[TravelPlanForm] raw form state', formState);
+    console.log('[TravelPlanForm] normalized payload', payload);
+
+    setLocation(normalizedState.location);
+    setBudget(normalizedState.budget);
+    setPeople(normalizedState.people);
+    setTravelTiming(nextTravelTiming);
+    setTravelIntent(nextTravelIntent);
+    setCustomPreferences(nextCustomPreferences);
+    setSelectedTravelPurposeId(nextPurposeId);
+    setError(null);
+
+    try {
+      await showGenerationOverlay();
+      await handleGenerate({ overlayReady: true });
+    } catch (error) {
+      console.error('[GenerateButton] error', error);
+      if (!isAbortError(error)) {
+        logTravelPlanGenerationError(error);
+        setError(formatPlanGenerationDevError(TRAVEL_PLAN_USER_ERROR, error));
+      }
+    } finally {
+      generationInFlightRef.current = false;
+      stopGenerationProgress();
+      setIsLoading(false);
+      setGenerationStepIndex(INITIAL_GENERATION_STEP);
+    }
+  };
+
+  const renderPlanCreationForm = () => {
+    if (openedPlanMode === 'travel') {
+      return (
+        <>
+          <TravelPlanSheetForm
+            location={location}
+            onLocationChange={handleLocationChange}
+            tripSchedule={tripSchedule}
+            onDepartureDateChange={(departureDate) => {
+              setTripSchedule((prev) => syncScheduleOnDepartureChange(prev, departureDate));
+              if (showItinerary) resetPlan();
+            }}
+            onReturnDateChange={(returnDate) => {
+              setTripSchedule((prev) => syncScheduleOnReturnChange(prev, returnDate));
+              if (showItinerary) resetPlan();
+            }}
+            travelTiming={travelTiming}
+            onTravelTimingChange={(next) => {
+              setTravelTiming(next);
+              if (showItinerary) resetPlan();
+            }}
+            budget={budget}
+            onBudgetChange={setBudget}
+            currency={currency}
+            onCurrencyChange={setCurrency}
+            people={people}
+            onPeopleChange={setPeople}
+            companion={companion}
+            onCompanionChange={setCompanion}
+            travelIntent={travelIntent}
+            onTravelIntentChange={setTravelIntent}
+            customPreferences={customPreferences}
+            onCustomPreferencesChange={setCustomPreferences}
+            selectedPurposeId={selectedTravelPurposeId}
+            onPurposeSelect={handleTravelPurposeSelect}
+            validationErrors={travelValidationErrors}
+            showValidation={travelValidationAttempted}
+            isLoading={isLoading}
+            error={error}
+            onGenerate={handleTravelGenerate}
+            generateDisabled={!travelFormReady}
+            devDisabledReason={travelGenerateDisabledReason}
+            onRetry={handleTravelGenerate}
+          />
+          {showItinerary && companion && planDetails ? (
+            <FadeInView
+              key={days.map((day) => `${day.dayNumber}-${day.label}`).join('|')}
+              delay={100}>
+              <ItineraryTimeline
+                companion={companion}
+                personality={effectivePersonality}
+                tripDuration={resolvedSchedule.durationPreset}
+                customDuration={resolvedSchedule.customDuration}
+                location={location}
+                budget={budget}
+                currency={currency}
+                people={people}
+                mood={resolvedMood}
+                days={days}
+                items={itinerary}
+                details={planDetails}
+                onRegenerate={handleRegenerate}
+                isRegenerating={isLoading}
+                planType={planType}
+                onPlanUpdated={(nextDays, nextItems, nextDetails) => {
+                  setDays(nextDays);
+                  setItinerary(nextItems);
+                  setPlanDetails(nextDetails);
+                }}
+              />
+            </FadeInView>
+          ) : null}
+        </>
+      );
+    }
+
+    return (
+    <>
+      {openedPlanMode === 'night' ? (
+        <View style={styles.formCard}>
+          <AfterPlanLaunchButton location={location.trim() || undefined} />
+          <Text style={styles.helperText}>または、日帰りの夜プランを下のフォームで作成</Text>
+        </View>
+      ) : null}
+      <SectionHeader
+        title="プランを作る"
+        subtitle="行き先と気分を入れて、あなただけの過ごし方を"
       />
 
+      <View style={styles.formCard}>
+        <SectionHeader
+          step={1}
+          title="何を作りますか？"
+          subtitle="まずはプランの種類を選んでね"
+        />
+        <View style={styles.companionGrid}>
+          {PLAN_CREATION_TYPES.map((option, index) => (
+            <PlanTypeCard
+              key={option}
+              label={option}
+              selected={planType === option}
+              onPress={() => handlePlanTypeChange(option)}
+              colorIndex={index}
+            />
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.formCard}>
+      <SectionHeader
+        step={2}
+        title={LOCATION_FIELD_LABEL}
+        subtitle={LOCATION_FIELD_HELPER}
+      />
+      <FormField
+        label={LOCATION_FIELD_LABEL}
+        value={location}
+        onChangeText={handleLocationChange}
+        placeholder={getLocationPlaceholder(planType)}
+      />
+      <FormField
+        label={`${SPOT_INTERESTS_LABEL}（任意）`}
+        value={customPreferences.desiredPlaces ?? ''}
+        onChangeText={(text) => {
+          setCustomPreferences((prev) => ({ ...prev, desiredPlaces: text }));
+          if (showItinerary) resetPlan();
+        }}
+        placeholder={SPOT_INTERESTS_PLACEHOLDER}
+      />
+      {locationCurrencyHint ? (
+        <Text style={styles.locationCurrencyHint}>{locationCurrencyHint}</Text>
+      ) : null}
+    </View>
+
+    <View style={styles.formCard}>
+      <SectionHeader step={3} title="日程・期間" subtitle={scheduleSubtitle} />
+      <TripScheduleEditor
+        value={tripSchedule}
+        onChange={setTripSchedule}
+        error={scheduleError}
+        compact={isCompactSchedule(planType)}
+        onResetPlan={() => {
+          if (showItinerary) resetPlan();
+        }}
+      />
+    </View>
+
+    <View style={styles.formCard}>
+      <SectionHeader step={4} title="予算・人数" subtitle="ざっくりでOK。あとから調整できます 💰" />
+      <CurrencySelector
+        selected={currency}
+        locationHint={locationCurrencyHint}
+        onSelect={(code) => {
+          setCurrency(code);
+          if (showItinerary) resetPlan();
+        }}
+      />
+      <BudgetField
+        currency={currency}
+        value={budget}
+        onChangeText={setBudget}
+      />
+      <BudgetScopeEditor
+        value={budgetScope}
+        onChange={(next) => {
+          setBudgetScope(next);
+          if (showItinerary) resetPlan();
+        }}
+      />
+      <OutfitStyleModePicker
+        value={outfitStyleMode}
+        onChange={(next) => {
+          setOutfitStyleMode(next);
+          if (showItinerary) resetPlan();
+        }}
+      />
+      {planType === '旅行プラン' || planType === '週末プラン' ? (
+        <>
+          <TravelTimingEditor
+            value={travelTiming}
+            onChange={(next) => {
+              setTravelTiming(next);
+              if (showItinerary) resetPlan();
+            }}
+          />
+          <PreTripPlanningSection
+            destination={location}
+            departureDate={resolvedSchedule.departureDate}
+            returnDate={resolvedSchedule.returnDate}
+            currencyCode={currency}
+          />
+        </>
+      ) : null}
+      <FormField
+        label="人数"
+        value={people}
+        onChangeText={setPeople}
+        placeholder="例）2"
+        keyboardType="number-pad"
+      />
+    </View>
+
+    {showsMoodQuestion(planType) ? (
+      <View style={styles.companionSection}>
+        <SectionHeader title="今日の気分は？" subtitle="ボタン選択に加え、自由入力もできます" />
+        <View style={styles.companionGrid}>
+          {HOME_MOOD_OPTIONS.map((option, index) => (
+            <MoodCard
+              key={option}
+              label={option}
+              selected={mood === option}
+              onPress={() => {
+                setMood(option);
+                if (showItinerary) resetPlan();
+              }}
+              colorIndex={index}
+            />
+          ))}
+        </View>
+        <View style={styles.customPreferencesWrap}>
+          <PlanCustomPreferencesFields
+            value={customPreferences}
+            onChange={(next) => {
+              setCustomPreferences(next);
+              if (showItinerary) resetPlan();
+            }}
+            showCustomTravelIntent={false}
+            hideDesiredPlaces
+          />
+        </View>
+      </View>
+    ) : null}
+
+    {showsTravelIntentQuestion(planType) ? (
+      <View style={styles.companionSection}>
+        <SectionHeader
+          title="どんな旅行にしたいですか？"
+          subtitle="旅行の目的に合わせてプランを提案します"
+        />
+        <View style={styles.companionGrid}>
+          {TRAVEL_INTENT_OPTIONS.map((option, index) => (
+            <MoodCard
+              key={option}
+              label={option}
+              selected={travelIntent === option}
+              onPress={() => handleTravelIntentSelect(option)}
+              colorIndex={index}
+            />
+          ))}
+        </View>
+        <View style={styles.customPreferencesWrap}>
+          <PlanCustomPreferencesFields
+            value={customPreferences}
+            onChange={(next) => {
+              setCustomPreferences(next);
+              if (showItinerary) resetPlan();
+            }}
+            showCustomMood={false}
+            showCustomTravelIntent
+            hideDesiredPlaces
+          />
+        </View>
+      </View>
+    ) : null}
+
+    <View style={styles.companionSection}>
+      <SectionHeader title="誰と行く？" subtitle="一緒に行く相手に合わせた提案" />
+      <View style={styles.companionGrid}>
+        {COMPANION_OPTIONS.map((option, index) => (
+          <CompanionCard
+            key={option}
+            label={option}
+            selected={companion === option}
+            onPress={() => {
+              setCompanion(option);
+              if (showItinerary) resetPlan();
+            }}
+            colorIndex={index}
+          />
+        ))}
+      </View>
+    </View>
+
+    {showsPersonalityQuestion(planType) ? (
+      <View style={styles.companionSection}>
+        <SectionHeader
+          title="旅行タイプは？"
+          subtitle="おまかせの場合も、参考にしたいスタイルがあれば選んでください"
+        />
+        <View style={styles.companionGrid}>
+          {PERSONALITY_OPTIONS.map((option, index) => (
+            <PersonalityCard
+              key={option}
+              label={option}
+              selected={personality === option}
+              onPress={() => {
+                setPersonality(option);
+                if (showItinerary) resetPlan();
+              }}
+              colorIndex={index}
+            />
+          ))}
+        </View>
+      </View>
+    ) : null}
+
+    {planType === 'AIに任せる' ? (
+      <View style={styles.companionSection}>
+        <SectionHeader
+          title="行きたい場所・避けたいこと"
+          subtitle="任意。入力するとプランに優先的に反映されます"
+        />
+        <PlanCustomPreferencesFields
+          value={customPreferences}
+          onChange={(next) => {
+            setCustomPreferences(next);
+            if (showItinerary) resetPlan();
+          }}
+          showCustomMood={false}
+          showCustomTravelIntent={false}
+          hideDesiredPlaces
+        />
+      </View>
+    ) : null}
+
+    <View style={styles.generateButtonWrap}>
+      <PrimaryButton
+        label={isLoading ? '生成中...' : 'プランを生成'}
+        onPress={handleGenerate}
+        disabled={!generateReady || isLoading}
+      />
+    </View>
+
+    {generateHelperText ? (
+      <Text style={styles.helperText}>{generateHelperText}</Text>
+    ) : null}
+
+    {!isOpenAiConfigured() ? (
+      <AppErrorBanner message={APP_MESSAGES.openAiNotConfigured} variant="info" />
+    ) : null}
+
+    {error ? (
+      <AppErrorBanner message={error} onRetry={handleGenerate} />
+    ) : null}
+
+    {saveWarning ? (
+      <AppErrorBanner message={saveWarning} variant="info" />
+    ) : null}
+
+    {showItinerary && companion && planDetails && (
+      <FadeInView
+        key={days.map((day) => `${day.dayNumber}-${day.label}`).join('|')}
+        delay={100}>
+        <ItineraryTimeline
+          companion={companion}
+          personality={effectivePersonality}
+          tripDuration={resolvedSchedule.durationPreset}
+          customDuration={resolvedSchedule.customDuration}
+          location={location}
+          budget={budget}
+          currency={currency}
+          people={people}
+          mood={resolvedMood}
+          days={days}
+          items={itinerary}
+          details={planDetails}
+          onRegenerate={handleRegenerate}
+          isRegenerating={isLoading}
+          planType={planType}
+          onPlanUpdated={(nextDays, nextItems, nextDetails) => {
+            setDays(nextDays);
+            setItinerary(nextItems);
+            setPlanDetails(nextDetails);
+          }}
+        />
+      </FadeInView>
+    )}
+    </>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.containerInner}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+
       <ScrollView
-        ref={scrollRef}
         contentContainerStyle={[
           styles.content,
           {
             paddingTop: 0,
-            paddingBottom: insets.bottom + BottomTabInset + 28,
+            paddingBottom: insets.bottom + BottomTabInset + 120,
           },
         ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
-        <View style={styles.homeFeedWrap}>
-        <HomeFeed
-          onScrollToForm={handleScrollToForm}
-          onTravelPress={() => handleScrollToForm('旅行プラン')}
+        <ReferenceHomeScreen
+          renderPlanForm={renderPlanCreationForm}
+          onPlanFormOpen={handlePlanFormOpen}
+          onPlanFormClose={handlePlanFormClose}
           afterPlanLocation={location.trim() || undefined}
-          memoryDisplay={memoryDisplay}
-          isMemoryLoading={isMemoryLoading}
+          isPlanGenerating={isLoading}
+          onAbortPlanGeneration={handleCancelGeneration}
         />
-        </View>
 
-        <View
-          onLayout={(event) => {
-            formAnchorY.current = event.nativeEvent.layout.y;
-          }}>
-          <SectionHeader
-            title="プランを作る"
-            subtitle="行き先と気分を入れて、あなただけの過ごし方を"
-          />
-
-          <View style={styles.formCard}>
-            <SectionHeader
-              step={1}
-              title="何を作りますか？"
-              subtitle="まずはプランの種類を選んでね"
-            />
-            <View style={styles.companionGrid}>
-              {PLAN_CREATION_TYPES.map((option, index) => (
-                <PlanTypeCard
-                  key={option}
-                  label={option}
-                  selected={planType === option}
-                  onPress={() => handlePlanTypeChange(option)}
-                  colorIndex={index}
-                />
-              ))}
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.formCard}>
-          <SectionHeader
-            step={2}
-            title={LOCATION_FIELD_LABEL}
-            subtitle={LOCATION_FIELD_HELPER}
-          />
-          <FormField
-            label={LOCATION_FIELD_LABEL}
-            value={location}
-            onChangeText={handleLocationChange}
-            placeholder={getLocationPlaceholder(planType)}
-          />
-          <FormField
-            label={`${SPOT_INTERESTS_LABEL}（任意）`}
-            value={customPreferences.desiredPlaces ?? ''}
-            onChangeText={(text) => {
-              setCustomPreferences((prev) => ({ ...prev, desiredPlaces: text }));
-              if (showItinerary) resetPlan();
-            }}
-            placeholder={SPOT_INTERESTS_PLACEHOLDER}
-          />
-          {locationCurrencyHint ? (
-            <Text style={styles.locationCurrencyHint}>{locationCurrencyHint}</Text>
-          ) : null}
-        </View>
-
-        <View style={styles.formCard}>
-          <SectionHeader step={3} title="日程・期間" subtitle={scheduleSubtitle} />
-          <TripScheduleEditor
-            value={tripSchedule}
-            onChange={setTripSchedule}
-            error={scheduleError}
-            compact={isCompactSchedule(planType)}
-            onResetPlan={() => {
-              if (showItinerary) resetPlan();
-            }}
-          />
-        </View>
-
-        <View style={styles.formCard}>
-          <SectionHeader step={4} title="予算・人数" subtitle="ざっくりでOK。あとから調整できます 💰" />
-          <CurrencySelector
-            selected={currency}
-            locationHint={locationCurrencyHint}
-            onSelect={(code) => {
-              setCurrency(code);
-              if (showItinerary) resetPlan();
-            }}
-          />
-          <BudgetField
-            currency={currency}
-            value={budget}
-            onChangeText={setBudget}
-          />
-          <BudgetScopeEditor
-            value={budgetScope}
-            onChange={(next) => {
-              setBudgetScope(next);
-              if (showItinerary) resetPlan();
-            }}
-          />
-          <OutfitStyleModePicker
-            value={outfitStyleMode}
-            onChange={(next) => {
-              setOutfitStyleMode(next);
-              if (showItinerary) resetPlan();
-            }}
-          />
-          {planType === '旅行プラン' || planType === '週末プラン' ? (
-            <>
-              <TravelTimingEditor
-                value={travelTiming}
-                onChange={(next) => {
-                  setTravelTiming(next);
-                  if (showItinerary) resetPlan();
-                }}
-              />
-              <PreTripPlanningSection
-                destination={location}
-                departureDate={resolvedSchedule.departureDate}
-                returnDate={resolvedSchedule.returnDate}
-                currencyCode={currency}
-              />
-            </>
-          ) : null}
-          <FormField
-            label="人数"
-            value={people}
-            onChangeText={setPeople}
-            placeholder="例）2"
-            keyboardType="number-pad"
-          />
-        </View>
-
-        {showsMoodQuestion(planType) ? (
-          <View style={styles.companionSection}>
-            <SectionHeader title="今日の気分は？" subtitle="ボタン選択に加え、自由入力もできます" />
-            <View style={styles.companionGrid}>
-              {HOME_MOOD_OPTIONS.map((option, index) => (
-                <MoodCard
-                  key={option}
-                  label={option}
-                  selected={mood === option}
-                  onPress={() => {
-                    setMood(option);
-                    if (showItinerary) resetPlan();
-                  }}
-                  colorIndex={index}
-                />
-              ))}
-            </View>
-            <View style={styles.customPreferencesWrap}>
-              <PlanCustomPreferencesFields
-                value={customPreferences}
-                onChange={(next) => {
-                  setCustomPreferences(next);
-                  if (showItinerary) resetPlan();
-                }}
-                showCustomTravelIntent={false}
-                hideDesiredPlaces
-              />
-            </View>
-          </View>
-        ) : null}
-
-        {showsTravelIntentQuestion(planType) ? (
-          <View style={styles.companionSection}>
-            <SectionHeader
-              title="どんな旅行にしたいですか？"
-              subtitle="旅行の目的に合わせてプランを提案します"
-            />
-            <View style={styles.companionGrid}>
-              {TRAVEL_INTENT_OPTIONS.map((option, index) => (
-                <MoodCard
-                  key={option}
-                  label={option}
-                  selected={travelIntent === option}
-                  onPress={() => handleTravelIntentSelect(option)}
-                  colorIndex={index}
-                />
-              ))}
-            </View>
-            <View style={styles.customPreferencesWrap}>
-              <PlanCustomPreferencesFields
-                value={customPreferences}
-                onChange={(next) => {
-                  setCustomPreferences(next);
-                  if (showItinerary) resetPlan();
-                }}
-                showCustomMood={false}
-                showCustomTravelIntent
-                hideDesiredPlaces
-              />
-            </View>
-          </View>
-        ) : null}
-
-        <View style={styles.companionSection}>
-          <SectionHeader title="誰と行く？" subtitle="一緒に行く相手に合わせた提案" />
-          <View style={styles.companionGrid}>
-            {COMPANION_OPTIONS.map((option, index) => (
-              <CompanionCard
-                key={option}
-                label={option}
-                selected={companion === option}
-                onPress={() => {
-                  setCompanion(option);
-                  if (showItinerary) resetPlan();
-                }}
-                colorIndex={index}
-              />
-            ))}
-          </View>
-        </View>
-
-        {showsPersonalityQuestion(planType) ? (
-          <View style={styles.companionSection}>
-            <SectionHeader
-              title="旅行タイプは？"
-              subtitle="おまかせの場合も、参考にしたいスタイルがあれば選んでください"
-            />
-            <View style={styles.companionGrid}>
-              {PERSONALITY_OPTIONS.map((option, index) => (
-                <PersonalityCard
-                  key={option}
-                  label={option}
-                  selected={personality === option}
-                  onPress={() => {
-                    setPersonality(option);
-                    if (showItinerary) resetPlan();
-                  }}
-                  colorIndex={index}
-                />
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        {planType === 'AIに任せる' ? (
-          <View style={styles.companionSection}>
-            <SectionHeader
-              title="行きたい場所・避けたいこと"
-              subtitle="任意。入力するとプランに優先的に反映されます"
-            />
-            <PlanCustomPreferencesFields
-              value={customPreferences}
-              onChange={(next) => {
-                setCustomPreferences(next);
-                if (showItinerary) resetPlan();
-              }}
-              showCustomMood={false}
-              showCustomTravelIntent={false}
-              hideDesiredPlaces
-            />
-          </View>
-        ) : null}
-
-        <View style={styles.generateButtonWrap}>
-          <PrimaryButton
-            label={isLoading ? '生成中...' : 'プランを生成'}
-            onPress={handleGenerate}
-            disabled={!generateReady || isLoading}
-          />
-        </View>
-
-        {generateHelperText ? (
-          <Text style={styles.helperText}>{generateHelperText}</Text>
-        ) : null}
-
-        {!isOpenAiConfigured() ? (
-          <AppErrorBanner message={APP_MESSAGES.openAiNotConfigured} variant="info" />
-        ) : null}
-
-        {error ? (
-          <AppErrorBanner message={error} onRetry={handleGenerate} />
-        ) : null}
-
-        {saveWarning ? (
-          <AppErrorBanner message={saveWarning} variant="info" />
-        ) : null}
-
-        {showItinerary && companion && planDetails && (
-          <FadeInView
-            key={days.map((day) => `${day.dayNumber}-${day.label}`).join('|')}
-            delay={100}>
-            <ItineraryTimeline
-              companion={companion}
-              personality={effectivePersonality}
-              tripDuration={resolvedSchedule.durationPreset}
-              customDuration={resolvedSchedule.customDuration}
-              location={location}
-              budget={budget}
-              currency={currency}
-              people={people}
-              mood={resolvedMood}
-              days={days}
-              items={itinerary}
-              details={planDetails}
-              onRegenerate={handleRegenerate}
-              isRegenerating={isLoading}
-              planType={planType}
-              onPlanUpdated={(nextDays, nextItems, nextDetails) => {
-                setDays(nextDays);
-                setItinerary(nextItems);
-                setPlanDetails(nextDetails);
-              }}
-            />
-          </FadeInView>
-        )}
       </ScrollView>
     </KeyboardAvoidingView>
-    </ScreenBackground>
+
+    <PlanGenerationOverlay visible={isLoading} stepIndex={generationStepIndex} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: '#FFFCF8',
+  },
+  containerInner: {
+    flex: 1,
+    backgroundColor: '#FFFCF8',
   },
   content: {
     flexGrow: 1,
-    paddingHorizontal: Spacing.four,
-    maxWidth: 540,
+    paddingHorizontal: 0,
+    maxWidth: 430,
     width: '100%',
     alignSelf: 'center',
-  },
-  homeFeedWrap: {
-    marginHorizontal: -(Spacing.four - HOME_LAYOUT.horizontalPadding),
-    paddingHorizontal: HOME_LAYOUT.horizontalPadding,
   },
   hero: {
     marginBottom: Spacing.five,

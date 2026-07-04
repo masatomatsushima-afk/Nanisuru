@@ -1,5 +1,6 @@
 import { formatAmount, getCurrency, type CurrencyCode } from '@/constants/currency';
 import { inferCurrencyFromLocation } from '@/lib/location-currency';
+import { normalizeUserInput } from '@/lib/normalize-user-input';
 import { flattenItineraryDays } from '@/lib/trip-duration';
 import type {
   DiscoverBudgetFilterId,
@@ -45,7 +46,7 @@ export function getBudgetFilterOptions(currency: CurrencyCode): ReadonlyArray<{
 }
 
 function normalizeText(value: string): string {
-  return value.toLowerCase().trim();
+  return normalizeUserInput(value).toLowerCase();
 }
 
 function includesAny(text: string, keywords: string[]): boolean {

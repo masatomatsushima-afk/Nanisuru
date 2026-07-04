@@ -17,6 +17,7 @@ import {
   getDiscoverCurrencyHint,
   resolveDiscoverCurrency,
 } from '@/lib/discover-filters';
+import { normalizeUserInput } from '@/lib/normalize-user-input';
 import {
   DEFAULT_DISCOVER_FILTERS,
   DISCOVER_FILTER_CHIPS,
@@ -95,10 +96,14 @@ export function DiscoverSearchFilters({ value, onChange }: DiscoverSearchFilters
           style={styles.searchInput}
           value={value.searchQuery}
           onChangeText={(text) => patch({ searchQuery: text })}
+          onEndEditing={() =>
+            patch({ searchQuery: normalizeUserInput(value.searchQuery) })
+          }
           placeholder="エリア・店名・気分で検索"
           placeholderTextColor={NS.colors.textMuted}
           returnKeyType="search"
           clearButtonMode="while-editing"
+          autoCapitalize="none"
         />
       </View>
 
