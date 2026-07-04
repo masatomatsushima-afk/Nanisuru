@@ -99,15 +99,18 @@ export function normalizePlanGenerationInput(input: {
   companion: CompanionOption;
   personality: PersonalityOption;
   mood: string;
+  travelPurpose?: string;
   travelIntent?: string;
   customPreferences?: PlanCustomPreferences;
 }): NormalizedPlanGenerationInput {
   const durationLabel = getDurationDisplayLabel(input.tripDuration, input.customDuration);
   const mood = formatCombinedMood(input.mood, input.customPreferences?.customMood);
-  const travelPurpose = formatCombinedTravelIntent(
-    (input.travelIntent ?? '') as TravelIntentOption | '',
-    input.customPreferences?.customTravelIntent,
-  );
+  const travelPurpose =
+    input.travelPurpose?.trim() ||
+    formatCombinedTravelIntent(
+      (input.travelIntent ?? '') as TravelIntentOption | '',
+      input.customPreferences?.customTravelIntent,
+    );
 
   return {
     planType: input.planCreationType,

@@ -6,6 +6,7 @@ import { DatePickerField } from '@/components/date-picker-field';
 import { TravelTimePickerField } from '@/components/home/travel-time-picker-field';
 import { PrimaryButton, SelectChip } from '@/components/ui/premium-card';
 import { AppErrorBanner } from '@/components/app-error-banner';
+import { TravelBudgetIncludesSection } from '@/components/home/travel-budget-includes-section';
 import {
   CURRENCY_OPTIONS,
   getCurrency,
@@ -18,7 +19,20 @@ import {
   normalizePeopleCountInput,
   normalizeUserInput,
 } from '@/lib/normalize-user-input';
+import {
+  TRIP_DURATION_QUICK_OPTIONS,
+  applyQuickDurationOption,
+  formatTravelDurationSummaryLabel,
+  getSelectedDurationQuickOption,
+  isValidIsoDate,
+  resolveTripSchedule,
+  syncScheduleOnCustomChange,
+  syncScheduleOnDepartureChange,
+  syncScheduleOnReturnChange,
+  type TripDurationQuickOption,
+} from '@/lib/trip-schedule';
 import type { TravelPlanValidationErrors } from '@/lib/travel-plan-form-validation';
+import type { TravelBudgetIncludeOption } from '@/lib/travel-budget-includes';
 import type { CompanionOption } from '@/types/plan';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
 import type { TravelIntentOption } from '@/types/plan-creation';
@@ -40,14 +54,15 @@ type TravelPlanSheetFormProps = {
   location: string;
   onLocationChange: (value: string) => void;
   tripSchedule: TripScheduleEditorValue;
-  onDepartureDateChange: (isoDate: string) => void;
-  onReturnDateChange: (isoDate: string) => void;
+  onTripScheduleChange: (value: TripScheduleEditorValue) => void;
   travelTiming: TravelTimingSettings;
   onTravelTimingChange: (value: TravelTimingSettings) => void;
   budget: string;
   onBudgetChange: (value: string) => void;
   currency: CurrencyCode;
   onCurrencyChange: (code: CurrencyCode) => void;
+  budgetIncludes: TravelBudgetIncludeOption[];
+  onBudgetIncludesChange: (value: TravelBudgetIncludeOption[]) => void;
   people: string;
   onPeopleChange: (value: string) => void;
   companion: CompanionOption | null;
@@ -65,6 +80,7 @@ type TravelPlanSheetFormProps = {
   onGenerate: () => void;
   generateDisabled: boolean;
   devDisabledReason?: string | null;
+  validationMessages?: string[];
   onRetry?: () => void;
 };
 
@@ -100,14 +116,15 @@ export function TravelPlanSheetForm({
   location,
   onLocationChange,
   tripSchedule,
-  onDepartureDateChange,
-  onReturnDateChange,
+  onTripScheduleChange,
   travelTiming,
   onTravelTimingChange,
   budget,
   onBudgetChange,
   currency,
   onCurrencyChange,
+  budgetIncludes,
+  onBudgetIncludesChange,
   people,
   onPeopleChange,
   companion,
@@ -121,6 +138,7 @@ export function TravelPlanSheetForm({
   onGenerate,
   generateDisabled,
   devDisabledReason,
+  validationMessages = [],
   onRetry,
   customPreferences,
   onCustomPreferencesChange,
@@ -128,8 +146,19 @@ export function TravelPlanSheetForm({
   const { symbol } = getCurrency(currency);
   const err = (key: keyof TravelPlanValidationErrors) =>
     showValidation ? validationErrors[key] : undefined;
+  const resolvedSchedule = resolveTripSchedule(tripSchedule);
+  const durationSummaryLabel = formatTravelDurationSummaryLabel(resolvedSchedule);
+  const selectedDurationQuick = getSelectedDurationQuickOption(tripSchedule);
+  const durationChipError = err('durationDuration') ?? err('returnDate');
+
+  const applyScheduleChange = (next: TripScheduleEditorValue) => {
+    onTripScheduleChange(next);
+  };
 
   const isButtonDisabled = generateDisabled || isLoading;
+  const showValidationSummary = showValidation && !isLoading && validationMessages.length > 0;
+  const showDevDisabledHint =
+    __DEV__ && isButtonDisabled && !isLoading && Boolean(devDisabledReason);
 
   useEffect(() => {
     if (!__DEV__) return;
@@ -192,20 +221,97 @@ export function TravelPlanSheetForm({
         />
       </SheetField>
 
-      <DatePickerField
-        label="出発日"
-        isoDate={tripSchedule.departureDate}
-        onChange={onDepartureDateChange}
-      />
-      <FieldError message={err('departureDate')} />
+      <View style={styles.scheduleSection}>
+        <DatePickerField
+          label="出発日"
+          isoDate={tripSchedule.departureDate}
+          onChange={(departureDate) => {
+            applyScheduleChange(syncScheduleOnDepartureChange(tripSchedule, departureDate));
+          }}
+        />
+        <FieldError message={err('departureDate')} />
 
-      <DatePickerField
-        label="帰宅日"
-        isoDate={tripSchedule.returnDate}
-        minimumIsoDate={tripSchedule.departureDate}
-        onChange={onReturnDateChange}
-      />
-      <FieldError message={err('returnDate')} />
+        <DatePickerField
+          label="帰宅日"
+          isoDate={tripSchedule.returnDate}
+          minimumIsoDate={tripSchedule.departureDate}
+          onChange={(returnDate) => {
+            applyScheduleChange(syncScheduleOnReturnChange(tripSchedule, returnDate));
+          }}
+        />
+        <FieldError message={err('returnDate')} />
+
+        <SheetField label="旅行期間">
+          <View style={styles.durationSummaryBox}>
+            <Text style={styles.durationSummaryValue}>{durationSummaryLabel}</Text>
+            {!isValidIsoDate(tripSchedule.departureDate) && selectedDurationQuick ? (
+              <Text style={styles.durationHint}>出発日を選ぶと帰宅日が自動で設定されます</Text>
+            ) : null}
+          </View>
+        </SheetField>
+
+        <SheetField label="期間">
+          <View style={styles.chipGrid}>
+            {TRIP_DURATION_QUICK_OPTIONS.map((option, index) => (
+              <SelectChip
+                key={option}
+                label={option}
+                selected={selectedDurationQuick === option}
+                onPress={() =>
+                  applyScheduleChange(
+                    applyQuickDurationOption(tripSchedule, option as TripDurationQuickOption),
+                  )
+                }
+                colorIndex={index}
+              />
+            ))}
+          </View>
+          <FieldError message={durationChipError} />
+        </SheetField>
+
+        {tripSchedule.durationPreset === 'その他' && selectedDurationQuick === 'その他' ? (
+          <View style={styles.customDurationRow}>
+            <View style={styles.customDurationField}>
+              <Text style={styles.customDurationLabel}>泊数</Text>
+              <TextInput
+                style={styles.input}
+                value={tripSchedule.customNights}
+                onChangeText={(text) => {
+                  applyScheduleChange(
+                    syncScheduleOnCustomChange(
+                      tripSchedule,
+                      text.replace(/\D/g, ''),
+                      tripSchedule.customDays,
+                    ),
+                  );
+                }}
+                placeholder="例）5"
+                placeholderTextColor={NS.colors.textMuted}
+                keyboardType="number-pad"
+              />
+            </View>
+            <View style={styles.customDurationField}>
+              <Text style={styles.customDurationLabel}>日数</Text>
+              <TextInput
+                style={styles.input}
+                value={tripSchedule.customDays}
+                onChangeText={(text) => {
+                  applyScheduleChange(
+                    syncScheduleOnCustomChange(
+                      tripSchedule,
+                      tripSchedule.customNights,
+                      text.replace(/\D/g, ''),
+                    ),
+                  );
+                }}
+                placeholder="例）6"
+                placeholderTextColor={NS.colors.textMuted}
+                keyboardType="number-pad"
+              />
+            </View>
+          </View>
+        ) : null}
+      </View>
 
       <View style={styles.row}>
         <View style={styles.halfField}>
@@ -270,6 +376,11 @@ export function TravelPlanSheetForm({
           })}
         </View>
       </SheetField>
+
+      <TravelBudgetIncludesSection
+        value={budgetIncludes}
+        onChange={onBudgetIncludesChange}
+      />
 
       <SheetField label="人数" error={err('peopleCount')}>
         <TextInput
@@ -339,13 +450,24 @@ export function TravelPlanSheetForm({
         />
       </View>
 
-      {__DEV__ && isButtonDisabled && devDisabledReason ? (
+      {showDevDisabledHint ? (
         <Text style={styles.devDisabledHint}>
-          {`開発用:\n生成ボタンが無効です\n理由: ${devDisabledReason}`}
+          {`開発用:\n理由: ${devDisabledReason}`}
         </Text>
       ) : null}
 
-      {generateDisabled && !showValidation ? (
+      {showValidationSummary ? (
+        <View style={styles.validationSummary}>
+          <Text style={styles.validationSummaryTitle}>未入力の項目があります</Text>
+          {validationMessages.map((message) => (
+            <Text key={message} style={styles.validationSummaryItem}>
+              {`・${message}`}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
+      {generateDisabled && !showValidation && !isLoading ? (
         <Text style={styles.helperText}>必須項目を入力するとプランを生成できます</Text>
       ) : null}
 
@@ -358,6 +480,41 @@ const styles = StyleSheet.create({
   wrap: {
     gap: Spacing.three,
     paddingBottom: 48,
+  },
+  scheduleSection: {
+    gap: Spacing.two,
+  },
+  durationSummaryBox: {
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two + 2,
+    gap: Spacing.one,
+  },
+  durationSummaryValue: {
+    color: NS.colors.orange,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  durationHint: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  customDurationRow: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+  },
+  customDurationField: {
+    flex: 1,
+    gap: Spacing.one,
+  },
+  customDurationLabel: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
   },
   field: {
     gap: Spacing.one + 2,
@@ -455,6 +612,23 @@ const styles = StyleSheet.create({
   },
   generateWrap: {
     marginTop: Spacing.two,
+  },
+  validationSummary: {
+    gap: Spacing.one,
+    backgroundColor: '#FEF2F2',
+    borderRadius: NS.radius.md,
+    padding: Spacing.two + 2,
+  },
+  validationSummaryTitle: {
+    color: '#B91C1C',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  validationSummaryItem: {
+    color: '#DC2626',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
   },
   devDisabledHint: {
     color: '#B45309',

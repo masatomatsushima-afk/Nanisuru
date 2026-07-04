@@ -44,6 +44,11 @@ import {
   SPOT_INTERESTS_PLACEHOLDER,
 } from '@/lib/location-input-copy';
 import { createDefaultBudgetScope } from '@/lib/budget-scope';
+import {
+  createDefaultTravelBudgetIncludes,
+  travelBudgetIncludesToBudgetScope,
+  type TravelBudgetIncludeOption,
+} from '@/lib/travel-budget-includes';
 import { buildLocationCurrencyHint, inferCurrencyFromLocation } from '@/lib/location-currency';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { AiAdviceSection } from '@/components/ai-advice-section';
@@ -72,6 +77,7 @@ import {
 import { PLAN_LOADING_STAGES } from '@/lib/plan-generation-progress';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { WeatherSection } from '@/components/weather-section';
+import { WeatherReplanActions } from '@/components/weather-replan-actions';
 import { buildTravelMemoryDisplayData } from '@/lib/travel-memory-display';
 import { consumePendingLocalSpotForPlan } from '@/lib/plan-local-spot-intent';
 import { getTravelMemories } from '@/lib/travel-memory';
@@ -107,6 +113,8 @@ import {
   type TravelIntentOption,
 } from '@/types/plan-creation';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
+import type { WeatherReplanPreviewSuccess } from '@/types/weather-replan';
+import { saveWeatherReplan } from '@/lib/weather-replans';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import type {
@@ -138,17 +146,22 @@ import type { HomePlanMode } from '@/components/home/home-action-config';
 import {
   applyNormalizedTravelPlanFormState,
   buildTravelPlanSubmitPayload,
-  getFirstTravelPlanValidationError,
+  getTravelPlanBudgetIncludes,
+  getTravelPlanDurationMeta,
+  getTravelPlanValidationMessages,
   isTravelPlanFormValid,
+  resolveTravelPlanScheduleFromInput,
+  resolveTravelPurpose,
   validateTravelPlanForm,
 } from '@/lib/travel-plan-form-validation';
+import { resolveTravelPurposeValue } from '@/lib/travel-purpose';
 
 const TRAVEL_PLAN_USER_ERROR = 'AIプラン生成に失敗しました。入力内容を確認してもう一度お試しください。';
 
 const waitForOverlayPaint = () =>
   new Promise<void>((resolve) => {
     requestAnimationFrame(() => {
-      setTimeout(resolve, 50);
+      setTimeout(resolve, 100);
     });
   });
 
@@ -159,6 +172,9 @@ type TravelPlanSubmitSnapshot = {
   travelTiming: TravelTimingSettings;
   travelIntent: TravelIntentOption | '';
   customPreferences: PlanCustomPreferences;
+  tripSchedule: TripScheduleEditorValue;
+  budgetScope: BudgetScopeSettings;
+  travelPurpose: string;
 };
 
 function logTravelPlanGenerationError(error: unknown): void {
@@ -273,6 +289,21 @@ function ItineraryTimeline({
     onPlanUpdated?.(nextPayload.days, nextPayload.items, nextPayload.details);
   };
 
+  const handleApplyWeatherReplan = async (
+    nextPayload: SavedTripPayload,
+    preview: WeatherReplanPreviewSuccess,
+  ) => {
+    onPlanUpdated?.(nextPayload.days, nextPayload.items, nextPayload.details);
+    if (savedTripId) {
+      await saveWeatherReplan({
+        tripId: savedTripId,
+        beforePlan: preview.beforePayload,
+        afterPlan: preview.afterPayload,
+        weatherContext: preview.freshWeather,
+      });
+    }
+  };
+
   const ratingContext: PlanRatingContext = {
     source: 'home',
     location,
@@ -376,7 +407,14 @@ function ItineraryTimeline({
               <Text style={styles.itinerarySubtitle}>{PERSONALITY_SUBTITLES[personality]}</Text>
               <Text style={styles.itineraryCompanionNote}>{COMPANION_SUBTITLES[companion]}</Text>
               {details.weather ? (
-                <WeatherSection weather={details.weather} compact />
+                <>
+                  <WeatherSection weather={details.weather} compact />
+                  <WeatherReplanActions
+                    payload={editPayload}
+                    compact
+                    onApply={handleApplyWeatherReplan}
+                  />
+                </>
               ) : null}
               {outfitAdvice ? <OutfitPackingSection advice={outfitAdvice} compact /> : null}
               {details.placesNotice ? (
@@ -711,6 +749,9 @@ export default function HomeScreen() {
   const [budgetScope, setBudgetScope] = useState<BudgetScopeSettings>(() =>
     createDefaultBudgetScope('今日のお出かけ'),
   );
+  const [travelBudgetIncludes, setTravelBudgetIncludes] = useState<TravelBudgetIncludeOption[]>(
+    () => createDefaultTravelBudgetIncludes(),
+  );
   const [travelTiming, setTravelTiming] = useState<TravelTimingSettings>(() =>
     createDefaultTravelTiming(),
   );
@@ -736,6 +777,7 @@ export default function HomeScreen() {
   const [openedPlanMode, setOpenedPlanMode] = useState<HomePlanMode | null>(null);
   const [travelValidationAttempted, setTravelValidationAttempted] = useState(false);
   const [selectedTravelPurposeId, setSelectedTravelPurposeId] = useState<string | null>(null);
+  const [travelPurpose, setTravelPurpose] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   const generationInFlightRef = useRef(false);
   const generationAbortRef = useRef<AbortController | null>(null);
@@ -756,6 +798,7 @@ export default function HomeScreen() {
   }, []);
 
   const showGenerationOverlay = useCallback(async () => {
+    console.log('[GenerateButton] show overlay');
     setScheduleError(null);
     setIsLoading(true);
     setError(null);
@@ -764,6 +807,10 @@ export default function HomeScreen() {
     setGenerationStepIndex(INITIAL_GENERATION_STEP);
     await waitForOverlayPaint();
   }, []);
+
+  useEffect(() => {
+    console.log('[PlanGenerationOverlay] visible', isLoading);
+  }, [isLoading]);
 
   const handleCancelGeneration = () => {
     generationAbortRef.current?.abort();
@@ -868,6 +915,7 @@ export default function HomeScreen() {
     planType,
     personality,
     travelIntent,
+    travelPurpose,
   });
 
   const handlePlanTypeChange = (nextType: PlanCreationType) => {
@@ -892,6 +940,10 @@ export default function HomeScreen() {
     if (mode === 'travel') {
       setTravelValidationAttempted(false);
       setSelectedTravelPurposeId(null);
+      setTravelPurpose(null);
+      const defaultIncludes = createDefaultTravelBudgetIncludes();
+      setTravelBudgetIncludes(defaultIncludes);
+      setBudgetScope(travelBudgetIncludesToBudgetScope(defaultIncludes));
     }
   };
 
@@ -901,10 +953,13 @@ export default function HomeScreen() {
     setOpenedPlanMode(null);
     setTravelValidationAttempted(false);
     setSelectedTravelPurposeId(null);
+    setTravelPurpose(null);
   };
 
   const handleTravelPurposeSelect = (option: (typeof TRAVEL_SHEET_PURPOSE_OPTIONS)[number]) => {
+    console.log('[TravelPlanForm] selected purpose', option.label);
     setSelectedTravelPurposeId(option.id);
+    setTravelPurpose(option.label);
     if (option.travelIntent) {
       setTravelIntent(option.travelIntent);
       setCustomPreferences((prev) => ({ ...prev, customTravelIntent: undefined }));
@@ -938,21 +993,32 @@ export default function HomeScreen() {
     const effectiveTravelIntent = snap?.travelIntent ?? travelIntent;
     const effectiveCustomPreferences = snap?.customPreferences ?? customPreferences;
 
+    const effectiveTravelPurpose =
+      snap?.travelPurpose ??
+      resolveTravelPurposeValue({
+        travelPurpose,
+        travelIntent: effectiveTravelIntent,
+        customTravelIntent: effectiveCustomPreferences.customTravelIntent,
+      });
+
     const resolvedPersonality = resolvePersonalityForPlan({
       planType,
       personality,
       travelIntent: effectiveTravelIntent,
+      travelPurpose: effectiveTravelPurpose,
     });
 
-    const scheduleValidation = validateTripSchedule(tripSchedule);
+    const effectiveTripSchedule = snap?.tripSchedule ?? tripSchedule;
+    const effectiveResolvedSchedule = resolveTripSchedule(effectiveTripSchedule);
+
+    const scheduleValidation = validateTripSchedule(effectiveTripSchedule);
     if (scheduleValidation) {
       throw new Error(scheduleValidation);
     }
 
-    const travelPurpose = formatCombinedTravelIntent(
-      effectiveTravelIntent,
-      effectiveCustomPreferences.customTravelIntent,
-    ) || 'AIに任せる';
+    const travelPurposeForGeneration = effectiveTravelPurpose;
+
+    const effectiveBudgetScope = snap?.budgetScope ?? budgetScope;
 
     const plan = await generatePlanWithAi({
       location: effectiveLocation,
@@ -961,22 +1027,22 @@ export default function HomeScreen() {
       people: effectivePeople,
       companion,
       personality: resolvedPersonality,
-      tripDuration: resolvedSchedule.durationPreset,
-      tripDate: resolvedSchedule.departureDate,
-      tripEndDate: resolvedSchedule.returnDate,
-      customDuration: resolvedSchedule.customDuration,
-      mood: showsTravelIntentQuestion(planType) ? '' : mood,
+      tripDuration: effectiveResolvedSchedule.durationPreset,
+      tripDate: effectiveResolvedSchedule.departureDate,
+      tripEndDate: effectiveResolvedSchedule.returnDate,
+      customDuration: effectiveResolvedSchedule.customDuration,
+      mood: showsTravelIntentQuestion(planType) ? travelPurposeForGeneration : mood,
       travelIntent: showsTravelIntentQuestion(planType) ? effectiveTravelIntent : '',
-      travelPurpose,
+      travelPurpose: travelPurposeForGeneration,
       planCreationType: planType,
       planType,
-      departureDate: resolvedSchedule.departureDate,
-      returnDate: resolvedSchedule.returnDate,
-      durationLabel: resolvedSchedule.durationLabel,
+      departureDate: effectiveResolvedSchedule.departureDate,
+      returnDate: effectiveResolvedSchedule.returnDate,
+      durationLabel: effectiveResolvedSchedule.durationLabel,
       companionType: companion,
       mustVisitPlaces: effectiveCustomPreferences.desiredPlaces,
       avoidPreferences: effectiveCustomPreferences.avoidPreferences,
-      budgetScope,
+      budgetScope: effectiveBudgetScope,
       customPreferences: effectiveCustomPreferences,
       avoidActivities,
       abortSignal: signal,
@@ -1042,7 +1108,7 @@ export default function HomeScreen() {
     const effectiveTravelIntent = snap?.travelIntent ?? travelIntent;
     const effectiveCustomPreferences = snap?.customPreferences ?? customPreferences;
 
-    if (generationInFlightRef.current) {
+    if (generationInFlightRef.current && !options?.overlayReady) {
       console.log('[GenerateButton] blocked: generation already in flight');
       return;
     }
@@ -1071,7 +1137,11 @@ export default function HomeScreen() {
       return;
     }
 
-    const scheduleValidation = validateTripSchedule(tripSchedule);
+    const submitSnap = travelSubmitSnapshotRef.current;
+    const effectiveTripSchedule = submitSnap?.tripSchedule ?? tripSchedule;
+    const effectiveResolvedSchedule = resolveTripSchedule(effectiveTripSchedule);
+
+    const scheduleValidation = validateTripSchedule(effectiveTripSchedule);
     if (scheduleValidation) {
       console.log('[GenerateButton] blocked: scheduleValidation', scheduleValidation);
       setScheduleError(scheduleValidation);
@@ -1088,9 +1158,9 @@ export default function HomeScreen() {
       const abortController = new AbortController();
       generationAbortRef.current = abortController;
       const progress = createPlanGenerationProgress({
-        tripDuration: resolvedSchedule.durationPreset,
-        customDuration: resolvedSchedule.customDuration,
-        durationLabel: resolvedSchedule.durationLabel,
+        tripDuration: effectiveResolvedSchedule.durationPreset,
+        customDuration: effectiveResolvedSchedule.customDuration,
+        durationLabel: effectiveResolvedSchedule.durationLabel,
         ...(openedPlanMode === 'travel'
           ? {
               headline: 'プランを作成中',
@@ -1255,53 +1325,73 @@ export default function HomeScreen() {
     () =>
       validateTravelPlanForm({
         destination: location,
-        departureDate: tripSchedule.departureDate,
-        returnDate: tripSchedule.returnDate,
+        tripSchedule,
         arrivalTime: travelTiming.arrivalTime,
         departureTime: travelTiming.departureTime,
         budget,
         currency,
+        budgetIncludes: travelBudgetIncludes,
         peopleCount: people,
         companionType: companion,
         travelIntent,
+        travelPurpose,
         customPreferences,
       }),
     [
       location,
-      tripSchedule.departureDate,
-      tripSchedule.returnDate,
+      tripSchedule,
       travelTiming.arrivalTime,
       travelTiming.departureTime,
       budget,
       currency,
+      travelBudgetIncludes,
       people,
       companion,
       travelIntent,
+      travelPurpose,
       customPreferences,
     ],
   );
 
   const travelFormReady = isTravelPlanFormValid(travelValidationErrors);
+  const travelValidationMessages = getTravelPlanValidationMessages(travelValidationErrors);
   const travelGenerateDisabledReason = isLoading
-    ? 'プラン生成中'
-    : getFirstTravelPlanValidationError(travelValidationErrors);
+    ? null
+    : !travelFormReady
+      ? '必須項目が未入力です'
+      : null;
 
   const handleTravelGenerate = async () => {
     console.log('[GenerateButton] clicked');
 
     const formState = {
       destination: location,
-      departureDate: tripSchedule.departureDate,
-      returnDate: tripSchedule.returnDate,
+      tripSchedule,
       arrivalTime: travelTiming.arrivalTime,
       departureTime: travelTiming.departureTime,
       budget,
       currency,
+      budgetIncludes: travelBudgetIncludes,
       peopleCount: people,
       companionType: companion,
       travelIntent,
+      travelPurpose,
       customPreferences,
     };
+
+    const resolvedTravelPurpose = resolveTravelPurpose(formState);
+    console.log('[TravelPlanForm] final selected purpose', resolvedTravelPurpose);
+
+    const durationMeta = getTravelPlanDurationMeta(formState);
+    const { departureDate, returnDate, durationLabel, nights, days } = durationMeta;
+    console.log('[TravelPlanForm] duration', {
+      departureDate,
+      returnDate,
+      durationLabel,
+      nights,
+      days,
+    });
+    console.log('[TravelPlanForm] budget includes', getTravelPlanBudgetIncludes(formState));
 
     console.log('[GenerateButton] disabled state', {
       disabled: !travelFormReady || isLoading,
@@ -1322,6 +1412,8 @@ export default function HomeScreen() {
       return;
     }
 
+    await showGenerationOverlay();
+
     const formInput = formState;
 
     const normalizedState = applyNormalizedTravelPlanFormState(formInput);
@@ -1329,14 +1421,16 @@ export default function HomeScreen() {
     let nextTravelIntent = travelIntent;
     let nextCustomPreferences = normalizedState.customPreferences;
     let nextPurposeId = selectedTravelPurposeId;
+    let nextTravelPurpose = travelPurpose ?? resolvedTravelPurpose;
 
-    if (!formatCombinedTravelIntent(nextTravelIntent, nextCustomPreferences.customTravelIntent)) {
+    if (!travelPurpose && !formatCombinedTravelIntent(nextTravelIntent, nextCustomPreferences.customTravelIntent)) {
       nextTravelIntent = '';
       nextCustomPreferences = {
         ...nextCustomPreferences,
         customTravelIntent: 'AIに任せる',
       };
       nextPurposeId = 'ai';
+      nextTravelPurpose = 'AIに任せる';
     }
 
     const nextTravelTiming: TravelTimingSettings = {
@@ -1345,6 +1439,33 @@ export default function HomeScreen() {
       departureTime: normalizedState.departureTime,
     };
 
+    const resolvedForSubmit = resolveTravelPlanScheduleFromInput({
+      ...formInput,
+      destination: normalizedState.location,
+      arrivalTime: normalizedState.arrivalTime,
+      departureTime: normalizedState.departureTime,
+      budget: normalizedState.budget,
+      peopleCount: normalizedState.people,
+      travelIntent: nextTravelIntent,
+      customPreferences: nextCustomPreferences,
+      travelPurpose: nextTravelPurpose,
+    });
+
+    const nextTripSchedule: TripScheduleEditorValue = {
+      ...tripSchedule,
+      departureDate: resolvedForSubmit.departureDate,
+      returnDate: resolvedForSubmit.returnDate,
+      durationPreset: resolvedForSubmit.durationPreset,
+      customNights: resolvedForSubmit.customDuration
+        ? String(resolvedForSubmit.customDuration.nights)
+        : tripSchedule.customNights,
+      customDays: resolvedForSubmit.customDuration
+        ? String(resolvedForSubmit.customDuration.days)
+        : tripSchedule.customDays,
+    };
+
+    const nextBudgetScope = travelBudgetIncludesToBudgetScope(travelBudgetIncludes);
+
     travelSubmitSnapshotRef.current = {
       location: normalizedState.location,
       budget: normalizedState.budget,
@@ -1352,7 +1473,14 @@ export default function HomeScreen() {
       travelTiming: nextTravelTiming,
       travelIntent: nextTravelIntent,
       customPreferences: nextCustomPreferences,
+      travelPurpose: nextTravelPurpose,
+      tripSchedule: nextTripSchedule,
+      budgetScope: nextBudgetScope,
     };
+
+    setBudgetScope(nextBudgetScope);
+
+    setTripSchedule(nextTripSchedule);
 
     const payload = buildTravelPlanSubmitPayload({
       ...formInput,
@@ -1363,10 +1491,15 @@ export default function HomeScreen() {
       peopleCount: normalizedState.people,
       travelIntent: nextTravelIntent,
       customPreferences: nextCustomPreferences,
+      travelPurpose: nextTravelPurpose,
     });
 
-    console.log('[TravelPlanForm] raw form state', formState);
-    console.log('[TravelPlanForm] normalized payload', payload);
+    console.log('[TravelPlanForm] raw form state', {
+      ...formState,
+      departureDate: durationMeta.departureDate,
+      returnDate: durationMeta.returnDate,
+    });
+    console.log('[TravelPlanForm] final payload', payload);
 
     setLocation(normalizedState.location);
     setBudget(normalizedState.budget);
@@ -1375,10 +1508,10 @@ export default function HomeScreen() {
     setTravelIntent(nextTravelIntent);
     setCustomPreferences(nextCustomPreferences);
     setSelectedTravelPurposeId(nextPurposeId);
+    setTravelPurpose(nextTravelPurpose);
     setError(null);
 
     try {
-      await showGenerationOverlay();
       await handleGenerate({ overlayReady: true });
     } catch (error) {
       console.error('[GenerateButton] error', error);
@@ -1402,12 +1535,8 @@ export default function HomeScreen() {
             location={location}
             onLocationChange={handleLocationChange}
             tripSchedule={tripSchedule}
-            onDepartureDateChange={(departureDate) => {
-              setTripSchedule((prev) => syncScheduleOnDepartureChange(prev, departureDate));
-              if (showItinerary) resetPlan();
-            }}
-            onReturnDateChange={(returnDate) => {
-              setTripSchedule((prev) => syncScheduleOnReturnChange(prev, returnDate));
+            onTripScheduleChange={(next) => {
+              setTripSchedule(next);
               if (showItinerary) resetPlan();
             }}
             travelTiming={travelTiming}
@@ -1419,6 +1548,12 @@ export default function HomeScreen() {
             onBudgetChange={setBudget}
             currency={currency}
             onCurrencyChange={setCurrency}
+            budgetIncludes={travelBudgetIncludes}
+            onBudgetIncludesChange={(next) => {
+              setTravelBudgetIncludes(next);
+              setBudgetScope(travelBudgetIncludesToBudgetScope(next));
+              if (showItinerary) resetPlan();
+            }}
             people={people}
             onPeopleChange={setPeople}
             companion={companion}
@@ -1436,6 +1571,7 @@ export default function HomeScreen() {
             onGenerate={handleTravelGenerate}
             generateDisabled={!travelFormReady}
             devDisabledReason={travelGenerateDisabledReason}
+            validationMessages={travelValidationMessages}
             onRetry={handleTravelGenerate}
           />
           {showItinerary && companion && planDetails ? (
@@ -1797,13 +1933,16 @@ export default function HomeScreen() {
           onPlanFormClose={handlePlanFormClose}
           afterPlanLocation={location.trim() || undefined}
           isPlanGenerating={isLoading}
+          generationStepIndex={generationStepIndex}
           onAbortPlanGeneration={handleCancelGeneration}
         />
 
       </ScrollView>
     </KeyboardAvoidingView>
 
-    <PlanGenerationOverlay visible={isLoading} stepIndex={generationStepIndex} />
+    {isLoading && !openedPlanMode ? (
+      <PlanGenerationOverlay visible currentStepIndex={generationStepIndex} />
+    ) : null}
     </View>
   );
 }

@@ -39,6 +39,8 @@ export type BudgetScopeSettings = {
   customItems: string[];
   flightsBooked?: boolean;
   hotelsBooked?: boolean;
+  /** 現地費用のみ（航空券・宿泊を予算に含めない） */
+  localOnly?: boolean;
 };
 
 export const BUDGET_SCOPE_META: Record<

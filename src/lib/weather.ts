@@ -1,7 +1,19 @@
 import type { TripDurationOption } from '@/types/plan';
 import type { CustomTripDuration } from '@/types/trip-schedule';
 
+import {
+  createSeasonalWeatherContextForecast,
+  getDaysUntilDeparture,
+  getWeatherPlanningMessage,
+  getWeatherPlanningMode,
+  isWithinForecastHorizon,
+  WEATHER_PLANNING_MESSAGES,
+  type SeasonalWeatherContext,
+  type WeatherPlanningMode,
+} from './weather-planning';
 import { getDayCountForDuration } from './trip-duration';
+
+export type { SeasonalWeatherContext, WeatherPlanningMode };
 
 export type WeatherCategory = 'sunny' | 'partly_cloudy' | 'cloudy' | 'rainy' | 'snow' | 'unknown';
 
@@ -21,8 +33,14 @@ export type WeatherDayForecast = {
 export type WeatherForecast = {
   available: boolean;
   locationName: string;
+  /** Resolved city/area used for weather API lookup (may differ from trip destination). */
+  location?: string;
   /** Geocoding query used when different from the trip destination (e.g. 韓国 → Seoul). */
   searchLocation?: string;
+  planningMode?: WeatherPlanningMode;
+  planningMessage?: string;
+  rescheduleNote?: string;
+  seasonalContext?: SeasonalWeatherContext;
   days: WeatherDayForecast[];
   summary: string;
   hasRainExpected: boolean;
@@ -99,6 +117,36 @@ const COUNTRY_WEATHER_MAPPINGS: CountryWeatherMapping[] = [
   },
 ];
 
+/** Cities/regions that should be geocoded as-is (not mapped to a default country city). */
+const KNOWN_WEATHER_CITY_PATTERNS: RegExp[] = [
+  /^大阪$/,
+  /^東京$/,
+  /^京都$/,
+  /^神戸$/,
+  /^名古屋$/,
+  /^福岡$/,
+  /^ソウル$/,
+  /^釜山$/,
+  /^済州$/,
+  /^シドニー$/,
+  /^ケアンズ$/,
+  /^メルボルン$/,
+  /^バンコク$/,
+  /^パリ$/,
+  /^ニューヨーク$/,
+  /^osaka$/i,
+  /^tokyo$/i,
+  /^kyoto$/i,
+  /^seoul$/i,
+  /^busan$/i,
+  /^cairns$/i,
+  /^melbourne$/i,
+  /^sydney$/i,
+  /^bangkok$/i,
+  /^paris$/i,
+  /^new\s*york$/i,
+];
+
 function stripTravelSuffix(destination: string): string {
   return destination
     .replace(/(旅行|観光|ツアー|trip|travel|へ|への)$/i, '')
@@ -113,6 +161,10 @@ export function resolveWeatherLocation(destination: string): string {
   const stripped = stripTravelSuffix(normalized);
   const candidates = [normalized, stripped, normalized.toLowerCase(), stripped.toLowerCase()];
 
+  if (candidates.some((value) => KNOWN_WEATHER_CITY_PATTERNS.some((pattern) => pattern.test(value)))) {
+    return normalized;
+  }
+
   for (const entry of COUNTRY_WEATHER_MAPPINGS) {
     if (entry.patterns.some((pattern) => candidates.some((value) => pattern.test(value)))) {
       return entry.city;
@@ -124,12 +176,17 @@ export function resolveWeatherLocation(destination: string): string {
 
 export function createUnavailableWeatherForecast(
   destination: string,
-  searchLocation?: string,
+  weatherLocation?: string,
 ): WeatherForecast {
+  const resolved = weatherLocation ?? resolveWeatherLocation(destination);
   return {
     available: false,
     locationName: destination,
-    searchLocation,
+    location: resolved,
+    searchLocation: resolved !== destination.trim() ? resolved : undefined,
+    planningMode: 'unavailable',
+    planningMessage: WEATHER_PLANNING_MESSAGES.unavailable,
+    rescheduleNote: WEATHER_PLANNING_MESSAGES.rescheduleNote,
     days: [],
     summary: '天気情報は取得できませんでした',
     hasRainExpected: false,
@@ -365,6 +422,7 @@ async function fetchWeatherForecastForQuery(
   return {
     available: true,
     locationName: tripDestination,
+    location: geocodeQuery,
     searchLocation: geocodeQuery !== tripDestination ? geocodeQuery : undefined,
     days,
     summary: geocodeQuery !== tripDestination
@@ -377,6 +435,92 @@ async function fetchWeatherForecastForQuery(
     maxTemperature: firstDay ? firstDay.temperatureMax : null,
     rainChance: firstDay ? firstDay.precipitationProbability : null,
     condition: firstDay?.category,
+  };
+}
+
+export function createSeasonalWeatherForecast(
+  destination: string,
+  departureDate: string,
+): WeatherForecast {
+  const weatherLocation = resolveWeatherLocation(destination);
+  const { seasonalContext, summary, hasRainExpected } = createSeasonalWeatherContextForecast(
+    destination,
+    departureDate,
+    weatherLocation,
+  );
+
+  return {
+    available: true,
+    locationName: destination,
+    location: weatherLocation,
+    searchLocation: weatherLocation !== destination.trim() ? weatherLocation : undefined,
+    planningMode: 'seasonal',
+    planningMessage: WEATHER_PLANNING_MESSAGES.seasonal,
+    rescheduleNote: WEATHER_PLANNING_MESSAGES.rescheduleNote,
+    seasonalContext,
+    days: [],
+    summary,
+    hasRainExpected,
+    isMostlySunny: false,
+    temperature: null,
+    minTemperature: null,
+    maxTemperature: null,
+    rainChance: null,
+    condition: 'unknown',
+  };
+}
+
+export { getWeatherPlanningMode, getDaysUntilDeparture, isWithinForecastHorizon };
+
+/**
+ * Resolve weather context for trip planning: forecast when soon, seasonal guidance when far ahead.
+ * Never throws — returns unavailable fallback on fetch failure.
+ */
+export async function resolveWeatherForTrip(input: {
+  location: string;
+  startDate: string;
+  tripDuration: TripDurationOption;
+  endDate?: string;
+  customDuration?: CustomTripDuration | null;
+}): Promise<WeatherForecast> {
+  const tripDestination = input.location.trim();
+  if (!tripDestination) {
+    return createUnavailableWeatherForecast(tripDestination);
+  }
+
+  const daysUntil = getDaysUntilDeparture(input.startDate);
+  const weatherLocation = resolveWeatherLocation(tripDestination);
+  console.log('[Weather] resolved location', {
+    destination: tripDestination,
+    weatherLocation,
+    daysUntil,
+  });
+
+  if (!isWithinForecastHorizon(input.startDate)) {
+    const mode = getWeatherPlanningMode(input.startDate);
+    console.log('[Weather] using seasonal guidance', {
+      destination: tripDestination,
+      departureDate: input.startDate,
+      mode,
+      daysUntil,
+    });
+    return createSeasonalWeatherForecast(tripDestination, input.startDate);
+  }
+
+  const forecast = await fetchWeatherForecast(input);
+  if (forecast.available) {
+    return {
+      ...forecast,
+      planningMode: 'forecast',
+      planningMessage: getWeatherPlanningMessage('forecast'),
+    };
+  }
+
+  return {
+    ...createUnavailableWeatherForecast(tripDestination, weatherLocation),
+    planningMode: 'unavailable',
+    planningMessage: WEATHER_PLANNING_MESSAGES.unavailable,
+    rescheduleNote: WEATHER_PLANNING_MESSAGES.rescheduleNote,
   };
 }
 
@@ -403,9 +547,14 @@ export async function fetchWeatherForecast(input: {
       customDuration: input.customDuration,
     });
 
-    const resolvedQuery = resolveWeatherLocation(tripDestination);
+    const weatherLocation = resolveWeatherLocation(tripDestination);
+    console.log('[Weather] resolved location', {
+      destination: tripDestination,
+      weatherLocation,
+    });
+
     const queries =
-      resolvedQuery === tripDestination ? [tripDestination] : [resolvedQuery, tripDestination];
+      weatherLocation === tripDestination ? [tripDestination] : [weatherLocation, tripDestination];
 
     for (const query of queries) {
       const forecast = await fetchWeatherForecastForQuery(tripDestination, query, {
@@ -415,10 +564,13 @@ export async function fetchWeatherForecast(input: {
       if (forecast) {
         return forecast;
       }
-      console.warn('[Weather] fetch failed, continuing without weather', { query, tripDestination });
     }
 
-    return createUnavailableWeatherForecast(tripDestination, resolvedQuery);
+    console.warn('[Weather] fetch failed, continuing without weather', {
+      destination: tripDestination,
+      weatherLocation,
+    });
+    return createUnavailableWeatherForecast(tripDestination, weatherLocation);
   } catch (error) {
     console.warn('[Weather] fetch failed, continuing without weather', error);
     return createUnavailableWeatherForecast(

@@ -62,6 +62,29 @@ function analyzeWeather(weather?: WeatherForecast): string {
     );
   }
 
+  if (weather.planningMode === 'seasonal' || weather.seasonalContext) {
+    const ctx = weather.seasonalContext;
+    if (ctx) {
+      return (
+        `${ctx.destination}の${ctx.monthLabel}（${ctx.seasonLabel}）— 正確な予報は取得不可のため**季節傾向**で設計。` +
+        `${ctx.guidance} 服装: ${ctx.outfitAdvice} ` +
+        '**屋内・屋外のバランス**と weatherBackup（雨・暑さ・寒さ）を必ず具体化。' +
+        '「直前に天気を再確認してください」を plannerMessage に含める。'
+      );
+    }
+    return (
+      '旅行日が先のため季節傾向ベースで設計。**具体的な当日天候の断定は禁止**。' +
+      '屋内・屋外のバランスと weatherBackup を必ず設定。'
+    );
+  }
+
+  if (weather.available === false || weather.planningMode === 'unavailable') {
+    return (
+      '天気データ未取得のため、**屋内・屋外をバランスよく**組み合わせた柔軟なプランに。' +
+      '各スポットに weatherBackup（雨・暑さ・寒さの代替）を設定し、rainyDayAlternatives にも具体的な代替ルートを記載。'
+    );
+  }
+
   const daySummaries = weather.days
     .map((d) => `${d.label}: ${d.condition}（降水${d.precipitationProbability}%）`)
     .join(' / ');

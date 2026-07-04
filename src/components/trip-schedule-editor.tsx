@@ -11,6 +11,7 @@ import {
   applyQuickDateOption,
   applyQuickDurationOption,
   formatTripDateRangeLabel,
+  getSelectedDurationQuickOption,
   isValidIsoDate,
   resolveTripSchedule,
   syncScheduleOnCustomChange,
@@ -48,25 +49,7 @@ export function TripScheduleEditor({
     onResetPlan?.();
   };
 
-  const selectedDurationQuick = durationOptions.find((option) => {
-    if (option === '日帰り') {
-      return value.durationPreset === '1日' || value.durationPreset === '半日';
-    }
-    if (option === '5泊6日') {
-      return (
-        value.durationPreset === 'その他' &&
-        value.customNights === '5' &&
-        value.customDays === '6'
-      );
-    }
-    if (option === 'その他') {
-      return (
-        value.durationPreset === 'その他' &&
-        !(value.customNights === '5' && value.customDays === '6')
-      );
-    }
-    return value.durationPreset === option;
-  });
+  const selectedDurationQuick = getSelectedDurationQuickOption(value, durationOptions);
 
   return (
     <View style={styles.wrap}>

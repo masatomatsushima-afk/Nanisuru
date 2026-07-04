@@ -12,6 +12,7 @@ import { getDurationDisplayLabel, resolveDurationConfig } from './trip-duration'
 import type { CustomTripDuration } from '@/types/trip-schedule';
 import type { WeatherForecast } from './weather';
 import { formatTripDateLabel } from './weather';
+import { WEATHER_PLANNING_MESSAGES } from './weather-planning';
 import { buildUserMemoryPromptSection } from './user-memory';
 import { buildTravelMemoryPromptSection } from './travel-memory';
 import { buildRealPlacesPromptSection } from './location-places';
@@ -68,6 +69,11 @@ export type PlanInput = {
     baseDays: ItineraryDay[];
     baseDetails: PlanDetails;
     notes?: string;
+  };
+  weatherReplan?: {
+    baseDays: ItineraryDay[];
+    baseDetails: PlanDetails;
+    previousWeather?: WeatherForecast;
   };
   itineraryBalanceFix?: {
     baseDays: ItineraryDay[];
@@ -133,6 +139,8 @@ export function buildConciergePrompt(input: PlanInput): string {
     avoidPreferences:
       input.avoidPreferences?.trim() || input.customPreferences?.avoidPreferences?.trim() || '',
   };
+
+  console.log('[GeneratePlan] prompt purpose', normalized.travelPurpose || input.mood);
 
   const location = normalized.location;
   const budget = normalized.budget;
@@ -211,7 +219,38 @@ ${input.avoidActivities.map((name) => `- ${name}`).join('\n')}
 - 旅行タイプ「${input.personality}」の方針は維持し、前回とは違う魅力が伝わるプランにすること`
       : '';
 
-  const adjustmentSection = input.planAdjustment
+  const weatherReplanSection = input.weatherReplan
+    ? `
+
+## 天気に合わせた再調整（最重要・部分更新）
+旅行日が近づき、**最新の天気予報**が利用可能になりました。
+ベースプランを**丸ごと作り直さず**、天候に応じて必要な部分だけを更新してください。
+
+### 維持すること（変更禁止）
+- 目的地、日程、予算、同行者、旅行スタイル、ユーザー好み
+- ユーザーが指定した必須スポット
+- 既存プランで問題ないスポット・流れ
+
+### 更新すること
+- **天気・季節メモ**（conciergeAnalysis.weather）
+- **おすすめの服装**・持ち物（outfitAdvice 相当の内容を highlights / plannerMessage に反映）
+- **雨/暑さ/寒さの場合の代替案**（weatherBackup、rainyDayAlternatives）
+- **移動の注意点**（plannerMessage または highlights）
+- **出発前に再確認すること**（plannerMessage に含める）
+
+### weatherReplanChanges（必須）
+変更したポイントを2〜6件、具体的な日本語で記載すること。
+例:
+- 「雨予報のため、午後の屋外散歩を美術館に変更しました」
+- 「気温が高いため、昼間は屋内休憩を多めにしました」
+- 「夜は冷えるため、服装アドバイスを更新しました」
+
+### 禁止
+- プラン全体の全面作り直し
+- ベースプランと無関係な新しい目的地への変更`
+    : '';
+
+  const adjustmentSection = input.planAdjustment && !input.weatherReplan
     ? `
 
 ## プラン調整（最重要）
@@ -239,6 +278,25 @@ ${input.planAdjustment.notes?.trim() ? `### ユーザーメモ\n${input.planAdju
 - 画面上で編集された条件（場所・予算・人数・同行者・気分・行きたい/避けたい場所）を最優先すること
 - 調整指示に沿って timeline・費用・選定理由を更新すること
 - ベースプランの良い要素は残しつつ、指示に沿って改善すること`
+    : input.planAdjustment && input.weatherReplan
+      ? `
+
+## 調整指示（天気再調整）
+${input.planAdjustment.instruction}
+
+### 現在のベースプラン（参考）
+${JSON.stringify(
+  {
+    days: input.planAdjustment.baseDays,
+    totalBudget: input.planAdjustment.baseDetails.totalBudget,
+    duration: input.planAdjustment.baseDetails.duration,
+    highlights: input.planAdjustment.baseDetails.highlights,
+  },
+  null,
+  2,
+)}
+
+${input.planAdjustment.notes?.trim() ? `### ユーザーメモ\n${input.planAdjustment.notes.trim()}` : ''}`
     : '';
 
   const balanceFixSection = input.itineraryBalanceFix
@@ -391,9 +449,48 @@ ${accommodationRule}
       ? `${tripDateLabel}〜${tripEndDateLabel}`
       : tripDateLabel;
 
-  const weatherSection = input.weather
-    ? input.weather.available === false
-      ? `
+  const weatherSection = (() => {
+    if (!input.weather) return '';
+
+    const mode =
+      input.weather.planningMode ??
+      (input.weather.seasonalContext
+        ? 'seasonal'
+        : input.weather.available === false
+          ? 'unavailable'
+          : 'forecast');
+
+    if (mode === 'seasonal' && input.weather.seasonalContext) {
+      const ctx = input.weather.seasonalContext;
+      return `
+
+## 季節の天候傾向（${ctx.destination}・${ctx.monthLabel}・必ず反映）
+正確な天気予報は、旅行日が先のため取得できません。
+目的地と旅行月の**季節的な気候傾向**を前提にプランを作成してください。
+
+- 季節: ${ctx.seasonLabel}
+- 傾向: ${ctx.guidance}
+- おすすめの服装: ${ctx.outfitAdvice}
+- 注意点: ${ctx.riskNotes.join(' / ')}
+
+### 季節ベースのスポット選定（最重要）
+- **屋内・屋外をバランスよく**組み合わせ、天候が変わっても柔軟に楽しめるプランにすること
+- 各スポットの weatherBackup に、**雨・暑さ・寒さ**の場合の代替案を必ず記載すること
+- rainyDayAlternatives には、雨の日でも楽しめる具体的な代替スポットを記載すること
+
+### AI出力に必ず含めること（季節モード）
+- **天気・季節メモ**（conciergeAnalysis.weather に季節傾向ベース2〜3文）
+- **おすすめの服装**（plannerMessage または highlights に具体的ヒント）
+- **雨/暑さ/寒さの場合の代替案**（weatherBackup と rainyDayAlternatives）
+- **出発前に再確認すること**（例：「出発が近づいたら天気を再確認してください」「${WEATHER_PLANNING_MESSAGES.rescheduleNote}」）
+
+### 禁止表現（厳守）
+- 「当日は晴れです」「雨は降りません」「〇月〇日は雨です」など**具体的な当日天候の断定**は禁止
+- 代わりに「この時期は暑くなりやすいです」「雨の可能性も考えて屋内候補を入れています」等の**傾向表現**を使うこと`;
+    }
+
+    if (mode === 'unavailable' || input.weather.available === false) {
+      return `
 
 ## 天気予報（取得不可・必ず反映）
 天気情報は取得できなかったため、天候に左右されにくい候補も含めてください。
@@ -403,8 +500,15 @@ ${input.weather.summary}
 - **屋内・屋外をバランスよく**組み合わせ、天候が変わっても柔軟に楽しめるプランにすること
 - 各スポットの weatherBackup に、雨や暑さなど天候変化時の代替案を必ず記載すること
 - rainyDayAlternatives には、雨の日でも楽しめる具体的な代替スポットを記載すること
-- plannerMessage に「天候に左右されにくい過ごし方もご提案します」等の一言を含めること`
-      : `
+
+### AI出力に必ず含めること（天気取得不可）
+- **天気・季節メモ**（conciergeAnalysis.weather に天候不確実性への配慮2〜3文）
+- **おすすめの服装**（plannerMessage または highlights）
+- **雨/暑さ/寒さの場合の代替案**（weatherBackup と rainyDayAlternatives）
+- **出発前に再確認すること**（「天候に左右されにくい過ごし方もご提案します」「出発が近づいたら天気を再確認してください」等）`;
+    }
+
+    return `
 
 ## 天気予報（${input.weather.locationName}・必ず反映）
 ${input.weather.summary}
@@ -441,9 +545,13 @@ ${
     : ''
 }
 ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて**その日の items を調整すること（雨の日は屋内、晴れの日は屋外）' : ''}
-- plannerMessage に天候への一言（例：「晴れの予報なので屋外も楽しめます」等）を含めること
-- rainyDayAlternatives には、雨の日でも楽しめる具体的な代替スポットを記載すること`
-    : '';
+
+### AI出力に必ず含めること（予報モード）
+- **天気・季節メモ**（conciergeAnalysis.weather に予報に基づく対策方針2〜3文）
+- **おすすめの服装**（plannerMessage または highlights）
+- **雨/暑さ/寒さの場合の代替案**（weatherBackup と rainyDayAlternatives）
+- plannerMessage に天候への一言（例：「晴れの予報なので屋外も楽しめます」等）を含めること`;
+  })();
 
   const userMemorySection = input.userPreferences
     ? buildUserMemoryPromptSection(input.userPreferences)
@@ -583,7 +691,7 @@ ${personalityGuide}
 15. 文体は丁寧で親しみやすい日本語。プロのコンシェルジュとして信頼感のあるトーン
 
 ${humanRhythmSection}${diversitySection}${travelTimingSection}${tourSuggestionSection}
-${budgetOptimizationSection}${currencySection}${weatherSection}${customPreferencesSection}${localHiddenSpotsSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
+${budgetOptimizationSection}${currencySection}${weatherReplanSection}${weatherSection}${customPreferencesSection}${localHiddenSpotsSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
 
 ## 出力JSON（この形式のみ、余計な文章は禁止）
 {

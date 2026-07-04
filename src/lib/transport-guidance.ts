@@ -83,11 +83,23 @@ function hasMajorTransitCity(location?: string): boolean {
 
 function isRainyContext(context: TransportGuidanceContext, dayIndex?: number): boolean {
   if (context.weather?.hasRainExpected) return true;
+  if (
+    context.weather?.seasonalContext?.riskNotes.some((note) => /雨|梅雨|スコール/i.test(note))
+  ) {
+    return true;
+  }
   const day = dayIndex != null ? context.weather?.days[dayIndex] : context.weather?.days[0];
   return Boolean(day && (day.category === 'rainy' || day.precipitationProbability >= 45));
 }
 
 function isHotContext(context: TransportGuidanceContext, dayIndex?: number): boolean {
+  const seasonal = context.weather?.seasonalContext;
+  if (
+    seasonal &&
+    /暑|猛暑|熱帯|紫外線/i.test(`${seasonal.guidance}${seasonal.outfitAdvice}${seasonal.seasonLabel}`)
+  ) {
+    return true;
+  }
   const day = dayIndex != null ? context.weather?.days[dayIndex] : context.weather?.days[0];
   return Boolean(day && day.temperatureMax >= 30);
 }

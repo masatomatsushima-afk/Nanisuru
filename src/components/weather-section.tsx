@@ -13,24 +13,52 @@ type WeatherSectionProps = {
   compact?: boolean;
 };
 
+function resolvePlanningMode(weather: WeatherForecast) {
+  if (weather.planningMode) return weather.planningMode;
+  if (weather.seasonalContext) return 'seasonal' as const;
+  if (weather.available === false) return 'unavailable' as const;
+  return 'forecast' as const;
+}
+
 export function WeatherSection({ weather, compact = false }: WeatherSectionProps) {
-  const unavailable = weather.available === false;
+  const mode = resolvePlanningMode(weather);
+  const statusMessage = weather.planningMessage;
+  const seasonal = weather.seasonalContext;
+  const showDailyForecast = mode === 'forecast' && weather.days.length > 0;
 
   return (
     <View style={[styles.container, compact && styles.containerCompact]}>
       <View style={styles.header}>
         <Text style={styles.eyebrow}>WEATHER</Text>
-        <Text style={styles.title}>天気予報</Text>
+        <Text style={styles.title}>{mode === 'seasonal' ? '季節の天候傾向' : '天気予報'}</Text>
         <Text style={styles.location}>{weather.locationName}</Text>
+        {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
         {!compact ? <Text style={styles.summary}>{weather.summary}</Text> : null}
-        {unavailable ? (
+        {seasonal ? (
+          <View style={styles.seasonalBlock}>
+            <Text style={styles.seasonalLine}>
+              {seasonal.monthLabel} · {seasonal.seasonLabel}
+            </Text>
+            <Text style={styles.seasonalGuidance}>{seasonal.guidance}</Text>
+            <Text style={styles.seasonalOutfit}>おすすめの服装: {seasonal.outfitAdvice}</Text>
+            {seasonal.riskNotes.length > 0 ? (
+              <Text style={styles.seasonalRisks}>
+                注意: {seasonal.riskNotes.join(' / ')}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+        {mode === 'unavailable' && !statusMessage ? (
           <Text style={styles.unavailableNote}>
             天気情報が取得できなかったため、天候に左右されにくいプランも含めています
           </Text>
         ) : null}
+        {weather.rescheduleNote && mode !== 'forecast' ? (
+          <Text style={styles.rescheduleNote}>{weather.rescheduleNote}</Text>
+        ) : null}
       </View>
 
-      {!unavailable && weather.days.length > 0 ? (
+      {showDailyForecast ? (
         <View style={styles.dayList}>
           {weather.days.map((day) => (
             <View key={day.date} style={styles.dayRow}>
@@ -87,17 +115,55 @@ const styles = StyleSheet.create({
     ...NS.typography.bodySm,
     marginTop: Spacing.one,
   },
+  statusMessage: {
+    color: NS.colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 20,
+    marginTop: Spacing.two,
+  },
   summary: {
     color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
     marginTop: Spacing.two,
     lineHeight: 22,
   },
+  seasonalBlock: {
+    marginTop: Spacing.two,
+    gap: Spacing.one,
+  },
+  seasonalLine: {
+    color: NS.colors.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  seasonalGuidance: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  seasonalOutfit: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  seasonalRisks: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
   unavailableNote: {
     color: NS.colors.textMuted,
     fontSize: 12,
     lineHeight: 18,
     marginTop: Spacing.two,
+  },
+  rescheduleNote: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: Spacing.two,
+    fontStyle: 'italic',
   },
   compactSummary: {
     color: NS.colors.textSecondary,

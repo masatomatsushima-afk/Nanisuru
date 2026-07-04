@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { PlanGenerationOverlay } from '@/components/plan-generation-overlay';
 import {
   HOME_FEATURE_ACTIONS,
   HOME_ROUTES,
@@ -214,6 +215,7 @@ export type ReferenceHomeScreenProps = {
   onPlanFormClose?: () => void;
   afterPlanLocation?: string;
   isPlanGenerating?: boolean;
+  generationStepIndex?: number;
   onAbortPlanGeneration?: () => void;
 };
 
@@ -354,6 +356,8 @@ function PlanFormSheet({
   onClose,
   preventClose,
   onAbortGeneration,
+  isPlanGenerating,
+  generationStepIndex = 0,
   children,
 }: {
   visible: boolean;
@@ -361,6 +365,8 @@ function PlanFormSheet({
   onClose: () => void;
   preventClose?: boolean;
   onAbortGeneration?: () => void;
+  isPlanGenerating?: boolean;
+  generationStepIndex?: number;
   children?: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
@@ -422,6 +428,12 @@ function PlanFormSheet({
             {children}
           </ScrollView>
         </KeyboardAvoidingView>
+
+        <PlanGenerationOverlay
+          embedded
+          visible={Boolean(isPlanGenerating)}
+          currentStepIndex={generationStepIndex}
+        />
       </View>
     </Modal>
   );
@@ -432,6 +444,7 @@ export function ReferenceHomeScreen({
   onPlanFormOpen,
   onPlanFormClose,
   isPlanGenerating,
+  generationStepIndex = 0,
   onAbortPlanGeneration,
 }: ReferenceHomeScreenProps) {
   const insets = useSafeAreaInsets();
@@ -721,7 +734,9 @@ export function ReferenceHomeScreen({
         mode={selectedPlanMode}
         onClose={closePlanForm}
         preventClose={isPlanGenerating}
-        onAbortGeneration={onAbortPlanGeneration}>
+        onAbortGeneration={onAbortPlanGeneration}
+        isPlanGenerating={isPlanGenerating}
+        generationStepIndex={generationStepIndex}>
         {renderPlanForm?.()}
       </PlanFormSheet>
     </>

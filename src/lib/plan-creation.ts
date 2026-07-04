@@ -13,6 +13,7 @@ import {
 import type { TripScheduleEditorValue } from '@/types/trip-schedule';
 
 import { formatCombinedMood } from './custom-preferences';
+import { resolveTravelPurposePersonality } from './travel-purpose';
 
 export function showsMoodQuestion(planType: PlanCreationType): boolean {
   return planType === '今日のお出かけ' || planType === 'デートプラン';
@@ -49,11 +50,25 @@ export function resolvePersonalityForPlan(input: {
   planType: PlanCreationType;
   personality: PersonalityOption | null;
   travelIntent: TravelIntentOption | '';
+  travelPurpose?: string | null;
 }): PersonalityOption {
+  if (showsTravelIntentQuestion(input.planType)) {
+    const fromPurpose = resolveTravelPurposePersonality(input.travelPurpose);
+    if (fromPurpose) return fromPurpose;
+
+    if (input.travelIntent && input.travelIntent in TRAVEL_INTENT_PERSONALITY) {
+      return TRAVEL_INTENT_PERSONALITY[input.travelIntent as TravelIntentOption];
+    }
+
+    return 'のんびり';
+  }
+
   if (input.personality) return input.personality;
+
   if (input.travelIntent && input.travelIntent in TRAVEL_INTENT_PERSONALITY) {
     return TRAVEL_INTENT_PERSONALITY[input.travelIntent as TravelIntentOption];
   }
+
   return 'のんびり';
 }
 

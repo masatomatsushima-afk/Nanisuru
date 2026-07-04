@@ -111,6 +111,21 @@ function inferClimateHint(location: string): 'tropical' | 'temperate' | 'cold' |
 }
 
 function weatherStats(weather?: WeatherForecast) {
+  if (weather?.seasonalContext) {
+    const ctx = weather.seasonalContext;
+    const hasRain = ctx.riskNotes.some((note) => /雨|梅雨|スコール/i.test(note));
+    const isHot = /暑|猛暑|熱帯|紫外線/i.test(`${ctx.guidance}${ctx.outfitAdvice}${ctx.seasonLabel}`);
+    const isCold = /寒|冬|冷/i.test(`${ctx.guidance}${ctx.outfitAdvice}${ctx.seasonLabel}`);
+
+    return {
+      maxTemp: isHot ? 32 : isCold ? 8 : 22,
+      minTemp: isCold ? 2 : isHot ? 22 : 12,
+      maxRainProb: hasRain ? 55 : 20,
+      hasRain,
+      mostlyOutdoor: !hasRain && !isHot,
+    };
+  }
+
   if (!weather?.days.length) {
     return {
       maxTemp: 22,

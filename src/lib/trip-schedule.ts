@@ -24,6 +24,7 @@ export const TRIP_DURATION_QUICK_OPTIONS = [
   '1泊2日',
   '2泊3日',
   '3泊4日',
+  '4泊5日',
   '5泊6日',
   '1週間',
   'その他',
@@ -77,6 +78,7 @@ export function inferPresetFromDates(
   if (nights === 1 && days === 2) return { preset: '1泊2日' };
   if (nights === 2 && days === 3) return { preset: '2泊3日' };
   if (nights === 3 && days === 4) return { preset: '3泊4日' };
+  if (nights === 4 && days === 5) return { preset: 'その他', custom: { nights: 4, days: 5 } };
   if (nights === 5 && days === 6) return { preset: 'その他', custom: { nights: 5, days: 6 } };
   if (nights === 6 && days === 7) return { preset: '1週間' };
 
@@ -399,6 +401,18 @@ export function applyQuickDurationOption(
     return syncScheduleOnPresetChange(value, '1日');
   }
 
+  if (option === '4泊5日') {
+    return syncScheduleOnPresetChange(
+      {
+        ...value,
+        durationPreset: 'その他',
+        customNights: '4',
+        customDays: '5',
+      },
+      'その他',
+    );
+  }
+
   if (option === '5泊6日') {
     return syncScheduleOnPresetChange(
       {
@@ -416,4 +430,46 @@ export function applyQuickDurationOption(
   }
 
   return syncScheduleOnPresetChange(value, option);
+}
+
+export function getSelectedDurationQuickOption(
+  value: TripScheduleEditorValue,
+  options: readonly TripDurationQuickOption[] = TRIP_DURATION_QUICK_OPTIONS,
+): TripDurationQuickOption | undefined {
+  return options.find((option) => {
+    if (option === '日帰り') {
+      return value.durationPreset === '1日' || value.durationPreset === '半日';
+    }
+    if (option === '4泊5日') {
+      return (
+        value.durationPreset === 'その他' &&
+        value.customNights === '4' &&
+        value.customDays === '5'
+      );
+    }
+    if (option === '5泊6日') {
+      return (
+        value.durationPreset === 'その他' &&
+        value.customNights === '5' &&
+        value.customDays === '6'
+      );
+    }
+    if (option === 'その他') {
+      return (
+        value.durationPreset === 'その他' &&
+        !(value.customNights === '4' && value.customDays === '5') &&
+        !(value.customNights === '5' && value.customDays === '6')
+      );
+    }
+    return value.durationPreset === option;
+  });
+}
+
+export function formatTravelDurationSummaryLabel(
+  resolved: ResolvedTripSchedule,
+): string {
+  if (resolved.dayCount === 1 && (resolved.durationPreset === '1日' || resolved.durationPreset === '半日')) {
+    return '日帰り';
+  }
+  return resolved.durationLabel;
 }

@@ -96,6 +96,8 @@ export type BudgetBreakdown = {
 
 export type WeatherDayForecast = import('@/lib/weather').WeatherDayForecast;
 export type WeatherForecast = import('@/lib/weather').WeatherForecast;
+export type SeasonalWeatherContext = import('@/lib/weather').SeasonalWeatherContext;
+export type WeatherPlanningMode = import('@/lib/weather').WeatherPlanningMode;
 
 export type PlanDetails = {
   totalBudget: string;
@@ -118,6 +120,8 @@ export type PlanDetails = {
   travelTiming?: TravelTimingSettings;
   tourSuggestions?: TourSuggestion[];
   outfitAdvice?: OutfitPackingAdvice;
+  /** Points changed during weather-based replanning. */
+  weatherReplanChanges?: string[];
 };
 
 export type PlanParams = {

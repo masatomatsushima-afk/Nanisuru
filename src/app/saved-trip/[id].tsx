@@ -27,6 +27,7 @@ import { RequireAuthGate } from '@/components/require-auth-gate';
 import { ErrorStateCard } from '@/components/ui/state-cards';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { WeatherSection } from '@/components/weather-section';
+import { WeatherReplanActions } from '@/components/weather-replan-actions';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
@@ -39,11 +40,13 @@ import { MODERATION_STATUS_LABELS } from '@/types/moderation';
 import { buildActiveTripContext, saveActiveTrip } from '@/lib/active-trip';
 import { getActionErrorMessage } from '@/lib/app-errors';
 import { saveItineraryEdit } from '@/lib/itinerary-edits';
+import { saveWeatherReplan } from '@/lib/weather-replans';
 import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import { buildItineraryItemId } from '@/types/itinerary-edit';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
+import type { WeatherReplanPreviewSuccess } from '@/types/weather-replan';
 
-import type { SavedTrip } from '@/types/trip';
+import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { PublicPlan } from '@/types/public-plan';
 
 const accent = NS.colors.accent;
@@ -178,6 +181,36 @@ function SavedTripDetailContent({
   const days = payload.days?.length > 0 ? payload.days : [];
   const [editTarget, setEditTarget] = useState<ItineraryEditTarget | null>(null);
   const [showEditSheet, setShowEditSheet] = useState(false);
+
+  const handleApplyWeatherReplan = async (
+    nextPayload: SavedTripPayload,
+    preview: WeatherReplanPreviewSuccess,
+  ) => {
+    const updated = await updateTrip(trip.id, nextPayload);
+    onTripUpdated(updated);
+
+    await saveWeatherReplan({
+      tripId: trip.id,
+      beforePlan: preview.beforePayload,
+      afterPlan: preview.afterPayload,
+      weatherContext: preview.freshWeather,
+    });
+
+    await saveActiveTrip(
+      buildActiveTripContext({
+        location: nextPayload.location,
+        budget: nextPayload.budget,
+        currency: nextPayload.currency,
+        people: nextPayload.people,
+        mood: nextPayload.mood,
+        companion: nextPayload.companion,
+        personality: nextPayload.personality,
+        tripDuration: nextPayload.tripDuration,
+        days: nextPayload.days,
+        details: nextPayload.details,
+      }),
+    );
+  };
 
   const handleEditItem = (target: ItineraryEditTarget) => {
     setEditTarget(target);
@@ -318,6 +351,7 @@ function SavedTripDetailContent({
       {details.weather ? (
         <View style={styles.weatherWrap}>
           <WeatherSection weather={details.weather} />
+          <WeatherReplanActions payload={payload} onApply={handleApplyWeatherReplan} />
         </View>
       ) : null}
 

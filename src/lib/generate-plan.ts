@@ -24,7 +24,7 @@ import {
 } from './best-day';
 import { buildConciergePrompt, type PlanInput } from './prompts';
 import { flattenItineraryDays, resolveDurationConfig } from './trip-duration';
-import { fetchWeatherForecast, getTodayIsoDate, resolveWeatherLocation, createUnavailableWeatherForecast, type WeatherForecast } from './weather';
+import { fetchWeatherForecast, getTodayIsoDate, resolveWeatherLocation, resolveWeatherForTrip, createUnavailableWeatherForecast, type WeatherForecast } from './weather';
 import { getUserPreferences } from './user-memory';
 import { getTravelMemories } from './travel-memory';
 import {
@@ -90,6 +90,7 @@ type AiPlanResponse = {
   duration?: string;
   highlights?: string[];
   rainyDayAlternatives?: string[];
+  weatherReplanChanges?: string[];
   aiAdvice?: AiAdvice;
   tourSuggestions?: TourSuggestion[];
 };
@@ -169,7 +170,8 @@ const CONCIERGE_ANALYSIS_SCHEMA = {
     },
     weather: {
       type: 'string',
-      description: 'Weather analysis and contingency strategy in Japanese 2-3 sentences',
+      description:
+        'Weather and seasonal analysis memo in Japanese 2-3 sentences. For future trips use seasonal tendencies not exact forecast. Include clothing advice hint.',
     },
     budget: {
       type: 'string',
@@ -314,7 +316,7 @@ function buildPlanJsonSchema(
   overrides?: { dayCount?: number; itemsMin?: number; itemsMax?: number },
   customDuration?: CustomTripDuration | null,
   budgetScope?: BudgetScopeSettings,
-  options?: { includeTourSuggestions?: boolean },
+  options?: { includeTourSuggestions?: boolean; includeWeatherReplanChanges?: boolean },
 ) {
   const config = resolveDurationConfig(tripDuration, customDuration);
   const dayCount = overrides?.dayCount ?? config.dayCount;
@@ -375,6 +377,17 @@ function buildPlanJsonSchema(
     },
   };
 
+  if (options?.includeWeatherReplanChanges) {
+    properties.weatherReplanChanges = {
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 2,
+      maxItems: 6,
+      description:
+        'Specific summary of weather-based plan changes in Japanese e.g. rain forecast indoor swap',
+    };
+  }
+
   const required = [
     'conciergeAnalysis',
     'plannerMessage',
@@ -403,6 +416,10 @@ function buildPlanJsonSchema(
       description: 'Optional tour and local experience suggestions for multi-day trips',
     };
     required.push('tourSuggestions');
+  }
+
+  if (options?.includeWeatherReplanChanges) {
+    required.push('weatherReplanChanges');
   }
 
   return {
@@ -576,6 +593,7 @@ function parseAiResponse(
       weather,
       highlights: parsed.highlights ?? [],
       rainyDayAlternatives: parsed.rainyDayAlternatives ?? [],
+      weatherReplanChanges: parsed.weatherReplanChanges,
       aiAdvice: includeAiAdvice ? parsed.aiAdvice : undefined,
       tourSuggestions: parsed.tourSuggestions?.map((suggestion) => ({
         dayNumber: suggestion.dayNumber ?? undefined,
@@ -684,7 +702,10 @@ async function fetchPlanFromAi(params: {
           params.schemaOverrides,
           params.customDuration,
           params.planInput.budgetScope,
-          { includeTourSuggestions },
+          {
+            includeTourSuggestions,
+            includeWeatherReplanChanges: Boolean(params.planInput.weatherReplan),
+          },
         ),
       },
     },
@@ -895,7 +916,7 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
 
   try {
     const weatherLocation = resolveWeatherLocation(locationTrimmed);
-    weather = await fetchWeatherForecast({
+    weather = await resolveWeatherForTrip({
       location: locationTrimmed,
       startDate: input.tripDate,
       tripDuration: input.tripDuration,
@@ -903,19 +924,24 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
       customDuration: input.customDuration,
     });
 
-    if (!weather.available) {
+    if (!weather.available && weather.planningMode !== 'seasonal') {
       console.warn('[Weather] using fallback weather context', {
         destination: locationTrimmed,
         weatherLocation,
-        searchLocation: weather.searchLocation,
+        location: weather.location,
+        planningMode: weather.planningMode,
+      });
+    } else if (weather.planningMode === 'seasonal') {
+      console.log('[Weather] using seasonal weather context', {
+        destination: locationTrimmed,
+        planningMode: weather.planningMode,
+        month: weather.seasonalContext?.monthLabel,
       });
     }
   } catch (error) {
     console.warn('[Weather] fetch failed, continuing without weather', error);
-    weather = createUnavailableWeatherForecast(
-      locationTrimmed,
-      resolveWeatherLocation(locationTrimmed),
-    );
+    const weatherLocation = resolveWeatherLocation(locationTrimmed);
+    weather = createUnavailableWeatherForecast(locationTrimmed, weatherLocation);
   }
 
   let realPlaces;
@@ -1085,6 +1111,8 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   });
 
   const shouldBalanceCheck =
+    !input.planAdjustment &&
+    !input.weatherReplan &&
     !input.itineraryBalanceFix &&
     !input.itineraryQualityFix &&
     !gourmetTour &&
@@ -1134,6 +1162,8 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     logItineraryQualityReport(qualityReport);
 
     const canQualityFix =
+      !input.planAdjustment &&
+      !input.weatherReplan &&
       !input.itineraryQualityFix &&
       !input.itineraryBalanceFix &&
       shouldAttemptQualityFix(qualityReport, { gourmetTour });

@@ -13,6 +13,7 @@ import { ConciergeAccessSection } from '@/components/concierge-access-section';
 import { TourExperienceSection } from '@/components/tour-experience-section';
 import { ConciergeAnalysisSection } from '@/components/concierge-analysis-section';
 import { WeatherSection } from '@/components/weather-section';
+import { WeatherReplanActions } from '@/components/weather-replan-actions';
 import { OutfitPackingSection } from '@/components/outfit-packing-section';
 import { generateOutfitPackingAdvice } from '@/lib/outfit-packing-advice';
 import { ShareTripSection } from '@/components/share-trip-section';
@@ -30,6 +31,7 @@ import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/it
 import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
 import { COMPANION_OPTIONS, isDateRelatedCompanion, PERSONALITY_OPTIONS } from '@/types/plan';
 import type { SavedTripPayload } from '@/types/trip';
+import type { WeatherReplanPreviewSuccess } from '@/types/weather-replan';
 
 const accent = NS.colors.accent;
 
@@ -133,6 +135,15 @@ export default function PlanDetailScreen() {
       items: localItems,
     });
 
+  const handleApplyWeatherReplan = async (
+    nextPayload: SavedTripPayload,
+    _preview: WeatherReplanPreviewSuccess,
+  ) => {
+    setDays(nextPayload.days);
+    setLocalItems(nextPayload.items);
+    setEditDetails(nextPayload.details);
+  };
+
   const handleApplyEdit = async (result: PartialItineraryEditResult, _editRequest: string) => {
     const basePayload: SavedTripPayload = {
       location,
@@ -230,7 +241,12 @@ export default function PlanDetailScreen() {
         <ConciergeAnalysisSection analysis={planDetails.conciergeAnalysis} />
       ) : null}
 
-      {planDetails.weather ? <WeatherSection weather={planDetails.weather} /> : null}
+      {planDetails.weather ? (
+        <View>
+          <WeatherSection weather={planDetails.weather} />
+          <WeatherReplanActions payload={planPayload} onApply={handleApplyWeatherReplan} />
+        </View>
+      ) : null}
 
       {planDetails.outfitAdvice ? (
         <OutfitPackingSection advice={planDetails.outfitAdvice} />

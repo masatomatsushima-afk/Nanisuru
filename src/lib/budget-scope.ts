@@ -13,13 +13,14 @@ export function createDefaultBudgetScope(planType: PlanCreationType): BudgetScop
 
   return {
     includedItems: isTravel
-      ? ['食事', 'アクティビティ', '交通費', '宿泊費']
+      ? ['食事', '交通費', 'アクティビティ']
       : ['食事', 'カフェ', 'アクティビティ', '交通費'],
     excludeAlreadyPaid: false,
     alreadyPaidItems: [],
     customItems: [],
     flightsBooked: false,
     hotelsBooked: false,
+    localOnly: false,
   };
 }
 
@@ -199,6 +200,30 @@ export function buildBudgetScopePromptSection(
   if (settings.customItems.length > 0) {
     lines.push(
       `- **その他の予算項目**: ${settings.customItems.join('、')}（customItems に個別行を追加）`,
+    );
+  }
+
+  if (settings.localOnly) {
+    lines.push(
+      '- **現地費用のみ**: 航空券・宿泊費は予算に含めない。食事・交通費・アクティビティ・買い物・お土産・予備費など現地で使う費用だけを配分する',
+    );
+  }
+
+  const includesFlights = settings.includedItems.includes('飛行機代');
+  const includesHotels = settings.includedItems.includes('宿泊費');
+  if (includesFlights || includesHotels) {
+    lines.push(
+      '- **航空券・ホテル込み**: 入力予算に航空券・宿泊費を含めて配分する。現地で使える金額は少なめに調整し、航空券（flight）・宿泊費（accommodation）の行も budgetBreakdown に含める',
+    );
+  }
+
+  if (settings.localOnly) {
+    lines.push(
+      '- **budgetBreakdown の例（現地費用のみ）**: 食事、交通費、アクティビティ、買い物、予備費（flight / accommodation は出力しない）',
+    );
+  } else if (includesFlights && includesHotels) {
+    lines.push(
+      '- **budgetBreakdown の例（航空券・ホテル込み）**: 航空券（flight）、宿泊費（accommodation）、食事、交通費、アクティビティ、買い物',
     );
   }
 

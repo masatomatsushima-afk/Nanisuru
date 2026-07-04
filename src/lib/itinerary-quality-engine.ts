@@ -369,8 +369,11 @@ function validateOutfitConsistency(
 
   const hasRain =
     weather?.hasRainExpected ||
+    weather?.seasonalContext?.riskNotes.some((note) => /雨|梅雨|スコール/i.test(note)) ||
     weather?.days.some((day) => day.category === 'rainy' || day.precipitationProbability >= 45);
-  const hasCold = weather?.days.some((day) => day.temperatureMin <= 8);
+  const hasCold =
+    weather?.seasonalContext?.riskNotes.some((note) => /寒|冬|冷/i.test(note)) ||
+    weather?.days.some((day) => day.temperatureMin <= 8);
   const hasWind = weather?.days.some((day) => /風|wind/i.test(day.condition));
   const hasOutdoor = days.some((day) =>
     day.items.some((item) => ['散歩', '景色', '体験'].includes(item.activityCategory ?? '')),
