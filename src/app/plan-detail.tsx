@@ -26,6 +26,8 @@ import { Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
 import { parseCurrencyCode } from '@/constants/currency';
 import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
+import { saveItineraryEdit } from '@/lib/itinerary-edits';
+import { buildItineraryItemId } from '@/types/itinerary-edit';
 import { parseItineraryDays, isTripDurationOption } from '@/lib/trip-duration';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
@@ -144,7 +146,7 @@ export default function PlanDetailScreen() {
     setEditDetails(nextPayload.details);
   };
 
-  const handleApplyEdit = async (result: PartialItineraryEditResult, _editRequest: string) => {
+  const handleApplyEdit = async (result: PartialItineraryEditResult, editRequest: string) => {
     const basePayload: SavedTripPayload = {
       location,
       budget,
@@ -162,6 +164,24 @@ export default function PlanDetailScreen() {
     setDays(nextPayload.days);
     setLocalItems(nextPayload.items);
     setEditDetails(nextPayload.details);
+
+    if (editTarget) {
+      await saveItineraryEdit({
+        dayIndex: editTarget.dayIndex,
+        itemId: buildItineraryItemId(editTarget),
+        editRequest,
+        beforeData: {
+          item: result.preview.beforeItem,
+          dayIndex: editTarget.dayIndex,
+          itemIndex: editTarget.itemIndex,
+        },
+        afterData: {
+          item: result.preview.afterItem,
+          dayIndex: editTarget.dayIndex,
+          itemIndex: editTarget.itemIndex,
+        },
+      });
+    }
   };
 
   if (!companion || days.length === 0) {

@@ -16,14 +16,11 @@ import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { getErrorMessage } from '@/lib/app-errors';
 import { previewPartialItineraryEdit } from '@/lib/itinerary-partial-edit';
-import type {
-  ItineraryEditAction,
-  ItineraryEditTarget,
-  PartialItineraryEditResult,
-} from '@/types/itinerary-edit';
+import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import {
-  ITINERARY_EDIT_ACTIONS,
-  ITINERARY_EDIT_QUICK_CHIPS,
+  ITINERARY_EDIT_FREE_TEXT_PLACEHOLDER,
+  ITINERARY_SINGLE_EDIT_PRESETS,
+  type ItinerarySingleEditPresetId,
 } from '@/types/itinerary-edit';
 import type { SavedTripPayload } from '@/types/trip';
 
@@ -38,32 +35,27 @@ type ItineraryItemEditSheetProps = {
 function PreviewCard({
   label,
   item,
-  time,
-  activity,
 }: {
   label: string;
   item?: { time: string; activity: string; activityCategory?: string; reason?: string } | null;
-  time?: string;
-  activity?: string;
 }) {
-  const displayTime = item?.time ?? time ?? '';
-  const displayActivity = item?.activity ?? activity ?? '';
+  if (!item) {
+    return (
+      <View style={styles.previewCard}>
+        <Text style={styles.previewLabel}>{label}</Text>
+        <Text style={styles.previewEmpty}>（なし）</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.previewCard}>
       <Text style={styles.previewLabel}>{label}</Text>
-      {displayActivity ? (
-        <>
-          <Text style={styles.previewTime}>{displayTime}</Text>
-          <Text style={styles.previewActivity}>{displayActivity}</Text>
-          {item?.activityCategory ? (
-            <Text style={styles.previewCategory}>{item.activityCategory}</Text>
-          ) : null}
-          {item?.reason ? <Text style={styles.previewReason}>{item.reason}</Text> : null}
-        </>
-      ) : (
-        <Text style={styles.previewEmpty}>（削除）</Text>
-      )}
+      <Text style={styles.previewTime}>{item.time}</Text>
+      <Text style={styles.previewActivity}>{item.activity}</Text>
+      {item.activityCategory ? (
+        <Text style={styles.previewCategory}>{item.activityCategory}</Text>
+      ) : null}
     </View>
   );
 }
@@ -90,6 +82,21 @@ function OptionChip({
   );
 }
 
+function buildEditRequest(
+  presetId: ItinerarySingleEditPresetId,
+  customText: string,
+): string {
+  const preset = ITINERARY_SINGLE_EDIT_PRESETS.find((entry) => entry.id === presetId);
+  if (!preset) return customText.trim();
+
+  if (presetId === 'custom') {
+    return customText.trim();
+  }
+
+  const extra = customText.trim();
+  return extra ? `${preset.request} ${extra}` : preset.request;
+}
+
 export function ItineraryItemEditSheet({
   visible,
   target,
@@ -98,73 +105,77 @@ export function ItineraryItemEditSheet({
   onApply,
 }: ItineraryItemEditSheetProps) {
   const insets = useSafeAreaInsets();
-  const [action, setAction] = useState<ItineraryEditAction>('ai_consult');
-  const [userRequest, setUserRequest] = useState('');
-  const [newTime, setNewTime] = useState('');
+  const [presetId, setPresetId] = useState<ItinerarySingleEditPresetId>('similar_vibe');
+  const [customText, setCustomText] = useState('');
   const [preview, setPreview] = useState<PartialItineraryEditResult | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [variationSeed, setVariationSeed] = useState(0);
 
   const resetState = useCallback(() => {
-    setAction('ai_consult');
-    setUserRequest('');
-    setNewTime(target?.item.time ?? '');
+    setPresetId('similar_vibe');
+    setCustomText('');
     setPreview(null);
     setError(null);
-    setVariationSeed(0);
-  }, [target?.item.time]);
+  }, []);
 
   useEffect(() => {
     if (visible && target) {
+      console.log('[ItineraryEdit] selected item', {
+        dayIndex: target.dayIndex,
+        itemIndex: target.itemIndex,
+        item: target.item,
+      });
       resetState();
     }
   }, [visible, target, resetState]);
 
-  const generatePreview = useCallback(
-    async (options?: { variation?: boolean }) => {
-      if (!target) return;
+  const generatePreview = useCallback(async () => {
+    if (!target) return;
 
-      setIsGenerating(true);
-      setError(null);
+    const editRequest = buildEditRequest(presetId, customText);
+    if (!editRequest) {
+      setError('変更内容を入力してください');
+      return;
+    }
 
-      const seed = options?.variation ? variationSeed + 1 : variationSeed;
-      if (options?.variation) setVariationSeed(seed);
+    setIsGenerating(true);
+    setError(null);
 
-      try {
-        const result = await previewPartialItineraryEdit({
-          payload,
-          target,
-          action,
-          userRequest: userRequest.trim() || getDefaultRequest(action, target),
-          newTime: action === 'change_time' ? newTime : undefined,
-          reorderDirection: action === 'reorder' ? 'down' : undefined,
-          variationSeed: options?.variation ? seed : undefined,
-        });
-        setPreview(result);
-      } catch (err) {
-        setError(getErrorMessage(err));
-        setPreview(null);
-      } finally {
-        setIsGenerating(false);
-      }
-    },
-    [action, newTime, payload, target, userRequest, variationSeed],
-  );
+    try {
+      const result = await previewPartialItineraryEdit({
+        payload,
+        target,
+        action: 'change_place',
+        userRequest: editRequest,
+      });
+      setPreview(result);
+    } catch (err) {
+      setError(getErrorMessage(err));
+      setPreview(null);
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [customText, payload, presetId, target]);
 
   const handleApply = async () => {
-    if (!preview) return;
+    if (!preview || !target) return;
     setIsApplying(true);
     setError(null);
     try {
-      await onApply(preview, userRequest.trim() || getDefaultRequest(action, target!));
+      const editRequest = buildEditRequest(presetId, customText);
+      await onApply(preview, editRequest);
       onClose();
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
       setIsApplying(false);
     }
+  };
+
+  const handleDismissPreview = () => {
+    setPreview(null);
+    setError(null);
   };
 
   if (!target) return null;
@@ -176,7 +187,7 @@ export function ItineraryItemEditSheet({
           <Pressable onPress={onClose} hitSlop={12}>
             <Text style={styles.cancelLink}>キャンセル</Text>
           </Pressable>
-          <Text style={styles.headerTitle}>ここを変更</Text>
+          <Text style={styles.headerTitle}>この予定を変更</Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -190,81 +201,87 @@ export function ItineraryItemEditSheet({
             <Text style={styles.targetActivity}>{target.item.activity}</Text>
           </View>
 
-          <Text style={styles.sectionTitle}>変更内容</Text>
-          <View style={styles.optionsGrid}>
-            {ITINERARY_EDIT_ACTIONS.map((option) => (
-              <OptionChip
-                key={option.id}
-                label={option.label}
-                selected={action === option.id}
-                onPress={() => {
-                  setAction(option.id);
-                  setPreview(null);
-                }}
-              />
-            ))}
-          </View>
-
-          {action === 'change_time' ? (
-            <View style={styles.timeInputBox}>
-              <Text style={styles.inputLabel}>新しい時間（HH:MM）</Text>
-              <TextInput
-                style={styles.textInput}
-                value={newTime}
-                onChangeText={setNewTime}
-                placeholder="例: 14:30"
-                placeholderTextColor={NS.colors.textMuted}
-                keyboardType="numbers-and-punctuation"
-              />
-            </View>
-          ) : null}
-
-          {action !== 'delete' && action !== 'reorder' ? (
+          {!preview ? (
             <>
-              <Text style={styles.sectionTitle}>どう変えたいですか？</Text>
-              <TextInput
-                style={[styles.textInput, styles.requestInput]}
-                value={userRequest}
-                onChangeText={setUserRequest}
-                placeholder="例：ここはカフェにしたい、ビーチに寄ってから行きたい、もっと近い場所がいい"
-                placeholderTextColor={NS.colors.textMuted}
-                multiline
-                textAlignVertical="top"
+              <Text style={styles.sectionTitle}>変更内容</Text>
+              <View style={styles.optionsGrid}>
+                {ITINERARY_SINGLE_EDIT_PRESETS.map((option) => (
+                  <OptionChip
+                    key={option.id}
+                    label={option.label}
+                    selected={presetId === option.id}
+                    onPress={() => {
+                      setPresetId(option.id);
+                      setPreview(null);
+                      setError(null);
+                    }}
+                  />
+                ))}
+              </View>
+
+              {presetId === 'custom' || customText.length > 0 ? (
+                <TextInput
+                  style={[styles.textInput, styles.requestInput]}
+                  value={customText}
+                  onChangeText={(text) => {
+                    setCustomText(text);
+                    setPreview(null);
+                  }}
+                  placeholder={ITINERARY_EDIT_FREE_TEXT_PLACEHOLDER}
+                  placeholderTextColor={NS.colors.textMuted}
+                  multiline
+                  textAlignVertical="top"
+                />
+              ) : null}
+
+              <PrimaryButton
+                label={isGenerating ? '変更案を作成中…' : '変更案を見る'}
+                onPress={() => void generatePreview()}
+                disabled={isGenerating || isApplying}
               />
 
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
-                {ITINERARY_EDIT_QUICK_CHIPS.map((chip) => (
-                  <Pressable
-                    key={chip}
-                    style={({ pressed }) => [styles.quickChip, pressed && styles.quickChipPressed]}
-                    onPress={() => {
-                      setUserRequest(chip);
-                      setPreview(null);
-                    }}>
-                    <Text style={styles.quickChipText}>{chip}</Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
             </>
-          ) : null}
-
-          <PrimaryButton
-            label={preview ? 'プレビューを更新' : '変更案を見る'}
-            onPress={() => void generatePreview()}
-            disabled={isGenerating || isApplying}
-          />
-
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-          {preview ? (
+          ) : (
             <View style={styles.previewSection}>
-              <Text style={styles.sectionTitle}>変更プレビュー</Text>
+              <Text style={styles.sectionTitle}>変更案</Text>
               <Text style={styles.previewSummary}>{preview.preview.summary}</Text>
+
               <View style={styles.previewRow}>
                 <PreviewCard label="変更前" item={preview.preview.beforeItem} />
                 <Text style={styles.previewArrow}>→</Text>
                 <PreviewCard label="変更後" item={preview.preview.afterItem} />
               </View>
+
+              {preview.preview.reason ? (
+                <View style={styles.detailBlock}>
+                  <Text style={styles.detailLabel}>選定理由</Text>
+                  <Text style={styles.detailText}>{preview.preview.reason}</Text>
+                </View>
+              ) : null}
+
+              {preview.preview.movementFromPrev ? (
+                <View style={styles.detailBlock}>
+                  <Text style={styles.detailLabel}>前の予定からの移動</Text>
+                  <Text style={styles.detailText}>{preview.preview.movementFromPrev}</Text>
+                </View>
+              ) : null}
+
+              {preview.preview.movementToNext ? (
+                <View style={styles.detailBlock}>
+                  <Text style={styles.detailLabel}>次の予定への移動</Text>
+                  <Text style={styles.detailText}>{preview.preview.movementToNext}</Text>
+                </View>
+              ) : null}
+
+              {preview.preview.budgetImpact ? (
+                <View style={styles.detailBlock}>
+                  <Text style={styles.detailLabel}>予算への影響</Text>
+                  <Text style={styles.detailText}>{preview.preview.budgetImpact}</Text>
+                </View>
+              ) : null}
+
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
               <View style={styles.applyRow}>
                 {isApplying ? (
@@ -281,37 +298,17 @@ export function ItineraryItemEditSheet({
                 )}
                 <Pressable
                   style={({ pressed }) => [styles.secondaryButton, pressed && styles.secondaryButtonPressed]}
-                  onPress={() => void generatePreview({ variation: true })}
-                  disabled={isGenerating || isApplying}>
-                  <Text style={styles.secondaryButtonText}>別案を見る</Text>
+                  onPress={handleDismissPreview}
+                  disabled={isApplying}>
+                  <Text style={styles.secondaryButtonText}>やっぱり戻す</Text>
                 </Pressable>
               </View>
             </View>
-          ) : null}
+          )}
         </ScrollView>
       </View>
     </Modal>
   );
-}
-
-function getDefaultRequest(action: ItineraryEditAction, target: ItineraryEditTarget): string {
-  const name = target.item.activity;
-  switch (action) {
-    case 'change_place':
-      return `${name}を別の場所に変更したい`;
-    case 'add_before':
-      return `${name}の前に予定を追加したい`;
-    case 'add_after':
-      return `${name}の後に予定を追加したい`;
-    case 'delete':
-      return `${name}を削除したい`;
-    case 'change_time':
-      return `${name}の時間を変更したい`;
-    case 'reorder':
-      return `${name}の順番を変更したい`;
-    default:
-      return `${name}を変更したい`;
-  }
 }
 
 const styles = StyleSheet.create({
@@ -406,12 +403,6 @@ const styles = StyleSheet.create({
     color: NS.colors.accent,
     fontWeight: '700',
   },
-  inputLabel: {
-    color: NS.colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: Spacing.one,
-  },
   textInput: {
     backgroundColor: NS.colors.bgInput,
     borderRadius: NS.radius.sm,
@@ -425,32 +416,6 @@ const styles = StyleSheet.create({
   requestInput: {
     minHeight: 88,
   },
-  timeInputBox: {
-    gap: Spacing.one,
-  },
-  chipsScroll: {
-    marginHorizontal: -Spacing.one,
-  },
-  quickChip: {
-    marginHorizontal: Spacing.one,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: 999,
-    backgroundColor: NS.colors.bgElevated,
-    borderWidth: 1,
-    borderColor: NS.colors.border,
-  },
-  quickChipPressed: {
-    opacity: 0.85,
-  },
-  quickChipText: {
-    color: NS.colors.text,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  previewButton: {
-    marginTop: Spacing.one,
-  },
   errorText: {
     color: NS.colors.danger,
     fontSize: 14,
@@ -458,7 +423,6 @@ const styles = StyleSheet.create({
   },
   previewSection: {
     gap: Spacing.three,
-    marginTop: Spacing.two,
   },
   previewSummary: {
     color: NS.colors.textSecondary,
@@ -501,12 +465,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  previewReason: {
-    color: NS.colors.textMuted,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 4,
-  },
   previewEmpty: {
     color: NS.colors.textMuted,
     fontSize: 14,
@@ -518,8 +476,27 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
+  detailBlock: {
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.sm,
+    padding: Spacing.three,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    gap: 4,
+  },
+  detailLabel: {
+    color: NS.colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  detailText: {
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+  },
   applyRow: {
     gap: Spacing.two,
+    marginTop: Spacing.one,
   },
   applyingRow: {
     flexDirection: 'row',

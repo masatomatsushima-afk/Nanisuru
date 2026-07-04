@@ -160,9 +160,31 @@ function buildPreview(
   target: ItineraryEditTarget,
   summary: string,
 ): ItineraryEditPreview {
-  const afterItem = afterDay.items[target.itemIndex] ?? afterDay.items.find(
-    (item) => item.activity !== target.item.activity,
-  ) ?? null;
+  const afterItem =
+    afterDay.items[target.itemIndex] ??
+    afterDay.items.find((item) => item.activity !== target.item.activity) ??
+    null;
+
+  const prevItem = target.itemIndex > 0 ? afterDay.items[target.itemIndex - 1] : null;
+  const nextItem = afterDay.items[target.itemIndex + 1];
+
+  const movementFromPrev = prevItem
+    ? prevItem.transportation || prevItem.travelTimeToNext || undefined
+    : undefined;
+  const movementToNext = afterItem
+    ? afterItem.transportation || afterItem.travelTimeToNext || undefined
+    : undefined;
+
+  let budgetImpact: string | undefined;
+  if (afterItem?.estimatedCost && target.item.estimatedCost) {
+    if (afterItem.estimatedCost === target.item.estimatedCost) {
+      budgetImpact = `概算 ${afterItem.estimatedCost}（変更なし）`;
+    } else {
+      budgetImpact = `${target.item.estimatedCost} → ${afterItem.estimatedCost}`;
+    }
+  } else if (afterItem?.estimatedCost) {
+    budgetImpact = `概算 ${afterItem.estimatedCost}`;
+  }
 
   return {
     beforeDay,
@@ -170,6 +192,10 @@ function buildPreview(
     beforeItem: target.item,
     afterItem,
     summary,
+    reason: afterItem?.reason ?? summary,
+    movementFromPrev,
+    movementToNext,
+    budgetImpact,
   };
 }
 
@@ -192,18 +218,18 @@ function buildPartialEditInstruction(params: {
     ai_consult: 'ユーザーの要望に沿って指定した予定またはその前後のみを変更する',
   };
 
-  return `あなたは旅行プランの部分編集アシスタントです。
-**重要**: Day ${day.dayNumber}（${day.label}）のみ修正してください。他の日の行程は絶対に変更しないでください。
+  return `あなたは旅行プランの**1件だけ**を編集するアシスタントです。
+**重要**: 行程全体を再生成せず、Day ${day.dayNumber}（${day.label}）の指定予定**1件のみ**を差し替えてください。他の日・他の予定は絶対に変更しないでください。
 
-## 旅行概要
+## 旅行概要（維持）
 - 目的地: ${payload.location}
 - 予算: ${payload.budget} ${payload.currency}
 - 人数: ${payload.people}人
 - 同行者: ${payload.companion}
 - 旅行スタイル: ${payload.personality}
-- 気分: ${payload.mood}
+- 気分/目的: ${payload.mood}
 
-## 編集対象
+## 編集対象（この1件のみ）
 - 日: ${day.label}（${day.theme}）
 - 対象予定: ${target.item.time} ${target.item.activity}（${target.item.activityCategory ?? '未分類'}）
 - 編集種別: ${actionGuide[action]}
@@ -213,14 +239,20 @@ ${userRequest.trim() || actionGuide[action]}
 
 ${params.variationNote ? `\n## 別案\n${params.variationNote}` : ''}
 
+## 返却内容（updatedDay 内）
+- 差し替え後の item（replacement item）
+- reason（選定理由）
+- 必要なら前後 item の transportation / travelTimeToNext（移動メモ）
+- weatherBackup（天候変化時の代替）
+
 ## 修正ルール
-1. 指定した予定とその前後（最大2件）のみ変更可。それ以外の予定は維持
-2. 時刻・移動時間・transportation・travelTimeToNext を整合させる
-3. 予算・カテゴリバランス（食事/カフェ/体験/散歩など）を意識する
-4. 天候情報がある場合は weatherBackup を適切に設定
+1. **指定した1件のみ**差し替え。それ以外の予定・時刻・順番は維持
+2. 前の item → 新 item、新 item → 次の item の移動が自然になるよう transportation / travelTimeToNext を調整
+3. 目的地・日程・予算・同行者・旅行目的は変更しない
+4. 周辺スケジュールに馴染む時間帯・カテゴリバランスを保つ
 5. 同じ店・スポットの重複を避ける
 6. 実在しそうな具体的な店名・施設名を使う
-7. 全体の再生成は禁止 — この日の timeline のみ返す
+7. changeSummary に変更理由を日本語1〜2文で記載
 
 ## 現在の Day ${day.dayNumber} の行程
 ${JSON.stringify(day, null, 2)}`;
@@ -315,6 +347,10 @@ export async function previewPartialItineraryEdit(params: {
   variationSeed?: number;
 }): Promise<PartialItineraryEditResult> {
   const { payload, target, action, userRequest } = params;
+  const editRequest = userRequest.trim();
+
+  console.log('[ItineraryEdit] edit request', editRequest);
+
   const beforeDay = payload.days[target.dayIndex];
   if (!beforeDay) {
     throw new AppError('編集対象の日が見つかりません', 'UNKNOWN');
@@ -361,11 +397,22 @@ export async function previewPartialItineraryEdit(params: {
   afterDay = sortDayByTime(afterDay);
   const nextDays = mergeUpdatedDay(cloneDays(payload.days), target.dayIndex, afterDay);
   const processed = postProcessDays(nextDays, nextDetails, payload);
+  const preview = buildPreview(beforeDay, processed.days[target.dayIndex], target, summary);
+
+  console.log('[ItineraryEdit] replacement result', {
+    summary: preview.summary,
+    beforeItem: preview.beforeItem?.activity,
+    afterItem: preview.afterItem?.activity,
+    reason: preview.reason,
+    movementFromPrev: preview.movementFromPrev,
+    movementToNext: preview.movementToNext,
+    budgetImpact: preview.budgetImpact,
+  });
 
   return {
     days: processed.days,
     details: processed.details,
-    preview: buildPreview(beforeDay, processed.days[target.dayIndex], target, summary),
+    preview,
   };
 }
 

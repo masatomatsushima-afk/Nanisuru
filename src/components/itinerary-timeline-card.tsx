@@ -131,8 +131,8 @@ export function ItineraryTimelineCard({
               style={({ pressed }) => [styles.editButton, pressed && styles.editButtonPressed]}
               onPress={onEditPress}
               accessibilityRole="button"
-              accessibilityLabel="ここを変更">
-              <Text style={styles.editButtonText}>ここを変更</Text>
+              accessibilityLabel="ここだけ変更">
+              <Text style={styles.editButtonText}>ここだけ変更</Text>
             </Pressable>
           ) : null}
 

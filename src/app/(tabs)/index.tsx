@@ -116,6 +116,8 @@ import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { WeatherReplanPreviewSuccess } from '@/types/weather-replan';
 import { saveWeatherReplan } from '@/lib/weather-replans';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
+import { buildItineraryItemId } from '@/types/itinerary-edit';
+import { saveItineraryEdit } from '@/lib/itinerary-edits';
 import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import type {
   CompanionOption,
@@ -284,9 +286,28 @@ function ItineraryTimeline({
     details,
   };
 
-  const handleApplyEdit = async (result: PartialItineraryEditResult, _editRequest: string) => {
+  const handleApplyEdit = async (result: PartialItineraryEditResult, editRequest: string) => {
     const nextPayload = applyPartialEditResult(editPayload, result);
     onPlanUpdated?.(nextPayload.days, nextPayload.items, nextPayload.details);
+
+    if (savedTripId && editTarget) {
+      await saveItineraryEdit({
+        tripId: savedTripId,
+        dayIndex: editTarget.dayIndex,
+        itemId: buildItineraryItemId(editTarget),
+        editRequest,
+        beforeData: {
+          item: result.preview.beforeItem,
+          dayIndex: editTarget.dayIndex,
+          itemIndex: editTarget.itemIndex,
+        },
+        afterData: {
+          item: result.preview.afterItem,
+          dayIndex: editTarget.dayIndex,
+          itemIndex: editTarget.itemIndex,
+        },
+      });
+    }
   };
 
   const handleApplyWeatherReplan = async (
