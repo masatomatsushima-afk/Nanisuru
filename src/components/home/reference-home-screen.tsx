@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PlanGenerationOverlay } from '@/components/plan-generation-overlay';
+import { PreferenceHomePromptCard } from '@/components/preference-settings-card';
 import {
   HOME_FEATURE_ACTIONS,
   HOME_ROUTES,
@@ -28,6 +29,11 @@ import {
 } from '@/components/home/home-action-config';
 import { VISUAL_PRESETS } from '@/lib/visual-placeholders';
 import type { PlanCreationType } from '@/types/plan-creation';
+import {
+  getTravelUserPreferenceChips,
+  hasTravelUserPreferences,
+  type TravelUserPreferences,
+} from '@/types/travel-user-preferences';
 
 const PAD = 16;
 const MAX_W = 430;
@@ -217,6 +223,7 @@ export type ReferenceHomeScreenProps = {
   isPlanGenerating?: boolean;
   generationStepIndex?: number;
   onAbortPlanGeneration?: () => void;
+  travelUserPreferences?: TravelUserPreferences | null;
 };
 
 /** Always shows emoji/gradient first; overlays photo when loaded. Never blank. */
@@ -446,6 +453,7 @@ export function ReferenceHomeScreen({
   isPlanGenerating,
   generationStepIndex = 0,
   onAbortPlanGeneration,
+  travelUserPreferences = null,
 }: ReferenceHomeScreenProps) {
   const insets = useSafeAreaInsets();
   const { width: windowW } = useWindowDimensions();
@@ -453,6 +461,9 @@ export function ReferenceHomeScreen({
   const contentW = shellW - PAD * 2;
   const heroTextW = Math.round(contentW * HERO_TEXT_RATIO);
   const heroImageW = contentW - heroTextW;
+  const prefChips = travelUserPreferences && hasTravelUserPreferences(travelUserPreferences)
+    ? getTravelUserPreferenceChips(travelUserPreferences)
+    : PREF_CHIPS.map((c) => c.label);
   const [isPlanFormOpen, setIsPlanFormOpen] = useState(false);
   const [selectedPlanMode, setSelectedPlanMode] = useState<HomePlanMode | null>(null);
   const cardW = (contentW - GRID_GAP) / 2;
@@ -716,30 +727,46 @@ export function ReferenceHomeScreen({
           </ScrollView>
         </View>
 
+        {travelUserPreferences ? (
+          <View style={{ width: contentW, marginTop: 2 }}>
+            <PreferenceHomePromptCard preferences={travelUserPreferences} />
+          </View>
+        ) : null}
+
         <View style={[styles.prefCard, softShadow, { width: contentW }]}>
           <View style={styles.prefHeartCircle}>
             <Text style={styles.prefHeartIcon}>♥</Text>
           </View>
           <View style={styles.prefMain}>
             <Text style={styles.prefTitle}>あなたの好み</Text>
-            <Text style={styles.prefDesc}>これまでの保存や閲覧から、あなたの「好き」をまとめました</Text>
+            <Text style={styles.prefDesc}>
+              {travelUserPreferences && hasTravelUserPreferences(travelUserPreferences)
+                ? '好み診断の結果をもとに、あなた向けの提案をしています'
+                : 'これまでの保存や閲覧から、あなたの「好き」をまとめました'}
+            </Text>
             <View style={styles.prefChips}>
-              {PREF_CHIPS.map((c) => (
+              {prefChips.map((label) => {
+                const preset = PREF_CHIPS.find((c) => c.label === label);
+                return (
                 <View
-                  key={c.label}
-                  style={[styles.prefChip, { backgroundColor: c.bg, borderColor: c.border }]}>
-                  <Text style={[styles.prefChipText, { color: c.text }]}>
-                    {c.emoji} {c.label}
+                  key={label}
+                  style={[
+                    styles.prefChip,
+                    {
+                      backgroundColor: preset?.bg ?? '#EEF2FF',
+                      borderColor: preset?.border ?? '#C7D2FE',
+                    },
+                  ]}>
+                  <Text style={[styles.prefChipText, { color: preset?.text ?? '#4338CA' }]}>
+                    {preset ? `${preset.emoji} ${label}` : label}
                   </Text>
                 </View>
-              ))}
+              )})}
             </View>
           </View>
           <Pressable
             style={styles.prefEdit}
-            onPress={() =>
-              runTarget('好みを編集', { kind: 'href', href: HOME_ROUTES.profile, routeLabel: '/(tabs)/profile' })
-            }>
+            onPress={() => router.push('/preference-onboarding')}>
             <Text style={styles.prefEditIcon}>✎</Text>
             <Text style={styles.prefEditText}>編集</Text>
           </Pressable>

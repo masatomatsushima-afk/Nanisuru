@@ -15,7 +15,9 @@ import { formatTripDateLabel } from './weather';
 import { WEATHER_PLANNING_MESSAGES } from './weather-planning';
 import { buildUserMemoryPromptSection } from './user-memory';
 import { buildTravelMemoryPromptSection } from './travel-memory';
+import { buildTravelUserPreferencesPromptSection } from './travel-user-preferences-prompt';
 import { buildRealPlacesPromptSection } from './location-places';
+import type { TravelUserPreferences } from '@/types/travel-user-preferences';
 import type { UserPreferences } from '@/types/user-memory';
 import type { TravelMemory } from '@/types/travel-memory';
 import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
@@ -58,6 +60,7 @@ export type PlanInput = {
   customPreferences?: PlanCustomPreferences;
   weather?: WeatherForecast;
   userPreferences?: UserPreferences;
+  travelUserPreferences?: TravelUserPreferences;
   travelMemories?: TravelMemory[];
   localHiddenSpots?: LocalHiddenSpot[];
   realPlaces?: NearbyPlacesContext;
@@ -561,6 +564,10 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
     ? buildTravelMemoryPromptSection(input.travelMemories)
     : '';
 
+  const travelUserPreferencesSection = input.travelUserPreferences
+    ? buildTravelUserPreferencesPromptSection(input.travelUserPreferences)
+    : '';
+
   const localHiddenSpotsSection = input.localHiddenSpots?.length
     ? buildLocalHiddenSpotsPromptSection(input.localHiddenSpots)
     : '';
@@ -691,7 +698,7 @@ ${personalityGuide}
 15. 文体は丁寧で親しみやすい日本語。プロのコンシェルジュとして信頼感のあるトーン
 
 ${humanRhythmSection}${diversitySection}${travelTimingSection}${tourSuggestionSection}
-${budgetOptimizationSection}${currencySection}${weatherReplanSection}${weatherSection}${customPreferencesSection}${localHiddenSpotsSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
+${budgetOptimizationSection}${currencySection}${weatherReplanSection}${weatherSection}${customPreferencesSection}${localHiddenSpotsSection}${travelUserPreferencesSection}${travelMemorySection}${userMemorySection}${realPlacesSection}${bestDaySection}${spontaneousSection}${conciergeSection}
 
 ## 出力JSON（この形式のみ、余計な文章は禁止）
 {

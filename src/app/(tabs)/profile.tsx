@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BetaTestEntryButton } from '@/components/beta-test-entry-button';
 import { NotificationEntryButton } from '@/components/notification-entry-button';
+import { PreferenceSettingsCard } from '@/components/preference-settings-card';
 import { ProfileEmptyState } from '@/components/profile-empty-state';
 import { ProfileHeader } from '@/components/profile-header';
 import { ProfileMemoryGridCard } from '@/components/profile-memory-grid-card';
@@ -36,6 +37,7 @@ import { fetchUserSavedPortfolioItems } from '@/lib/profile-saves';
 import { fetchPublicPlansByUserId } from '@/lib/public-plans';
 import { fetchProfilePublicMemoriesByUserId } from '@/lib/trip-memories';
 import { getUserPreferences } from '@/lib/user-memory';
+import { getTravelUserPreferences } from '@/lib/travel-user-preferences';
 import { ensureUserProfile } from '@/lib/user-profiles';
 import type { ProfileSavedItem, ProfileTabId } from '@/types/profile-portfolio';
 import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
@@ -43,6 +45,10 @@ import type { PublicPlan } from '@/types/public-plan';
 import type { TripMemory } from '@/types/trip-memory';
 import type { UserProfile } from '@/types/user-profile';
 import type { UserPreferences } from '@/types/user-memory';
+import {
+  EMPTY_TRAVEL_USER_PREFERENCES,
+  type TravelUserPreferences,
+} from '@/types/travel-user-preferences';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -61,6 +67,9 @@ export default function ProfileScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
+  const [travelUserPreferences, setTravelUserPreferences] = useState<TravelUserPreferences | null>(
+    null,
+  );
 
   const scrollTo = (yRef: MutableRefObject<number>) => {
     scrollRef.current?.scrollTo({
@@ -70,7 +79,12 @@ export default function ProfileScreen() {
   };
 
   const loadPreferences = useCallback(async () => {
-    setUserPreferences(await getUserPreferences());
+    const [learned, travelPrefs] = await Promise.all([
+      getUserPreferences(),
+      getTravelUserPreferences(),
+    ]);
+    setUserPreferences(learned);
+    setTravelUserPreferences(travelPrefs);
   }, []);
 
   const loadPortfolio = useCallback(async () => {
@@ -268,6 +282,8 @@ export default function ProfileScreen() {
 
           {userPreferences ? <UserPreferencesSection preferences={userPreferences} /> : null}
 
+          <PreferenceSettingsCard preferences={travelUserPreferences ?? EMPTY_TRAVEL_USER_PREFERENCES} />
+
           <RatingTendencySection isLoggedIn={false} isConfigured={isConfigured} />
 
           <PublicProfileEditor
@@ -356,8 +372,12 @@ export default function ProfileScreen() {
 
             <ProfileOwnerActions
               onEditProfile={() => scrollTo(profileEditorY)}
-              onEditPreferences={() => scrollTo(preferencesEditorY)}
+              onEditPreferences={() => router.push('/preference-onboarding')}
               onPrivacySettings={() => scrollTo(privacySectionY)}
+            />
+
+            <PreferenceSettingsCard
+              preferences={travelUserPreferences ?? EMPTY_TRAVEL_USER_PREFERENCES}
             />
 
             <ProfileTabBar activeTab={activeTab} isSelf onChange={setActiveTab} />

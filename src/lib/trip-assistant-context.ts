@@ -1,6 +1,9 @@
 import { buildTripFolderEnrichedContext } from '@/lib/trip-folder-context';
 import { fetchItineraryEditsForTrip } from '@/lib/itinerary-edits';
 import { getUserPreferences } from '@/lib/user-memory';
+import { getTravelUserPreferences } from '@/lib/travel-user-preferences';
+import { buildTripAssistantPreferencesGuidance } from '@/lib/travel-user-preferences-prompt';
+import { hasTravelUserPreferences } from '@/types/travel-user-preferences';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { TripAssistantContext } from '@/types/trip-assistant';
 import type { TripFolder } from '@/types/trip-folder';
@@ -86,9 +89,10 @@ export async function buildTripAssistantContext(
       ? latestPlan.items
       : (latestPlan?.days.flatMap((day) => day.items) ?? []);
 
-  const [enriched, userPrefs, editHistorySummary] = await Promise.all([
+  const [enriched, userPrefs, travelUserPrefs, editHistorySummary] = await Promise.all([
     buildTripFolderEnrichedContext(folder),
     getUserPreferences(),
+    getTravelUserPreferences(),
     buildEditHistorySummary(folder.savedTripId),
   ]);
 
@@ -106,6 +110,15 @@ export async function buildTripAssistantContext(
     }
   }
 
+  const preferenceSummary = [
+    buildUserPreferencesSummary(userPrefs),
+    hasTravelUserPreferences(travelUserPrefs)
+      ? buildTripAssistantPreferencesGuidance(travelUserPrefs)
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
   const context: TripAssistantContext = {
     folder,
     savedPlans,
@@ -117,7 +130,7 @@ export async function buildTripAssistantContext(
     travelPurpose: latestPlan?.travelPurpose,
     companion: latestPlan?.companion ?? folder.companionType,
     weatherContext: getWeatherContextFromPlan(latestPlan),
-    userPreferences: buildUserPreferencesSummary(userPrefs),
+    userPreferences: preferenceSummary || '記録なし',
     tripContext: enriched.tripContext,
     extendedBrief,
     editHistorySummary,

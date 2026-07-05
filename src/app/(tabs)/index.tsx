@@ -103,6 +103,8 @@ import {
   recordPlanPreferences,
 } from '@/lib/user-memory';
 import type { UserPreferences } from '@/types/user-memory';
+import { getTravelUserPreferences } from '@/lib/travel-user-preferences';
+import type { TravelUserPreferences } from '@/types/travel-user-preferences';
 import type { PlanRatingContext } from '@/types/plan-rating';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
 import { HOME_MOOD_OPTIONS, type HomeMoodOption } from '@/types/plan-preferences';
@@ -827,6 +829,9 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
+  const [travelUserPreferences, setTravelUserPreferences] = useState<TravelUserPreferences | null>(
+    null,
+  );
   const [travelMemories, setTravelMemories] = useState<import('@/types/travel-memory').TravelMemory[]>([]);
   const [isMemoryLoading, setIsMemoryLoading] = useState(false);
   const [openedPlanMode, setOpenedPlanMode] = useState<HomePlanMode | null>(null);
@@ -876,7 +881,12 @@ export default function HomeScreen() {
   };
 
   const refreshUserPreferences = useCallback(async () => {
-    setUserPreferences(await getUserPreferences());
+    const [learned, travelPrefs] = await Promise.all([
+      getUserPreferences(),
+      getTravelUserPreferences(),
+    ]);
+    setUserPreferences(learned);
+    setTravelUserPreferences(travelPrefs);
   }, []);
 
   const refreshTravelMemories = useCallback(async () => {
@@ -1992,6 +2002,7 @@ export default function HomeScreen() {
           isPlanGenerating={isLoading}
           generationStepIndex={generationStepIndex}
           onAbortPlanGeneration={handleCancelGeneration}
+          travelUserPreferences={travelUserPreferences}
         />
 
       </ScrollView>

@@ -27,6 +27,8 @@ import { flattenItineraryDays, resolveDurationConfig } from './trip-duration';
 import { fetchWeatherForecast, getTodayIsoDate, resolveWeatherLocation, resolveWeatherForTrip, createUnavailableWeatherForecast, type WeatherForecast } from './weather';
 import { getUserPreferences } from './user-memory';
 import { getTravelMemories } from './travel-memory';
+import { getTravelUserPreferences } from './travel-user-preferences';
+import { hasTravelUserPreferences } from '@/types/travel-user-preferences';
 import {
   fetchLocalHiddenSpotsForPlan,
   shouldPrioritizeLocalHiddenSpots,
@@ -961,10 +963,15 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     realPlaces = buildEmptyPlacesContext(locationTrimmed, APP_MESSAGES.placesFetchWarning);
   }
 
-  const [userPreferences, travelMemories] = await Promise.all([
+  const [userPreferences, travelMemories, travelUserPreferences] = await Promise.all([
     getUserPreferences(),
     getTravelMemories(),
+    getTravelUserPreferences(),
   ]);
+
+  if (hasTravelUserPreferences(travelUserPreferences)) {
+    console.log('[PlanGeneration] preferences used', travelUserPreferences);
+  }
 
   const customText = [
     input.customPreferences?.desiredPlaces,
@@ -975,12 +982,15 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     .filter(Boolean)
     .join(' ');
 
-  const prioritizeLocalSpots = shouldPrioritizeLocalHiddenSpots({
-    personality: input.personality,
-    mood: input.mood,
-    travelIntent: input.travelIntent,
-    customText,
-  });
+  const prioritizeLocalSpots =
+    shouldPrioritizeLocalHiddenSpots({
+      personality: input.personality,
+      mood: input.mood,
+      travelIntent: input.travelIntent,
+      customText,
+    }) ||
+    (hasTravelUserPreferences(travelUserPreferences) &&
+      travelUserPreferences.favoriteCategories.includes('ローカル穴場'));
 
   const localHiddenSpots = prioritizeLocalSpots
     ? await fetchLocalHiddenSpotsForPlan({ location: locationTrimmed, limit: 8 })
@@ -997,6 +1007,9 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     weather,
     realPlaces,
     userPreferences: userPreferences.hasData ? userPreferences : undefined,
+    travelUserPreferences: hasTravelUserPreferences(travelUserPreferences)
+      ? travelUserPreferences
+      : undefined,
     travelMemories: travelMemories.length > 0 ? travelMemories : undefined,
     localHiddenSpots: localHiddenSpots.length > 0 ? localHiddenSpots : undefined,
     planType: normalized.planType,

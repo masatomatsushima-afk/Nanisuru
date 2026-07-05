@@ -30,6 +30,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { useUserLocation } from '@/contexts/user-location-context';
 import { applyDiscoverFilters, countActiveDiscoverFilters } from '@/lib/discover-filters';
 import { loadDiscoverFeed, type DiscoverFeedSection } from '@/lib/discover-feed';
+import { getTravelUserPreferences } from '@/lib/travel-user-preferences';
 import {
   filtersForDiscoverCategory,
   isMemoryCategory,
@@ -89,7 +90,7 @@ export default function DiscoverScreen() {
       setError(null);
 
       try {
-        const feed = await loadDiscoverFeed();
+        const feed = await loadDiscoverFeed(undefined, await getTravelUserPreferences());
         setAllPlans(feed.plans);
         setFeedSections(feed.sections);
         setFromMock(feed.fromMock);

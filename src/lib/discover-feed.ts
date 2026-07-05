@@ -5,6 +5,7 @@ import { isSupabaseConfigured } from '@/lib/supabase';
 import type { RankedPublicPlan } from '@/types/discover-ranking';
 import type { PublicPlan } from '@/types/public-plan';
 import type { DiscoverSamplePlan } from '@/data/discover-sample-plans';
+import { hasTravelUserPreferences, type TravelUserPreferences } from '@/types/travel-user-preferences';
 
 export type DiscoverFeedSection = {
   id: string;
@@ -97,13 +98,61 @@ export function buildDiscoverFeedSections(plans: PublicPlan[], trending: RankedP
   return sections.filter((section) => section.plans.length > 0);
 }
 
-export async function loadDiscoverFeed(): Promise<DiscoverFeedResult> {
+function sectionPriority(sectionId: string, prefs: TravelUserPreferences): number {
+  const categories = prefs.favoriteCategories;
+  let score = 0;
+  if (sectionId === 'gourmet' && categories.some((c) => ['グルメ', 'カフェ'].includes(c))) {
+    score += 3;
+  }
+  if (sectionId === 'date' && categories.includes('映え')) score += 2;
+  if (sectionId === 'weekend' && prefs.travelPace === 'ゆっくり') score += 1;
+  if (sectionId === 'popular') score += 1;
+  return score;
+}
+
+export function personalizeDiscoverFeedSections(
+  sections: DiscoverFeedSection[],
+  prefs: TravelUserPreferences | null,
+): DiscoverFeedSection[] {
+  if (!prefs || !hasTravelUserPreferences(prefs)) return sections;
+
+  console.log('[Discover] personalized feed by preferences', prefs);
+
+  const sorted = [...sections].sort(
+    (a, b) => sectionPriority(b.id, prefs) - sectionPriority(a.id, prefs),
+  );
+
+  const personalizedTitle =
+    prefs.favoriteCategories.includes('グルメ') && prefs.favoriteCategories.includes('ローカル穴場')
+      ? 'あなた向け（グルメ × 穴場）'
+      : prefs.favoriteCategories.length
+        ? `あなた向け（${prefs.favoriteCategories.slice(0, 2).join(' · ')}）`
+        : null;
+
+  if (!personalizedTitle) return sorted;
+
+  const topPlans = sorted.flatMap((section) => section.plans).slice(0, 4);
+  if (!topPlans.length) return sorted;
+
+  return [
+    { id: 'for-you', title: personalizedTitle, plans: topPlans },
+    ...sorted,
+  ];
+}
+
+export async function loadDiscoverFeed(
+  areaHint?: string,
+  preferences?: TravelUserPreferences | null,
+): Promise<DiscoverFeedResult> {
   console.log('[Discover] loading feed');
 
   if (!isSupabaseConfigured()) {
     const plans = getMockDiscoverPlans();
     const trending = await buildTrendingPlans(plans);
-    const sections = buildDiscoverFeedSections(plans, trending);
+    const sections = personalizeDiscoverFeedSections(
+      buildDiscoverFeedSections(plans, trending),
+      preferences ?? null,
+    );
     console.log('[Discover] feed items', { planCount: plans.length, fromMock: true, sections });
     return { plans, trending, sections, fromMock: true };
   }
@@ -113,20 +162,29 @@ export async function loadDiscoverFeed(): Promise<DiscoverFeedResult> {
     if (!plans.length) {
       const mockPlans = getMockDiscoverPlans();
       const trending = await buildTrendingPlans(mockPlans);
-      const sections = buildDiscoverFeedSections(mockPlans, trending);
+      const sections = personalizeDiscoverFeedSections(
+        buildDiscoverFeedSections(mockPlans, trending),
+        preferences ?? null,
+      );
       console.log('[Discover] feed items', { planCount: mockPlans.length, fromMock: true, sections });
       return { plans: mockPlans, trending, sections, fromMock: true };
     }
 
     const trending = await buildTrendingPlans(plans);
-    const sections = buildDiscoverFeedSections(plans, trending);
+    const sections = personalizeDiscoverFeedSections(
+      buildDiscoverFeedSections(plans, trending),
+      preferences ?? null,
+    );
     console.log('[Discover] feed items', { planCount: plans.length, fromMock: false, sections });
     return { plans, trending, sections, fromMock: false };
   } catch (error) {
     console.warn('[Discover] feed load failed, using fallback', error);
     const plans = getMockDiscoverPlans();
     const trending = await buildTrendingPlans(plans);
-    const sections = buildDiscoverFeedSections(plans, trending);
+    const sections = personalizeDiscoverFeedSections(
+      buildDiscoverFeedSections(plans, trending),
+      preferences ?? null,
+    );
     console.log('[Discover] feed items', { planCount: plans.length, fromMock: true, sections });
     return { plans, trending, sections, fromMock: true };
   }
