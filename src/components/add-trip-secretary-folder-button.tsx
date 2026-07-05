@@ -9,7 +9,6 @@ import {
   createTripFolderFromSavedTrip,
   getTripFolderBySavedTripId,
 } from '@/lib/trip-folders';
-import { setLastSelectedTripFolderId } from '@/lib/trip-folder-context';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { TripFolder } from '@/types/trip-folder';
 
@@ -34,16 +33,15 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
   const [busy, setBusy] = useState(false);
   const label = props.label ?? '旅行秘書フォルダに追加';
 
-  const openAssistant = async (folderId: string) => {
-    await setLastSelectedTripFolderId(folderId);
-    router.push('/(tabs)/ai');
+  const openAssistant = (folderId: string) => {
+    router.push(`/trip-assistant/${folderId}`);
   };
 
   const showSuccess = (folder: TripFolder) => {
     props.onFolderAttached?.(folder);
     Alert.alert('旅行秘書フォルダに追加しました', 'この旅行の文脈でAI旅行秘書が相談に乗ります。', [
       { text: 'OK' },
-      { text: '旅行秘書を開く', onPress: () => void openAssistant(folder.id) },
+      { text: '旅行秘書を開く', onPress: () => openAssistant(folder.id) },
     ]);
   };
 

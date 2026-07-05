@@ -325,6 +325,15 @@ export default function ProfileScreen() {
 
         <NotificationEntryButton isConfigured={isConfigured} />
 
+        <Pressable style={styles.myTripsLink} onPress={() => router.push('/my-trips')}>
+          <Text style={styles.myTripsEmoji}>🧳</Text>
+          <View style={styles.myTripsTextWrap}>
+            <Text style={styles.myTripsTitle}>マイトリップ</Text>
+            <Text style={styles.myTripsSubtitle}>保存したプランと旅行秘書フォルダ</Text>
+          </View>
+          <Text style={styles.myTripsChevron}>›</Text>
+        </Pressable>
+
         {isLoading ? (
           <View style={styles.loadingWrap}>
             <ActivityIndicator size="large" color={NS.colors.accent} />
@@ -450,6 +459,39 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     marginTop: 2,
+  },
+  myTripsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.lg,
+    borderWidth: 1,
+    borderColor: NS.colors.accentBorder,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.three,
+  },
+  myTripsEmoji: {
+    fontSize: 22,
+  },
+  myTripsTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  myTripsTitle: {
+    color: NS.colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  myTripsSubtitle: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  myTripsChevron: {
+    color: NS.colors.accent,
+    fontSize: 22,
+    fontWeight: '700',
   },
   loadingWrap: {
     alignItems: 'center',

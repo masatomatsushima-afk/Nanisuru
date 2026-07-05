@@ -536,6 +536,23 @@ export function ReferenceHomeScreen({
           </View>
         </View>
 
+        <Pressable
+          style={({ pressed }) => [styles.myTripsLink, pressed && styles.myTripsLinkPressed]}
+          onPress={() =>
+            runTarget('マイトリップ', {
+              kind: 'href',
+              href: HOME_ROUTES.myTrips,
+              routeLabel: '/my-trips',
+            })
+          }>
+          <Text style={styles.myTripsEmoji}>🧳</Text>
+          <View style={styles.myTripsTextWrap}>
+            <Text style={styles.myTripsTitle}>マイトリップ</Text>
+            <Text style={styles.myTripsSubtitle}>保存したプランと旅行秘書フォルダ</Text>
+          </View>
+          <Text style={styles.myTripsChevron}>›</Text>
+        </Pressable>
+
         <Text style={styles.sectionLabel}>✨ 今日のおすすめ</Text>
 
         <View style={styles.heroWrap}>
@@ -810,6 +827,24 @@ const styles = StyleSheet.create({
     letterSpacing: -0.7,
   },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  myTripsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.22)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 4,
+  },
+  myTripsLinkPressed: { opacity: 0.92 },
+  myTripsEmoji: { fontSize: 22 },
+  myTripsTextWrap: { flex: 1, gap: 2 },
+  myTripsTitle: { fontSize: 14, fontWeight: '900', color: '#0F172A' },
+  myTripsSubtitle: { fontSize: 11, fontWeight: '600', color: '#64748B' },
+  myTripsChevron: { fontSize: 22, fontWeight: '700', color: '#818CF8' },
   searchBtn: {
     width: 36,
     height: 36,

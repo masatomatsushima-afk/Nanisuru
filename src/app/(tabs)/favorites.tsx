@@ -176,6 +176,11 @@ export default function SavedTripsScreen() {
             <Text style={styles.memoriesLinkText}>📔 思い出アルバムを見る</Text>
           </Pressable>
         ) : null}
+        {session ? (
+          <Pressable style={styles.memoriesLink} onPress={() => router.push('/my-trips')}>
+            <Text style={styles.memoriesLinkText}>🧳 マイトリップを見る</Text>
+          </Pressable>
+        ) : null}
       </FadeInView>
 
       {!session ? (

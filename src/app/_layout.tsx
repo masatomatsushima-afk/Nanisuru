@@ -141,6 +141,24 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="my-trips"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="trip-folder/[id]"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="trip-assistant/[folderId]"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
             name="memory/[id]"
             options={{
               animation: 'slide_from_right',

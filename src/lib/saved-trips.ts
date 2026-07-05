@@ -237,7 +237,39 @@ export function formatSavedTripDate(isoDate: string): string {
 
 export function savedTripToPlanParams(trip: SavedTrip) {
   const { payload } = trip;
-  return {
+  const params: Record<string, string> = {
+    location: payload.location,
+    budget: payload.budget,
+    currency: payload.currency,
+    people: payload.people,
+    mood: payload.mood,
+    companion: payload.companion,
+    personality: payload.personality,
+    tripDuration: payload.tripDuration,
+    days: JSON.stringify(payload.days),
+    items: JSON.stringify(payload.items),
+    details: JSON.stringify(payload.details),
+    savedTripId: trip.id,
+  };
+
+  if (payload.travelPurpose?.trim()) {
+    params.travelPurpose = payload.travelPurpose.trim();
+  }
+  if (payload.budgetIncludes?.length) {
+    params.budgetIncludes = JSON.stringify(payload.budgetIncludes);
+  }
+  if (payload.customDuration) {
+    params.customDuration = JSON.stringify(payload.customDuration);
+  }
+
+  return params;
+}
+
+export function savedTripPayloadToPlanParams(
+  payload: SavedTrip['payload'],
+  savedTripId?: string | null,
+) {
+  const params: Record<string, string> = {
     location: payload.location,
     budget: payload.budget,
     currency: payload.currency,
@@ -250,4 +282,19 @@ export function savedTripToPlanParams(trip: SavedTrip) {
     items: JSON.stringify(payload.items),
     details: JSON.stringify(payload.details),
   };
+
+  if (savedTripId?.trim()) {
+    params.savedTripId = savedTripId.trim();
+  }
+  if (payload.travelPurpose?.trim()) {
+    params.travelPurpose = payload.travelPurpose.trim();
+  }
+  if (payload.budgetIncludes?.length) {
+    params.budgetIncludes = JSON.stringify(payload.budgetIncludes);
+  }
+  if (payload.customDuration) {
+    params.customDuration = JSON.stringify(payload.customDuration);
+  }
+
+  return params;
 }

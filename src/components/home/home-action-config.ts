@@ -8,6 +8,7 @@ export const HOME_ROUTES = {
   profile: '/(tabs)/profile' as Href,
   memories: '/memories' as Href,
   afterPlan: '/after-plan' as Href,
+  myTrips: '/my-trips' as Href,
 } as const;
 
 export type HomePlanMode = 'now' | 'travel' | 'night';
