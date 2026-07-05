@@ -10,36 +10,44 @@ type ProfileMemoryGridCardProps = {
   onPress: () => void;
 };
 
+function getShortNote(memory: TripMemory): string {
+  if (memory.summary?.trim()) return memory.summary.trim();
+  if (memory.aiSummary?.oneLineSummary?.trim()) return memory.aiSummary.oneLineSummary.trim();
+  if (memory.favoriteMoments[0]?.trim()) return memory.favoriteMoments[0].trim();
+  return '旅の思い出';
+}
+
 export function ProfileMemoryGridCard({ memory, onPress }: ProfileMemoryGridCardProps) {
+  const shortNote = getShortNote(memory);
+
   return (
-    <Pressable style={styles.card} onPress={onPress}>
-      <VisualCover
-        height={132}
-        imageUrl={memory.coverImageUrl}
-        theme="memory"
-        seed={memory.id}
-        overlay="bottom"
-        showEmoji={!memory.coverImageUrl}
-        borderRadius={NS.lifestyle.tileRadius}>
-        <Text style={styles.overlayTitle} numberOfLines={2}>
-          {memory.title || memory.destination}
-        </Text>
-      </VisualCover>
-      <View style={styles.body}>
-        <Text style={styles.destination} numberOfLines={1}>
-          📍 {memory.destination}
-        </Text>
-        {memory.dateLabel ? (
-          <Text style={styles.date} numberOfLines={1}>
-            {memory.dateLabel}
+    <View style={styles.card}>
+      <Pressable onPress={onPress}>
+        <VisualCover
+          height={132}
+          imageUrl={memory.coverImageUrl}
+          theme="memory"
+          seed={memory.id}
+          overlay="bottom"
+          showEmoji={!memory.coverImageUrl}
+          borderRadius={NS.lifestyle.tileRadius}>
+          <Text style={styles.overlayTitle} numberOfLines={2}>
+            {memory.title || memory.destination}
           </Text>
-        ) : null}
-        <View style={styles.statsRow}>
-          <Text style={styles.stat}>♥ {memory.likeCount}</Text>
-          <Text style={styles.stat}>💬 {memory.commentCount}</Text>
+        </VisualCover>
+        <View style={styles.body}>
+          <Text style={styles.destination} numberOfLines={1}>
+            📍 {memory.destination}
+          </Text>
+          <Text style={styles.note} numberOfLines={2}>
+            {shortNote}
+          </Text>
         </View>
-      </View>
-    </Pressable>
+      </Pressable>
+      <Pressable style={styles.viewBtn} onPress={onPress}>
+        <Text style={styles.viewBtnText}>思い出を見る</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -65,25 +73,29 @@ const styles = StyleSheet.create({
   },
   body: {
     padding: Spacing.two,
-    gap: 3,
+    gap: 4,
   },
   destination: {
     fontSize: 11,
     fontWeight: '700',
     color: NS.colors.textSecondary,
   },
-  date: {
-    fontSize: 10,
+  note: {
+    fontSize: 11,
     color: NS.colors.textMuted,
+    lineHeight: 15,
   },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 2,
+  viewBtn: {
+    marginHorizontal: Spacing.two,
+    marginBottom: Spacing.two,
+    backgroundColor: NS.colors.coralSoft,
+    borderRadius: NS.radius.md,
+    paddingVertical: Spacing.one + 2,
+    alignItems: 'center',
   },
-  stat: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: NS.colors.textMuted,
+  viewBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: NS.colors.coral,
   },
 });

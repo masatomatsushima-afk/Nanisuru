@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -85,7 +86,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
     setDescription('');
     setCategory(companionToDefaultCategory(payload.companion));
     setTagsInput('');
-    setVisibility('public');
+    setVisibility('private');
     setError(null);
     setImageDrafts([]);
     setVideoDrafts([]);
@@ -118,31 +119,63 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
       return;
     }
 
-    setIsSaving(true);
-    setError(null);
-    try {
-      await publishPublicPlan({
-        sourceTripId: trip.id,
-        title: title.trim(),
-        description: description.trim(),
-        category,
-        tags: parseTagsInput(tagsInput),
-        visibility,
-        payload,
-        imageDrafts,
-        videoDrafts,
-      });
-      setShowSuccess(true);
-      setTimeout(() => {
-        setShowSuccess(false);
-        onPublished?.();
-        onClose();
-      }, 1400);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '公開に失敗しました');
-    } finally {
-      setIsSaving(false);
+    const publish = async () => {
+      setIsSaving(true);
+      setError(null);
+      try {
+        await publishPublicPlan({
+          sourceTripId: trip.id,
+          title: title.trim(),
+          description: description.trim(),
+          category,
+          tags: parseTagsInput(tagsInput),
+          visibility,
+          payload,
+          imageDrafts,
+          videoDrafts,
+        });
+        console.log('[Publish] visibility changed', visibility);
+        setShowSuccess(true);
+        setTimeout(() => {
+          setShowSuccess(false);
+          onPublished?.();
+          onClose();
+        }, 1400);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '公開に失敗しました');
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    if (visibility === 'public' && !isExisting) {
+      Alert.alert(
+        'このプランを公開しますか？',
+        '公開すると、発見やプロフィールに表示されます',
+        [
+          { text: 'キャンセル', style: 'cancel' },
+          { text: '公開する', onPress: () => void publish() },
+        ],
+      );
+      return;
     }
+
+    await publish();
+  };
+
+  const handleVisibilitySelect = (value: PublicPlanVisibility) => {
+    if (value === 'public' && visibility !== 'public') {
+      Alert.alert(
+        'このプランを公開しますか？',
+        '公開すると、発見やプロフィールに表示されます',
+        [
+          { text: 'キャンセル', style: 'cancel' },
+          { text: '公開する', onPress: () => setVisibility('public') },
+        ],
+      );
+      return;
+    }
+    setVisibility(value);
   };
 
   return (
@@ -239,7 +272,7 @@ export function PublishPlanSheet({ visible, trip, onClose, onPublished }: Publis
                   visibility === option.value && styles.visibilityOptionSelected,
                   pressed && styles.chipPressed,
                 ]}
-                onPress={() => setVisibility(option.value)}>
+                onPress={() => handleVisibilitySelect(option.value)}>
                 <Text
                   style={[
                     styles.visibilityLabel,

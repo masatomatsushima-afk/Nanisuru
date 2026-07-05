@@ -275,6 +275,7 @@ export default function CreatorProfileScreen() {
         <ProfileHeader
           profile={{ ...displayProfile, isSelf }}
           isLoggedIn={Boolean(session)}
+          savedCount={isSelf ? savedItems.length : 0}
           onRequireLogin={() => router.push('/login')}
           onFollowChange={(next) =>
             setProfile((prev) =>

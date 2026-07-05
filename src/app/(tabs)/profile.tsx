@@ -86,6 +86,7 @@ export default function ProfileScreen() {
 
     setIsLoading(true);
     try {
+      console.log('[Profile] loading user profile');
       const [loadedProfile, loadedPlans, loadedMemories, loadedSpots, loadedSaved] =
         await Promise.all([
           ensureUserProfile(),
@@ -94,6 +95,9 @@ export default function ProfileScreen() {
           fetchLocalHiddenSpotsByUserId(user.id),
           fetchUserSavedPortfolioItems().catch(() => [] as ProfileSavedItem[]),
         ]);
+
+      console.log('[Profile] public plans', loadedPlans);
+      console.log('[Profile] public memories', loadedMemories);
 
       setProfile({ ...loadedProfile, isSelf: true });
       setPlans(loadedPlans);
@@ -344,6 +348,7 @@ export default function ProfileScreen() {
             <ProfileHeader
               profile={displayProfile}
               isLoggedIn
+              savedCount={savedItems.length}
               onRequireLogin={() => router.push('/login')}
               onFollowChange={() => {}}
               onEditPress={() => scrollTo(profileEditorY)}

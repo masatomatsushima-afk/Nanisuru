@@ -10,6 +10,7 @@ import { getProfileInitial, type UserProfile } from '@/types/user-profile';
 type ProfileHeaderProps = {
   profile: UserProfile;
   isLoggedIn: boolean;
+  savedCount?: number;
   onRequireLogin: () => void;
   onFollowChange: (next: { isFollowing: boolean; followerCount: number }) => void;
   onEditPress?: () => void;
@@ -27,6 +28,7 @@ function StatPill({ label, value }: { label: string; value: number }) {
 export function ProfileHeader({
   profile,
   isLoggedIn,
+  savedCount = 0,
   onRequireLogin,
   onFollowChange,
   onEditPress,
@@ -66,10 +68,10 @@ export function ProfileHeader({
         {profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
 
         <View style={styles.statsRow}>
-          <StatPill label="プラン" value={profile.publicPlanCount ?? 0} />
+          <StatPill label="公開プラン" value={profile.publicPlanCount ?? 0} />
           <StatPill label="思い出" value={profile.publicMemoryCount ?? 0} />
-          <StatPill label="穴場" value={profile.localSpotCount ?? 0} />
-          <StatPill label="フォロワー" value={profile.followerCount} />
+          <StatPill label="保存数" value={savedCount} />
+          <StatPill label="フォロー数" value={profile.followingCount} />
         </View>
 
         {profile.styleTags.length > 0 ? (

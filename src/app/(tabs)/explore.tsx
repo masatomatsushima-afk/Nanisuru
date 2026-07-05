@@ -29,13 +29,12 @@ import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { useUserLocation } from '@/contexts/user-location-context';
 import { applyDiscoverFilters, countActiveDiscoverFilters } from '@/lib/discover-filters';
-import { buildTrendingPlans } from '@/lib/discover-ranking';
+import { loadDiscoverFeed, type DiscoverFeedSection } from '@/lib/discover-feed';
 import {
   filtersForDiscoverCategory,
   isMemoryCategory,
 } from '@/lib/discover-top-category';
 import { notifyRankingEntries } from '@/lib/notifications';
-import { fetchPublicPlans } from '@/lib/public-plans';
 import {
   DEFAULT_DISCOVER_FILTERS,
   type DiscoverFilterState,
@@ -52,6 +51,8 @@ export default function DiscoverScreen() {
   const memoriesAnchorY = useRef(0);
 
   const [allPlans, setAllPlans] = useState<PublicPlan[]>([]);
+  const [feedSections, setFeedSections] = useState<DiscoverFeedSection[]>([]);
+  const [fromMock, setFromMock] = useState(false);
   const [filters, setFilters] = useState<DiscoverFilterState>(DEFAULT_DISCOVER_FILTERS);
   const [topCategory, setTopCategory] = useState<DiscoverTopCategoryId>('recommend');
   const [trending, setTrending] = useState<RankedPublicPlan[]>([]);
@@ -70,6 +71,7 @@ export default function DiscoverScreen() {
   const showMemoriesSection = isMemoryCategory(topCategory);
 
   const loadRankingMeta = useCallback(async (plans: PublicPlan[]) => {
+    const { buildTrendingPlans } = await import('@/lib/discover-ranking');
     const trendingPlans = await buildTrendingPlans(plans);
     setTrending(trendingPlans);
 
@@ -82,31 +84,32 @@ export default function DiscoverScreen() {
 
   const loadPlans = useCallback(
     async (refresh = false) => {
-      if (!isConfigured) {
-        setAllPlans([]);
-        setTrending([]);
-        setIsLoading(false);
-        return;
-      }
-
       if (refresh) setIsRefreshing(true);
       else setIsLoading(true);
       setError(null);
 
       try {
-        const plans = await fetchPublicPlans();
-        setAllPlans(plans);
-        await loadRankingMeta(plans);
+        const feed = await loadDiscoverFeed();
+        setAllPlans(feed.plans);
+        setFeedSections(feed.sections);
+        setFromMock(feed.fromMock);
+        setTrending(feed.trending);
+        if (currentUserId) {
+          void notifyRankingEntries(
+            feed.trending.map((item) => ({ plan: item.plan, rank: item.rank })),
+          );
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : '公開プランの取得に失敗しました');
         setAllPlans([]);
+        setFeedSections([]);
         setTrending([]);
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
       }
     },
-    [isConfigured, loadRankingMeta],
+    [currentUserId],
   );
 
   useFocusEffect(
@@ -117,8 +120,8 @@ export default function DiscoverScreen() {
   );
 
   useEffect(() => {
-    if (isConfigured) void loadPlans();
-  }, [isConfigured, loadPlans]);
+    void loadPlans();
+  }, [loadPlans]);
 
   const handleTopCategoryChange = (categoryId: DiscoverTopCategoryId) => {
     setTopCategory(categoryId);
@@ -134,16 +137,6 @@ export default function DiscoverScreen() {
   };
 
   const renderBody = () => {
-    if (!isConfigured) {
-      return (
-        <DiscoverEmptyState
-          emoji="⚙️"
-          title="Supabase の設定が必要です"
-          description="発見タブを使うには public_plans テーブルを作成してください。"
-        />
-      );
-    }
-
     if (isLoading) {
       return (
         <View style={styles.loadingWrap}>
@@ -189,28 +182,23 @@ export default function DiscoverScreen() {
 
     return (
       <>
+        {fromMock ? (
+          <View style={styles.mockNotice}>
+            <Text style={styles.mockNoticeText}>
+              サンプルデータを表示しています。公開プランを投稿すると、ここに表示されます。
+            </Text>
+          </View>
+        ) : null}
+
         {!showMemoriesSection ? (
           <>
             <DiscoverFeaturedRow trending={trending} />
 
-            <View style={styles.section}>
-              <LifestyleSectionHeader
-                title="プラン一覧"
-                subtitle={`${displayedPlans.length}件のプラン`}
-              />
-              {displayedPlans.length === 0 ? (
-                <DiscoverEmptyState
-                  emoji="🔍"
-                  title="条件に合うプランがありません"
-                  description="フィルターを変えて、もう一度探してみてください。"
-                  buttonLabel={hasActiveFilters ? 'フィルターをリセット' : undefined}
-                  onAction={
-                    hasActiveFilters ? () => setFilters(DEFAULT_DISCOVER_FILTERS) : undefined
-                  }
-                />
-              ) : (
+            {feedSections.map((section) => (
+              <View key={section.id} style={styles.section}>
+                <LifestyleSectionHeader title={section.title} />
                 <View style={styles.feedGrid}>
-                  {displayedPlans.map((plan, index) => (
+                  {section.plans.map((plan, index) => (
                     <DiscoverCompactPlanCard
                       key={plan.id}
                       plan={plan}
@@ -221,8 +209,39 @@ export default function DiscoverScreen() {
                     />
                   ))}
                 </View>
-              )}
-            </View>
+              </View>
+            ))}
+
+            {hasActiveFilters ? (
+              <View style={styles.section}>
+                <LifestyleSectionHeader
+                  title="検索結果"
+                  subtitle={`${displayedPlans.length}件のプラン`}
+                />
+                {displayedPlans.length === 0 ? (
+                  <DiscoverEmptyState
+                    emoji="🔍"
+                    title="条件に合うプランがありません"
+                    description="フィルターを変えて、もう一度探してみてください。"
+                    buttonLabel="フィルターをリセット"
+                    onAction={() => setFilters(DEFAULT_DISCOVER_FILTERS)}
+                  />
+                ) : (
+                  <View style={styles.feedGrid}>
+                    {displayedPlans.map((plan, index) => (
+                      <DiscoverCompactPlanCard
+                        key={plan.id}
+                        plan={plan}
+                        variant="grid"
+                        colorIndex={index}
+                        onPress={() => router.push(`/public-plan/${plan.id}`)}
+                        onCreatorPress={() => router.push(`/creator/${plan.userId}`)}
+                      />
+                    ))}
+                  </View>
+                )}
+              </View>
+            ) : null}
           </>
         ) : null}
 
@@ -287,7 +306,7 @@ export default function DiscoverScreen() {
 
         {renderBody()}
 
-        {isConfigured && allPlans.length > 0 ? (
+        {allPlans.length > 0 ? (
           <View style={styles.bottomCta}>
             <PrimaryButton
               label="自分だけのプランを作る"
@@ -327,6 +346,16 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: Spacing.two,
+  },
+  mockNotice: {
+    backgroundColor: NS.colors.yellowSoft,
+    borderRadius: NS.radius.lg,
+    padding: Spacing.three,
+  },
+  mockNoticeText: {
+    color: NS.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   feedGrid: {
     flexDirection: 'row',

@@ -372,6 +372,7 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
         ? syncPublicPlanVideos(plan.id, input.videoDrafts)
         : fetchVideosForPlan(plan.id),
     ]);
+    console.log('[Publish] visibility changed', input.visibility);
     return { ...plan, images, videos };
   }
 
@@ -392,6 +393,7 @@ export async function publishPublicPlan(input: PublishPublicPlanInput): Promise<
       ? syncPublicPlanVideos(plan.id, input.videoDrafts)
       : Promise.resolve([]),
   ]);
+  console.log('[Publish] visibility changed', input.visibility);
   return { ...plan, images, videos };
 }
 

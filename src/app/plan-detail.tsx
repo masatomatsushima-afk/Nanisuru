@@ -16,6 +16,7 @@ import { WeatherSection } from '@/components/weather-section';
 import { WeatherReplanActions } from '@/components/weather-replan-actions';
 import { OutfitPackingSection } from '@/components/outfit-packing-section';
 import { generateOutfitPackingAdvice } from '@/lib/outfit-packing-advice';
+import { PlanPublishVisibilitySection } from '@/components/plan-publish-visibility-section';
 import { ShareTripSection } from '@/components/share-trip-section';
 import { SaveTripButton } from '@/components/save-trip-button';
 import { AfterPlanLaunchButton } from '@/components/after-plan-launch-button';
@@ -24,6 +25,7 @@ import { ItineraryItemEditSheet } from '@/components/itinerary-item-edit-sheet';
 import { CurrentLocationButton } from '@/components/current-location-button';
 import { Spacing } from '@/constants/theme';
 import { NS } from '@/constants/nanisuru-ui';
+import { useAuth } from '@/contexts/auth-context';
 import { parseCurrencyCode } from '@/constants/currency';
 import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import { saveItineraryEdit } from '@/lib/itinerary-edits';
@@ -75,6 +77,7 @@ function BulletList({ items }: { items: string[] }) {
 
 export default function PlanDetailScreen() {
   const insets = useSafeAreaInsets();
+  const { isConfigured } = useAuth();
   const params = useLocalSearchParams<{
     location: string;
     budget: string;
@@ -457,6 +460,14 @@ export default function PlanDetailScreen() {
               </Pressable>
             </View>
           ) : null}
+          {savedTripId ? (
+            <View style={styles.publishSectionWrap}>
+              <PlanPublishVisibilitySection
+                savedTripId={savedTripId}
+                isConfigured={isConfigured}
+              />
+            </View>
+          ) : null}
           <View style={styles.shareButtonWrap}>
             <ShareTripSection
               location={location}
@@ -691,6 +702,10 @@ const styles = StyleSheet.create({
   },
   shareButtonWrap: {
     marginTop: Spacing.four,
+    marginBottom: Spacing.two,
+  },
+  publishSectionWrap: {
+    marginTop: Spacing.two,
     marginBottom: Spacing.two,
   },
   dayModeButton: {

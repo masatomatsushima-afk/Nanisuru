@@ -15,10 +15,19 @@ export const PUBLIC_PLAN_CATEGORIES = [
 
 export type PublicPlanCategory = (typeof PUBLIC_PLAN_CATEGORIES)[number];
 
+export const PLAN_PUBLISH_VISIBILITY_LABELS: Record<
+  'public' | 'unlisted' | 'private',
+  string
+> = {
+  private: '自分だけ',
+  unlisted: '共有リンクのみ',
+  public: '公開する',
+};
+
 export const PUBLIC_PLAN_VISIBILITY_OPTIONS = [
-  { value: 'public', label: '全体公開', description: '発見タブに表示されます' },
-  { value: 'unlisted', label: 'リンクのみ', description: 'URLを知っている人だけ閲覧できます' },
-  { value: 'private', label: '非公開', description: '自分だけが閲覧できます' },
+  { value: 'public', label: '公開する', description: '発見タブやプロフィールに表示されます' },
+  { value: 'unlisted', label: '共有リンクのみ', description: 'URLを知っている人だけ閲覧できます' },
+  { value: 'private', label: '自分だけ', description: '自分だけが閲覧できます' },
 ] as const;
 
 export type PublicPlanVisibility = (typeof PUBLIC_PLAN_VISIBILITY_OPTIONS)[number]['value'];

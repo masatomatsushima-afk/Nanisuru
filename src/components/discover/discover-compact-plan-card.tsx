@@ -1,8 +1,13 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { VisualCover } from '@/components/ui/visual-cover';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
+import {
+  isDiscoverPlanSavedLocally,
+  toggleDiscoverPlanSavedLocally,
+} from '@/lib/discover-local-saves';
 import {
   getPublicPlanDestination,
   type PublicPlan,
@@ -25,69 +30,87 @@ export function DiscoverCompactPlanCard({
 }: DiscoverCompactPlanCardProps) {
   const destination = getPublicPlanDestination(plan);
   const coverUrl = plan.images?.[0]?.imageUrl;
-  const tag = plan.tags[0] ?? plan.category;
+  const tags = plan.tags.length ? plan.tags.slice(0, 2) : [plan.category];
   const isFeatured = variant === 'featured';
   const coverHeight = isFeatured ? 148 : 132;
+  const [savedLocally, setSavedLocally] = useState(() => isDiscoverPlanSavedLocally(plan.id));
+  const saveCount = plan.saveCount + (savedLocally ? 1 : 0);
+
+  const handleSave = () => {
+    const next = toggleDiscoverPlanSavedLocally(plan.id);
+    setSavedLocally(next);
+  };
 
   return (
-    <Pressable
-      style={({ pressed }) => [
+    <View
+      style={[
         styles.card,
         isFeatured ? styles.cardFeatured : styles.cardGrid,
-        pressed && styles.cardPressed,
-      ]}
-      onPress={onPress}>
-      <VisualCover
-        height={coverHeight}
-        imageUrl={coverUrl}
-        category={plan.category}
-        seed={plan.id}
-        overlay="bottom"
-        showEmoji={!coverUrl}
-        borderRadius={NS.lifestyle.tileRadius}>
-        <View style={styles.coverTop}>
-          <View style={styles.tagBadge}>
-            <Text style={styles.tagText}>#{tag}</Text>
-          </View>
-          {isFeatured ? (
-            <View style={styles.featuredBadge}>
-              <Text style={styles.featuredBadgeText}>人気</Text>
+      ]}>
+      <Pressable style={({ pressed }) => [pressed && styles.cardPressed]} onPress={onPress}>
+        <VisualCover
+          height={coverHeight}
+          imageUrl={coverUrl}
+          category={plan.category}
+          seed={plan.id}
+          overlay="bottom"
+          showEmoji={!coverUrl}
+          borderRadius={NS.lifestyle.tileRadius}>
+          <View style={styles.coverTop}>
+            <View style={styles.tagRow}>
+              {tags.map((tag) => (
+                <View key={tag} style={styles.tagBadge}>
+                  <Text style={styles.tagText}>#{tag}</Text>
+                </View>
+              ))}
             </View>
-          ) : null}
-        </View>
-      </VisualCover>
-
-      <View style={styles.body}>
-        <Text style={styles.title} numberOfLines={2}>
-          {plan.title}
-        </Text>
-        <Text style={styles.area} numberOfLines={1}>
-          📍 {destination}
-        </Text>
-        <View style={styles.footer}>
-          <Pressable
-            style={styles.creatorRow}
-            onPress={(event) => {
-              event.stopPropagation?.();
-              onCreatorPress?.();
-            }}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{getProfileInitial(plan.creatorDisplayName)}</Text>
-            </View>
-            <Text style={styles.creatorName} numberOfLines={1}>
-              {plan.creatorDisplayName}
-            </Text>
-          </Pressable>
-          <View style={styles.stats}>
-            <Text style={styles.stat}>♥ {plan.likeCount}</Text>
-            <Text style={styles.stat}>📌 {plan.saveCount}</Text>
-            {(plan.copyCount ?? 0) > 0 ? (
-              <Text style={styles.stat}>📋 {plan.copyCount}</Text>
+            {isFeatured ? (
+              <View style={styles.featuredBadge}>
+                <Text style={styles.featuredBadgeText}>人気</Text>
+              </View>
             ) : null}
           </View>
+        </VisualCover>
+
+        <View style={styles.body}>
+          <Text style={styles.title} numberOfLines={2}>
+            {plan.title}
+          </Text>
+          <Text style={styles.area} numberOfLines={1}>
+            📍 {destination}
+          </Text>
+          <View style={styles.footer}>
+            <Pressable
+              style={styles.creatorRow}
+              onPress={(event) => {
+                event.stopPropagation?.();
+                onCreatorPress?.();
+              }}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{getProfileInitial(plan.creatorDisplayName)}</Text>
+              </View>
+              <Text style={styles.creatorName} numberOfLines={1}>
+                {plan.creatorDisplayName}
+              </Text>
+            </Pressable>
+            <Text style={styles.stat}>📌 {saveCount}</Text>
+          </View>
         </View>
+      </Pressable>
+
+      <View style={styles.actionRow}>
+        <Pressable
+          style={[styles.actionBtn, savedLocally && styles.actionBtnSaved]}
+          onPress={handleSave}>
+          <Text style={[styles.actionBtnText, savedLocally && styles.actionBtnTextSaved]}>
+            {savedLocally ? '保存済み' : '保存'}
+          </Text>
+        </Pressable>
+        <Pressable style={styles.actionBtnPrimary} onPress={onPress}>
+          <Text style={styles.actionBtnPrimaryText}>詳しく見る</Text>
+        </Pressable>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -115,6 +138,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: Spacing.one,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    flex: 1,
   },
   tagBadge: {
     backgroundColor: 'rgba(255,255,255,0.92)',
@@ -156,12 +185,16 @@ const styles = StyleSheet.create({
   },
   footer: {
     marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 4,
   },
   creatorRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flex: 1,
   },
   avatar: {
     width: 18,
@@ -182,14 +215,48 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: NS.colors.textMuted,
   },
-  stats: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
   stat: {
     fontSize: 10,
     fontWeight: '700',
     color: NS.colors.textMuted,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    paddingBottom: Spacing.two,
+  },
+  actionBtn: {
+    flex: 1,
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    paddingVertical: Spacing.one + 2,
+    alignItems: 'center',
+    backgroundColor: NS.colors.bgInput,
+  },
+  actionBtnSaved: {
+    borderColor: NS.colors.accent,
+    backgroundColor: NS.colors.accentSoft,
+  },
+  actionBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: NS.colors.textSecondary,
+  },
+  actionBtnTextSaved: {
+    color: NS.colors.accent,
+  },
+  actionBtnPrimary: {
+    flex: 1,
+    borderRadius: NS.radius.md,
+    paddingVertical: Spacing.one + 2,
+    alignItems: 'center',
+    backgroundColor: NS.colors.accent,
+  },
+  actionBtnPrimaryText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });
