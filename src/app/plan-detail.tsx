@@ -33,6 +33,7 @@ import { parseItineraryDays, isTripDurationOption } from '@/lib/trip-duration';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
 import { COMPANION_OPTIONS, isDateRelatedCompanion, PERSONALITY_OPTIONS } from '@/types/plan';
+import { buildTripDayModeParams } from '@/lib/trip-day-mode-nav';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { WeatherReplanPreviewSuccess } from '@/types/weather-replan';
 
@@ -430,6 +431,18 @@ export default function PlanDetailScreen() {
             />
           </View>
           <View style={styles.shareButtonWrap}>
+            <Pressable
+              style={({ pressed }) => [styles.dayModeButton, pressed && styles.dayModeButtonPressed]}
+              onPress={() =>
+                router.push({
+                  pathname: '/trip-day-mode',
+                  params: buildTripDayModeParams(planPayload, { savedTripId }),
+                })
+              }>
+              <Text style={styles.dayModeButtonText}>当日モードを開く</Text>
+            </Pressable>
+          </View>
+          <View style={styles.shareButtonWrap}>
             <ShareTripSection
               location={location}
               budget={budget}
@@ -664,5 +677,23 @@ const styles = StyleSheet.create({
   shareButtonWrap: {
     marginTop: Spacing.four,
     marginBottom: Spacing.two,
+  },
+  dayModeButton: {
+    alignSelf: 'stretch',
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.lg,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    borderWidth: 1,
+    borderColor: NS.colors.accent,
+    alignItems: 'center',
+  },
+  dayModeButtonPressed: {
+    opacity: 0.9,
+  },
+  dayModeButtonText: {
+    color: NS.colors.accent,
+    fontSize: 15,
+    fontWeight: '800',
   },
 });

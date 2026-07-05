@@ -12,6 +12,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { countPlansInFolder, formatPlanUpdatedAt } from '@/lib/my-trips';
 import { savedTripPayloadToPlanParams, savedTripToPlanParams, getTripById } from '@/lib/saved-trips';
 import { getTripFolderById } from '@/lib/trip-folders';
+import { buildTripDayModeFolderParams } from '@/lib/trip-day-mode-nav';
 import { formatTripDateRangeLabel } from '@/lib/trip-schedule';
 import type { SavedTrip } from '@/types/trip';
 import type { TripFolder } from '@/types/trip-folder';
@@ -170,6 +171,16 @@ export default function TripFolderDetailScreen() {
 
             <View style={styles.actions}>
               <PrimaryButton label="旅行秘書を開く" onPress={openAssistant} variant="primary" />
+              <PrimaryButton
+                label="当日モードを開く"
+                onPress={() =>
+                  router.push({
+                    pathname: '/trip-day-mode',
+                    params: buildTripDayModeFolderParams(folder.id, folder.title),
+                  })
+                }
+                variant="secondary"
+              />
               <PrimaryButton label="新しいプランを追加" onPress={() => router.push('/')} variant="secondary" />
             </View>
 

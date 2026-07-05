@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -35,12 +35,14 @@ import {
 } from '@/lib/trip-folders';
 import { formatTripDateRangeLabel } from '@/lib/trip-schedule';
 import {
+  TRIP_ASSISTANT_DAY_MODE_PROMPTS,
   TRIP_ASSISTANT_QUICK_PROMPTS,
   TRIP_ASSISTANT_WELCOME_MESSAGE,
   type TripAssistantAction,
   type TripAssistantChatMessage,
   type TripAssistantContext,
 } from '@/types/trip-assistant';
+import type { TripDayModeAssistantContext } from '@/types/trip-day-mode';
 import type { SavedTrip } from '@/types/trip';
 import type { TripFolder } from '@/types/trip-folder';
 
@@ -161,9 +163,11 @@ function MessageBubble({
 }
 
 function QuickPromptChips({
+  prompts,
   onSelect,
   disabled,
 }: {
+  prompts: readonly string[];
   onSelect: (prompt: string) => void;
   disabled: boolean;
 }) {
@@ -172,7 +176,7 @@ function QuickPromptChips({
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.quickPromptsContent}>
-      {TRIP_ASSISTANT_QUICK_PROMPTS.map((prompt) => (
+      {prompts.map((prompt) => (
         <Pressable
           key={prompt}
           style={({ pressed }) => [
@@ -191,7 +195,10 @@ function QuickPromptChips({
 
 export default function TripAssistantScreen() {
   const insets = useSafeAreaInsets();
-  const { folderId } = useLocalSearchParams<{ folderId: string }>();
+  const { folderId, dayModeContext: dayModeContextParam } = useLocalSearchParams<{
+    folderId: string;
+    dayModeContext?: string;
+  }>();
   const { session } = useAuth();
   const scrollRef = useRef<ScrollView>(null);
 
@@ -208,9 +215,24 @@ export default function TripAssistantScreen() {
   const [previewMessageId, setPreviewMessageId] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [applyingActionId, setApplyingActionId] = useState<string | null>(null);
+  const [dayModeContext, setDayModeContext] = useState<TripDayModeAssistantContext | null>(null);
+
   const [latestPayloadAfterApply, setLatestPayloadAfterApply] = useState<SavedTrip['payload'] | null>(
     null,
   );
+
+  useEffect(() => {
+    if (!dayModeContextParam?.trim()) {
+      setDayModeContext(null);
+      return;
+    }
+
+    try {
+      setDayModeContext(JSON.parse(dayModeContextParam) as TripDayModeAssistantContext);
+    } catch {
+      setDayModeContext(null);
+    }
+  }, [dayModeContextParam]);
 
   const scrollToEnd = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
@@ -283,6 +305,14 @@ export default function TripAssistantScreen() {
     if (!isLoadingScreen) scrollToEnd();
   }, [isLoadingScreen, messages.length, isThinking, scrollToEnd]);
 
+  const effectiveContext = useMemo(() => {
+    if (!assistantContext) return null;
+    if (!dayModeContext) return assistantContext;
+    return { ...assistantContext, dayModeContext };
+  }, [assistantContext, dayModeContext]);
+
+  const quickPrompts = dayModeContext ? TRIP_ASSISTANT_DAY_MODE_PROMPTS : TRIP_ASSISTANT_QUICK_PROMPTS;
+
   const openPreviewForMessage = (message: TripAssistantChatMessage) => {
     if (!message.assistantAction) return;
     setPreviewAction(message.assistantAction);
@@ -314,7 +344,7 @@ export default function TripAssistantScreen() {
   };
 
   const handleApplyAction = async () => {
-    if (!previewAction || !previewMessageId || !folder || !assistantContext || applyingActionId) {
+    if (!previewAction || !previewMessageId || !folder || !effectiveContext || applyingActionId) {
       return;
     }
 
@@ -324,7 +354,7 @@ export default function TripAssistantScreen() {
     try {
       const { nextPayload, updatedFolder } = await applyTripAssistantAction({
         action: previewAction,
-        context: assistantContext,
+        context: effectiveContext,
         folder,
       });
 
@@ -368,7 +398,7 @@ export default function TripAssistantScreen() {
 
   const submitMessage = async (rawText: string) => {
     const trimmed = rawText.trim();
-    if (!trimmed || isThinking || !assistantContext || !folder) return;
+    if (!trimmed || isThinking || !effectiveContext || !folder) return;
 
     if (!isOpenAiConfigured()) {
       setError('AI設定が未完了です。OpenAI APIキーを設定してください。');
@@ -392,7 +422,7 @@ export default function TripAssistantScreen() {
       const response = await sendTripAssistantMessage({
         userMessage: trimmed,
         history: messages,
-        context: assistantContext,
+        context: effectiveContext,
       });
 
       let assistantAction: TripAssistantAction | null = null;
@@ -400,7 +430,7 @@ export default function TripAssistantScreen() {
         assistantAction = await detectTripAssistantAction({
           userMessage: trimmed,
           assistantResponse: response,
-          context: assistantContext,
+          context: effectiveContext,
         });
       } catch (detectError) {
         console.warn('[TripAssistantAction] detection failed', detectError);
@@ -484,7 +514,11 @@ export default function TripAssistantScreen() {
         </ScrollView>
 
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, Spacing.two) }]}>
-          <QuickPromptChips onSelect={(prompt) => void submitMessage(prompt)} disabled={isThinking} />
+          <QuickPromptChips
+            prompts={quickPrompts}
+            onSelect={(prompt) => void submitMessage(prompt)}
+            disabled={isThinking}
+          />
 
           <View style={styles.inputRow}>
             <TextInput

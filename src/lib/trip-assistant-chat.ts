@@ -21,6 +21,31 @@ function buildAssistantBrief(context: TripAssistantContext): string {
     sections.push(`\n## 天候コンテキスト\n${context.weatherContext}`);
   }
 
+  if (context.dayModeContext) {
+    const dayMode = context.dayModeContext;
+    const lines = [
+      `\n## 当日モードコンテキスト（${dayMode.dayLabel}）`,
+      `現在時刻: ${dayMode.currentTime}`,
+      `遅れ: ${dayMode.delayMinutes}分`,
+      `スケジュール状態: ${dayMode.scheduleStatus}`,
+    ];
+    if (dayMode.currentItem) {
+      lines.push(
+        `今の予定: ${dayMode.currentItem.time} ${dayMode.currentItem.activity}${dayMode.currentItem.category ? `（${dayMode.currentItem.category}）` : ''}`,
+      );
+    }
+    if (dayMode.nextItem) {
+      lines.push(
+        `次の予定: ${dayMode.nextItem.time} ${dayMode.nextItem.activity}${dayMode.nextItem.movementNote ? ` / 移動: ${dayMode.nextItem.movementNote}` : ''}`,
+      );
+    }
+    lines.push(
+      '- ユーザーは旅行当日です。今すぐ実行できる具体的なアドバイスを優先してください',
+      '- 「今からどこ行けばいい？」「遅れてるけど大丈夫？」など当日の判断をサポートしてください',
+    );
+    sections.push(lines.join('\n'));
+  }
+
   return sections.join('\n');
 }
 

@@ -159,6 +159,12 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="trip-day-mode"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
             name="memory/[id]"
             options={{
               animation: 'slide_from_right',

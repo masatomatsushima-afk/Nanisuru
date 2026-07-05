@@ -1,6 +1,7 @@
 import type { ItineraryItem } from '@/types/plan';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
+import type { TripDayModeAssistantContext } from '@/types/trip-day-mode';
 import type { TripFolder } from '@/types/trip-folder';
 import type { ActiveTripContext } from '@/types/travel-secretary';
 
@@ -14,6 +15,13 @@ export const TRIP_ASSISTANT_QUICK_PROMPTS = [
   '夜だけ別プランにしたい',
   '服装を教えて',
   'ホテルはどのエリアがいい？',
+] as const;
+
+export const TRIP_ASSISTANT_DAY_MODE_PROMPTS = [
+  '今からどこ行けばいい？',
+  '遅れてるけど大丈夫？',
+  'この近くでカフェある？',
+  'ここ微妙やから変えたい',
 ] as const;
 
 export type TripAssistantQuickPrompt = (typeof TRIP_ASSISTANT_QUICK_PROMPTS)[number];
@@ -48,6 +56,7 @@ export type TripAssistantContext = {
   tripContext: ActiveTripContext | null;
   extendedBrief: string;
   editHistorySummary: string | null;
+  dayModeContext?: TripDayModeAssistantContext | null;
 };
 
 export type TripAssistantChatMessage = {
