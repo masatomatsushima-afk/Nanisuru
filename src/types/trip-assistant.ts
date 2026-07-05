@@ -1,4 +1,5 @@
 import type { ItineraryItem } from '@/types/plan';
+import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { TripFolder } from '@/types/trip-folder';
 import type { ActiveTripContext } from '@/types/travel-secretary';
@@ -17,6 +18,21 @@ export const TRIP_ASSISTANT_QUICK_PROMPTS = [
 
 export type TripAssistantQuickPrompt = (typeof TRIP_ASSISTANT_QUICK_PROMPTS)[number];
 
+export type TripAssistantAction = {
+  type: 'itinerary_update';
+  title: string;
+  targetDayIndex: number;
+  targetItemIndex: number;
+  beforeItem: ItineraryItem;
+  afterItem: ItineraryItem;
+  reason: string;
+  budgetImpact?: string;
+  movementNote?: string;
+  editProposal: PartialItineraryEditResult;
+  target: ItineraryEditTarget;
+  editRequest: string;
+};
+
 export type TripAssistantContext = {
   folder: TripFolder;
   savedPlans: SavedTripPayload[];
@@ -32,4 +48,13 @@ export type TripAssistantContext = {
   tripContext: ActiveTripContext | null;
   extendedBrief: string;
   editHistorySummary: string | null;
+};
+
+export type TripAssistantChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+  assistantAction?: TripAssistantAction;
+  applied?: boolean;
 };

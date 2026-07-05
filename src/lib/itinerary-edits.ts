@@ -6,6 +6,8 @@ type EditRow = {
   user_id: string;
   trip_id: string | null;
   plan_id: string | null;
+  folder_id?: string | null;
+  source?: string | null;
   day_index: number;
   item_id: string;
   edit_request: string;
@@ -20,6 +22,8 @@ function rowToRecord(row: EditRow): ItineraryEditRecord {
     userId: row.user_id,
     tripId: row.trip_id,
     planId: row.plan_id,
+    folderId: row.folder_id ?? null,
+    source: row.source ?? (row.before_data?.source as string | undefined) ?? null,
     dayIndex: row.day_index,
     itemId: row.item_id,
     editRequest: row.edit_request,
@@ -36,6 +40,8 @@ export function isItineraryEditsConfigured(): boolean {
 export async function saveItineraryEdit(input: {
   tripId?: string | null;
   planId?: string | null;
+  folderId?: string | null;
+  source?: string | null;
   dayIndex: number;
   itemId: string;
   editRequest: string;
@@ -50,25 +56,48 @@ export async function saveItineraryEdit(input: {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const { data, error } = await supabase
+  const basePayload = {
+    user_id: user.id,
+    trip_id: input.tripId ?? null,
+    plan_id: input.planId ?? null,
+    day_index: input.dayIndex,
+    item_id: input.itemId,
+    edit_request: input.editRequest.trim(),
+    before_data: {
+      ...input.beforeData,
+      source: input.source ?? input.beforeData.source ?? 'manual',
+      folderId: input.folderId ?? input.beforeData.folderId ?? null,
+    },
+    after_data: input.afterData,
+  };
+
+  const withOptionalColumns = {
+    ...basePayload,
+    folder_id: input.folderId ?? null,
+    source: input.source ?? 'manual',
+  };
+
+  let result = await supabase
     .from('itinerary_edits')
-    .insert({
-      user_id: user.id,
-      trip_id: input.tripId ?? null,
-      plan_id: input.planId ?? null,
-      day_index: input.dayIndex,
-      item_id: input.itemId,
-      edit_request: input.editRequest.trim(),
-      before_data: input.beforeData,
-      after_data: input.afterData,
-    })
+    .insert(withOptionalColumns)
     .select(
-      'id, user_id, trip_id, plan_id, day_index, item_id, edit_request, before_data, after_data, created_at',
+      'id, user_id, trip_id, plan_id, folder_id, source, day_index, item_id, edit_request, before_data, after_data, created_at',
     )
     .single();
 
-  if (error || !data) return null;
-  return rowToRecord(data as EditRow);
+  if (result.error?.message?.includes('folder_id') || result.error?.message?.includes('source')) {
+    // TODO: run supabase/itinerary_edits_trip_assistant.sql for folder_id/source columns
+    result = await supabase
+      .from('itinerary_edits')
+      .insert(basePayload)
+      .select(
+        'id, user_id, trip_id, plan_id, day_index, item_id, edit_request, before_data, after_data, created_at',
+      )
+      .single();
+  }
+
+  if (result.error || !result.data) return null;
+  return rowToRecord(result.data as EditRow);
 }
 
 export async function fetchItineraryEditsForTrip(tripId: string): Promise<ItineraryEditRecord[]> {
@@ -83,7 +112,7 @@ export async function fetchItineraryEditsForTrip(tripId: string): Promise<Itiner
   const { data, error } = await supabase
     .from('itinerary_edits')
     .select(
-      'id, user_id, trip_id, plan_id, day_index, item_id, edit_request, before_data, after_data, created_at',
+      'id, user_id, trip_id, plan_id, folder_id, source, day_index, item_id, edit_request, before_data, after_data, created_at',
     )
     .eq('trip_id', tripId)
     .eq('user_id', user.id)

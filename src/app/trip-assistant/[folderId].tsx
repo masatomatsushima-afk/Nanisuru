@@ -14,15 +14,19 @@ import {
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { TripAssistantActionPreviewModal } from '@/components/trip-assistant-action-preview-modal';
+import { PrimaryButton } from '@/components/ui/premium-card';
 import { ScreenBackground } from '@/components/ui/screen-background';
 import { LoadingState } from '@/components/ui/state-cards';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { isOpenAiConfigured } from '@/lib/travel-secretary';
+import { detectTripAssistantAction } from '@/lib/trip-assistant-action';
+import { applyTripAssistantAction } from '@/lib/trip-assistant-apply';
 import { buildTripAssistantContext } from '@/lib/trip-assistant-context';
 import { sendTripAssistantMessage } from '@/lib/trip-assistant-chat';
-import { getTripById } from '@/lib/saved-trips';
+import { getTripById, savedTripPayloadToPlanParams, savedTripToPlanParams } from '@/lib/saved-trips';
 import { setLastSelectedTripFolderId } from '@/lib/trip-folder-context';
 import {
   fetchTripAssistantMessages,
@@ -33,17 +37,24 @@ import { formatTripDateRangeLabel } from '@/lib/trip-schedule';
 import {
   TRIP_ASSISTANT_QUICK_PROMPTS,
   TRIP_ASSISTANT_WELCOME_MESSAGE,
+  type TripAssistantAction,
+  type TripAssistantChatMessage,
   type TripAssistantContext,
 } from '@/types/trip-assistant';
-import type { SecretaryMessage } from '@/types/travel-secretary';
+import type { SavedTrip } from '@/types/trip';
 import type { TripFolder } from '@/types/trip-folder';
 
-function createMessage(role: SecretaryMessage['role'], content: string): SecretaryMessage {
+function createMessage(
+  role: TripAssistantChatMessage['role'],
+  content: string,
+  extras?: Partial<TripAssistantChatMessage>,
+): TripAssistantChatMessage {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     role,
     content,
     createdAt: new Date().toISOString(),
+    ...extras,
   };
 }
 
@@ -53,13 +64,7 @@ function formatMessageTime(iso: string): string {
   return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
 }
 
-function ChatHeader({
-  folder,
-  onBack,
-}: {
-  folder: TripFolder;
-  onBack: () => void;
-}) {
+function ChatHeader({ folder, onBack }: { folder: TripFolder; onBack: () => void }) {
   const dateLabel =
     formatTripDateRangeLabel(folder.departureDate, folder.returnDate) ??
     folder.durationLabel ??
@@ -83,8 +88,24 @@ function ChatHeader({
   );
 }
 
-function MessageBubble({ message, index }: { message: SecretaryMessage; index: number }) {
+function MessageBubble({
+  message,
+  index,
+  onApplyAction,
+  onShowDetails,
+  onViewUpdatedPlan,
+  applyingActionId,
+}: {
+  message: TripAssistantChatMessage;
+  index: number;
+  onApplyAction: (message: TripAssistantChatMessage) => void;
+  onShowDetails: (message: TripAssistantChatMessage) => void;
+  onViewUpdatedPlan: () => void;
+  applyingActionId: string | null;
+}) {
   const isUser = message.role === 'user';
+  const action = message.assistantAction;
+  const isApplying = applyingActionId === message.id;
 
   return (
     <Animated.View
@@ -100,6 +121,36 @@ function MessageBubble({ message, index }: { message: SecretaryMessage; index: n
           <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextAi]}>
             {message.content}
           </Text>
+
+          {!isUser && action && !message.applied ? (
+            <View style={styles.actionBox}>
+              <Text style={styles.actionTitle}>{action.title}</Text>
+              <Text style={styles.actionSummary}>
+                {action.beforeItem.activity} → {action.afterItem.activity}
+              </Text>
+              <PrimaryButton
+                label={isApplying ? '反映中…' : 'この変更をプランに反映'}
+                onPress={() => onApplyAction(message)}
+                disabled={Boolean(applyingActionId)}
+              />
+              <Pressable
+                style={({ pressed }) => [styles.secondaryAction, pressed && styles.secondaryActionPressed]}
+                onPress={() => onShowDetails(message)}
+                disabled={Boolean(applyingActionId)}>
+                <Text style={styles.secondaryActionText}>詳しく見る</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {!isUser && message.applied ? (
+            <View style={styles.actionBox}>
+              <Pressable
+                style={({ pressed }) => [styles.secondaryAction, pressed && styles.secondaryActionPressed]}
+                onPress={onViewUpdatedPlan}>
+                <Text style={styles.secondaryActionText}>更新後のプランを見る</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
         <Text style={[styles.timestamp, isUser ? styles.timestampUser : styles.timestampAi]}>
           {formatMessageTime(message.createdAt)}
@@ -145,16 +196,30 @@ export default function TripAssistantScreen() {
   const scrollRef = useRef<ScrollView>(null);
 
   const [folder, setFolder] = useState<TripFolder | null>(null);
+  const [linkedTrip, setLinkedTrip] = useState<SavedTrip | null>(null);
   const [assistantContext, setAssistantContext] = useState<TripAssistantContext | null>(null);
-  const [messages, setMessages] = useState<SecretaryMessage[]>([]);
+  const [messages, setMessages] = useState<TripAssistantChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoadingScreen, setIsLoadingScreen] = useState(true);
   const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [screenError, setScreenError] = useState<string | null>(null);
+  const [previewAction, setPreviewAction] = useState<TripAssistantAction | null>(null);
+  const [previewMessageId, setPreviewMessageId] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [applyingActionId, setApplyingActionId] = useState<string | null>(null);
+  const [latestPayloadAfterApply, setLatestPayloadAfterApply] = useState<SavedTrip['payload'] | null>(
+    null,
+  );
 
   const scrollToEnd = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  }, []);
+
+  const refreshContext = useCallback(async (loadedFolder: TripFolder, trip: SavedTrip | null) => {
+    const context = await buildTripAssistantContext(loadedFolder, trip);
+    setAssistantContext(context);
+    return context;
   }, []);
 
   const loadScreen = useCallback(async () => {
@@ -179,13 +244,10 @@ export default function TripAssistantScreen() {
       setFolder(loadedFolder);
       await setLastSelectedTripFolderId(loadedFolder.id);
 
-      const linkedTrip =
-        loadedFolder.savedTripId && session
-          ? await getTripById(loadedFolder.savedTripId)
-          : null;
-
-      const context = await buildTripAssistantContext(loadedFolder, linkedTrip);
-      setAssistantContext(context);
+      const trip =
+        loadedFolder.savedTripId && session ? await getTripById(loadedFolder.savedTripId) : null;
+      setLinkedTrip(trip);
+      await refreshContext(loadedFolder, trip);
 
       try {
         const stored = await fetchTripAssistantMessages(loadedFolder.id);
@@ -211,7 +273,7 @@ export default function TripAssistantScreen() {
     } finally {
       setIsLoadingScreen(false);
     }
-  }, [folderId, session]);
+  }, [folderId, refreshContext, session]);
 
   useEffect(() => {
     void loadScreen();
@@ -220,6 +282,89 @@ export default function TripAssistantScreen() {
   useEffect(() => {
     if (!isLoadingScreen) scrollToEnd();
   }, [isLoadingScreen, messages.length, isThinking, scrollToEnd]);
+
+  const openPreviewForMessage = (message: TripAssistantChatMessage) => {
+    if (!message.assistantAction) return;
+    setPreviewAction(message.assistantAction);
+    setPreviewMessageId(message.id);
+    setShowPreview(true);
+  };
+
+  const openViewUpdatedPlan = () => {
+    if (!assistantContext?.latestPlan) return;
+
+    if (linkedTrip) {
+      router.push({
+        pathname: '/plan-detail',
+        params: savedTripToPlanParams({
+          ...linkedTrip,
+          payload: latestPayloadAfterApply ?? linkedTrip.payload,
+        }),
+      });
+      return;
+    }
+
+    router.push({
+      pathname: '/plan-detail',
+      params: savedTripPayloadToPlanParams(
+        latestPayloadAfterApply ?? assistantContext.latestPlan,
+        folder?.savedTripId,
+      ),
+    });
+  };
+
+  const handleApplyAction = async () => {
+    if (!previewAction || !previewMessageId || !folder || !assistantContext || applyingActionId) {
+      return;
+    }
+
+    setApplyingActionId(previewMessageId);
+    setError(null);
+
+    try {
+      const { nextPayload, updatedFolder } = await applyTripAssistantAction({
+        action: previewAction,
+        context: assistantContext,
+        folder,
+      });
+
+      if (updatedFolder) {
+        setFolder(updatedFolder);
+      }
+
+      setLatestPayloadAfterApply(nextPayload);
+      const trip =
+        updatedFolder?.savedTripId && session
+          ? await getTripById(updatedFolder.savedTripId)
+          : linkedTrip
+            ? { ...linkedTrip, payload: nextPayload }
+            : null;
+      if (trip) setLinkedTrip(trip);
+      await refreshContext(updatedFolder ?? folder, trip);
+
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === previewMessageId
+            ? {
+                ...message,
+                applied: true,
+                assistantAction: undefined,
+                content: `${message.content}\n\nプランに反映しました`,
+              }
+            : message,
+        ),
+      );
+
+      setShowPreview(false);
+      setPreviewAction(null);
+      setPreviewMessageId(null);
+      scrollToEnd();
+    } catch {
+      setError('変更の反映に失敗しました。もう一度お試しください。');
+    } finally {
+      setApplyingActionId(null);
+    }
+  };
 
   const submitMessage = async (rawText: string) => {
     const trimmed = rawText.trim();
@@ -231,8 +376,7 @@ export default function TripAssistantScreen() {
     }
 
     const userMessage = createMessage('user', trimmed);
-    const nextHistory = [...messages, userMessage];
-    setMessages(nextHistory);
+    setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setError(null);
     setIsThinking(true);
@@ -251,7 +395,20 @@ export default function TripAssistantScreen() {
         context: assistantContext,
       });
 
-      const assistantMessage = createMessage('assistant', response);
+      let assistantAction: TripAssistantAction | null = null;
+      try {
+        assistantAction = await detectTripAssistantAction({
+          userMessage: trimmed,
+          assistantResponse: response,
+          context: assistantContext,
+        });
+      } catch (detectError) {
+        console.warn('[TripAssistantAction] detection failed', detectError);
+      }
+
+      const assistantMessage = createMessage('assistant', response, {
+        assistantAction: assistantAction ?? undefined,
+      });
       setMessages((prev) => [...prev, assistantMessage]);
 
       if (session) {
@@ -265,10 +422,6 @@ export default function TripAssistantScreen() {
       setIsThinking(false);
       scrollToEnd();
     }
-  };
-
-  const handleSend = () => {
-    void submitMessage(input);
   };
 
   if (isLoadingScreen) {
@@ -309,7 +462,15 @@ export default function TripAssistantScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
           {messages.map((message, index) => (
-            <MessageBubble key={message.id} message={message} index={index} />
+            <MessageBubble
+              key={message.id}
+              message={message}
+              index={index}
+              onApplyAction={openPreviewForMessage}
+              onShowDetails={openPreviewForMessage}
+              onViewUpdatedPlan={openViewUpdatedPlan}
+              applyingActionId={applyingActionId}
+            />
           ))}
 
           {isThinking ? (
@@ -343,25 +504,32 @@ export default function TripAssistantScreen() {
                 pressed && !isThinking && input.trim() && styles.sendButtonPressed,
               ]}
               disabled={isThinking || !input.trim()}
-              onPress={handleSend}>
+              onPress={() => void submitMessage(input)}>
               <Text style={styles.sendButtonText}>送信</Text>
             </Pressable>
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      <TripAssistantActionPreviewModal
+        visible={showPreview}
+        action={previewAction}
+        applying={Boolean(applyingActionId)}
+        onClose={() => {
+          if (applyingActionId) return;
+          setShowPreview(false);
+          setPreviewAction(null);
+          setPreviewMessageId(null);
+        }}
+        onApply={() => void handleApplyAction()}
+      />
     </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
-  loadingScreen: {
-    flex: 1,
-    paddingHorizontal: NS.layout.screenPadding,
-  },
+  container: { flex: 1, backgroundColor: 'transparent' },
+  loadingScreen: { flex: 1, paddingHorizontal: NS.layout.screenPadding },
   screenErrorText: {
     color: NS.colors.danger,
     ...NS.typography.bodySm,
@@ -394,34 +562,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backButtonText: {
-    color: NS.colors.accent,
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  headerText: {
-    flex: 1,
-    gap: 2,
-  },
+  backButtonText: { color: NS.colors.accent, fontSize: 18, fontWeight: '700' },
+  headerText: { flex: 1, gap: 2 },
   headerTitle: {
     color: NS.colors.accent,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.3,
   },
-  headerTripTitle: {
-    color: NS.colors.text,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  headerMeta: {
-    color: NS.colors.textMuted,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  messagesScroll: {
-    flex: 1,
-  },
+  headerTripTitle: { color: NS.colors.text, fontSize: 16, fontWeight: '800' },
+  headerMeta: { color: NS.colors.textMuted, fontSize: 12, fontWeight: '600' },
+  messagesScroll: { flex: 1 },
   messagesContent: {
     paddingHorizontal: NS.layout.screenPadding,
     paddingTop: Spacing.three,
@@ -437,13 +588,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     maxWidth: '88%',
   },
-  messageRowUser: {
-    alignSelf: 'flex-end',
-    flexDirection: 'row-reverse',
-  },
-  messageRowAi: {
-    alignSelf: 'flex-start',
-  },
+  messageRowUser: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
+  messageRowAi: { alignSelf: 'flex-start' },
   aiAvatar: {
     width: 28,
     height: 28,
@@ -454,13 +600,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  aiAvatarText: {
-    fontSize: 14,
-  },
-  bubbleWrap: {
-    flexShrink: 1,
-    gap: 4,
-  },
+  aiAvatarText: { fontSize: 14 },
+  bubbleWrap: { flexShrink: 1, gap: 4 },
   bubble: {
     borderRadius: NS.radius.lg,
     paddingHorizontal: Spacing.three,
@@ -477,27 +618,39 @@ const styles = StyleSheet.create({
     borderColor: NS.colors.border,
     borderBottomLeftRadius: 4,
   },
-  bubbleText: {
-    fontSize: 15,
-    lineHeight: 22,
+  bubbleText: { fontSize: 15, lineHeight: 22 },
+  bubbleTextUser: { color: '#FFFFFF' },
+  bubbleTextAi: { color: NS.colors.text },
+  actionBox: {
+    marginTop: Spacing.three,
+    gap: Spacing.two,
+    paddingTop: Spacing.three,
+    borderTopWidth: 1,
+    borderTopColor: NS.colors.border,
   },
-  bubbleTextUser: {
-    color: '#FFFFFF',
-  },
-  bubbleTextAi: {
+  actionTitle: {
     color: NS.colors.text,
+    fontSize: 13,
+    fontWeight: '800',
   },
-  timestamp: {
-    fontSize: 10,
-    color: NS.colors.textMuted,
+  actionSummary: {
+    color: NS.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
-  timestampUser: {
-    textAlign: 'right',
+  secondaryAction: {
+    alignItems: 'center',
+    paddingVertical: Spacing.one,
   },
-  timestampAi: {
-    textAlign: 'left',
-    marginLeft: 2,
+  secondaryActionPressed: { opacity: 0.85 },
+  secondaryActionText: {
+    color: NS.colors.accent,
+    fontSize: 13,
+    fontWeight: '700',
   },
+  timestamp: { fontSize: 10, color: NS.colors.textMuted },
+  timestampUser: { textAlign: 'right' },
+  timestampAi: { textAlign: 'left', marginLeft: 2 },
   thinkingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -505,11 +658,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingVertical: Spacing.one,
   },
-  thinkingText: {
-    color: NS.colors.textMuted,
-    fontSize: 13,
-    fontWeight: '600',
-  },
+  thinkingText: { color: NS.colors.textMuted, fontSize: 13, fontWeight: '600' },
   errorBanner: {
     color: NS.colors.danger,
     fontSize: 13,
@@ -536,17 +685,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
   },
-  quickChipDisabled: {
-    opacity: 0.5,
-  },
-  quickChipPressed: {
-    opacity: 0.88,
-  },
-  quickChipText: {
-    color: NS.colors.accent,
-    fontSize: 12,
-    fontWeight: '700',
-  },
+  quickChipDisabled: { opacity: 0.5 },
+  quickChipPressed: { opacity: 0.88 },
+  quickChipText: { color: NS.colors.accent, fontSize: 12, fontWeight: '700' },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -575,15 +716,7 @@ const styles = StyleSheet.create({
     minWidth: 64,
     alignItems: 'center',
   },
-  sendButtonDisabled: {
-    opacity: 0.45,
-  },
-  sendButtonPressed: {
-    opacity: 0.88,
-  },
-  sendButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800',
-  },
+  sendButtonDisabled: { opacity: 0.45 },
+  sendButtonPressed: { opacity: 0.88 },
+  sendButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
 });

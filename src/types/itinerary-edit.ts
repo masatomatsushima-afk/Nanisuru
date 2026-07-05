@@ -131,6 +131,8 @@ export type ItineraryEditRecord = {
   userId: string;
   tripId: string | null;
   planId: string | null;
+  folderId?: string | null;
+  source?: string | null;
   dayIndex: number;
   itemId: string;
   editRequest: string;
