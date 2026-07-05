@@ -1,15 +1,20 @@
 import { getUserDisplayName } from '@/lib/auth';
+import { LOCAL_GEMS_SAMPLE_DATA } from '@/data/local-gems-sample';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import { fetchProfilesByUserIds } from '@/lib/user-profiles';
 import type {
   LocalHiddenSpot,
   LocalHiddenSpotCategory,
+  LocalHiddenSpotVisibility,
   SubmitLocalHiddenSpotInput,
 } from '@/types/local-hidden-spot';
 import { isDiscoverableLocalHiddenSpot } from '@/types/local-hidden-spot';
 import type { ModerationStatus } from '@/types/moderation';
 
 const SPOT_SELECT =
+  'id, user_id, name, area, category, description, best_time, estimated_budget, crowd_tip, caution, recommended_for, google_maps_url, instagram_url, tiktok_url, image_url, tags, visibility, moderation_status, creator_display_name, like_count, save_count, want_count, comment_count, created_at, updated_at';
+
+const SPOT_SELECT_LEGACY =
   'id, user_id, name, area, category, description, best_time, estimated_budget, crowd_tip, caution, google_maps_url, image_url, tags, moderation_status, creator_display_name, like_count, save_count, want_count, comment_count, created_at, updated_at';
 
 type SpotRow = {
@@ -17,15 +22,19 @@ type SpotRow = {
   user_id: string;
   name: string;
   area: string;
-  category: LocalHiddenSpotCategory;
+  category: string;
   description: string;
   best_time: string;
   estimated_budget: string;
   crowd_tip: string;
   caution: string;
+  recommended_for?: string;
   google_maps_url: string;
+  instagram_url?: string;
+  tiktok_url?: string;
   image_url: string;
   tags: string[] | null;
+  visibility?: string;
   moderation_status: ModerationStatus;
   creator_display_name: string;
   like_count: number;
@@ -48,6 +57,7 @@ function assertConfigured(): void {
 }
 
 function rowToSpot(row: SpotRow, extras?: Partial<LocalHiddenSpot>): LocalHiddenSpot {
+  const visibility = (row.visibility as LocalHiddenSpotVisibility | undefined) ?? 'public';
   return {
     id: row.id,
     userId: row.user_id,
@@ -59,9 +69,13 @@ function rowToSpot(row: SpotRow, extras?: Partial<LocalHiddenSpot>): LocalHidden
     estimatedBudget: row.estimated_budget,
     crowdTip: row.crowd_tip,
     caution: row.caution,
+    recommendedFor: row.recommended_for ?? '',
     googleMapsUrl: row.google_maps_url,
+    instagramUrl: row.instagram_url ?? '',
+    tiktokUrl: row.tiktok_url ?? '',
     imageUrl: row.image_url,
     tags: row.tags ?? [],
+    visibility,
     moderationStatus: row.moderation_status,
     creatorDisplayName: row.creator_display_name,
     likeCount: row.like_count,
@@ -72,6 +86,22 @@ function rowToSpot(row: SpotRow, extras?: Partial<LocalHiddenSpot>): LocalHidden
     updatedAt: row.updated_at,
     ...extras,
   };
+}
+
+async function querySpots(
+  build: (select: string) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+): Promise<SpotRow[]> {
+  const extended = await build(SPOT_SELECT);
+  if (!extended.error && extended.data) {
+    return extended.data as SpotRow[];
+  }
+
+  console.warn('[LocalGems] extended columns unavailable, using legacy select');
+  const legacy = await build(SPOT_SELECT_LEGACY);
+  if (legacy.error) {
+    throw new Error(legacy.error.message ?? '穴場スポットの取得に失敗しました');
+  }
+  return (legacy.data as SpotRow[]) ?? [];
 }
 
 async function getCurrentUserId(): Promise<string | null> {
@@ -101,8 +131,17 @@ function validateSpotSubmission(input: SubmitLocalHiddenSpotInput): void {
     throw new Error('Google Maps リンクは https:// で始まるURLを入力してください');
   }
 
-  if (input.imageUrl?.trim() && !/^https?:\/\//i.test(input.imageUrl.trim())) {
-    throw new Error('写真URLは https:// で始まるURLを入力してください');
+  if (input.imageUrl?.trim()) {
+    const url = input.imageUrl.trim();
+    if (!url.startsWith('file://') && !/^https?:\/\//i.test(url)) {
+      throw new Error('写真URLは https:// で始まるURLを入力してください');
+    }
+  }
+
+  for (const url of [input.instagramUrl, input.tiktokUrl]) {
+    if (url?.trim() && !/^https?:\/\//i.test(url.trim())) {
+      throw new Error('SNSリンクは https:// で始まるURLを入力してください');
+    }
   }
 }
 
@@ -155,47 +194,82 @@ export async function fetchLocalHiddenSpots(options?: {
   if (!isSupabaseConfigured()) return [];
 
   const supabase = getSupabase();
-  let query = supabase
-    .from('local_hidden_spots')
-    .select(SPOT_SELECT)
-    .eq('moderation_status', 'active')
-    .order('save_count', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(options?.limit ?? 24);
-
   const area = options?.area?.trim();
-  if (area) {
-    query = query.ilike('area', `%${area}%`);
+  const limit = options?.limit ?? 24;
+
+  const runQuery = (includeVisibility: boolean) =>
+    querySpots((select) => {
+      let query = supabase
+        .from('local_hidden_spots')
+        .select(select)
+        .eq('moderation_status', 'active')
+        .order('save_count', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (includeVisibility) {
+        query = query.eq('visibility', 'public');
+      }
+      if (area) {
+        query = query.ilike('area', `%${area}%`);
+      }
+      return query;
+    });
+
+  let rows: SpotRow[];
+  try {
+    rows = await runQuery(true);
+  } catch {
+    rows = await runQuery(false);
   }
 
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(error.message ?? '穴場スポットの取得に失敗しました');
-  }
-
-  let spots = (data as SpotRow[]).map((row) => rowToSpot(row));
+  let spots = rows.map((row) => rowToSpot(row));
   spots = await attachCreatorMeta(spots);
   spots = await attachUserInteractions(spots);
   return spots.filter(isDiscoverableLocalHiddenSpot);
 }
 
-export async function fetchLocalHiddenSpotsByUserId(userId: string): Promise<LocalHiddenSpot[]> {
+export async function fetchLocalHiddenSpotsByUserId(
+  userId: string,
+  options?: { includePrivate?: boolean },
+): Promise<LocalHiddenSpot[]> {
   if (!isSupabaseConfigured() || !userId.trim()) return [];
 
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('local_hidden_spots')
-    .select(SPOT_SELECT)
-    .eq('user_id', userId)
-    .eq('moderation_status', 'active')
-    .order('created_at', { ascending: false });
+  const currentUserId = await getCurrentUserId();
+  const isSelf = currentUserId === userId;
 
-  if (error) return [];
+  const rows = await querySpots((select) => {
+    let query = supabase
+      .from('local_hidden_spots')
+      .select(select)
+      .eq('user_id', userId)
+      .eq('moderation_status', 'active')
+      .order('created_at', { ascending: false });
 
-  let spots = (data as SpotRow[]).map((row) => rowToSpot(row));
+    if (!isSelf && !options?.includePrivate) {
+      return query.eq('visibility', 'public');
+    }
+
+    return query;
+  }).catch(() =>
+    querySpots((select) =>
+      supabase
+        .from('local_hidden_spots')
+        .select(select)
+        .eq('user_id', userId)
+        .eq('moderation_status', 'active')
+        .order('created_at', { ascending: false }),
+    ),
+  );
+
+  let spots = rows.map((row) => rowToSpot(row));
+  if (!isSelf && !options?.includePrivate) {
+    spots = spots.filter(isDiscoverableLocalHiddenSpot);
+  }
   spots = await attachCreatorMeta(spots);
   spots = await attachUserInteractions(spots);
-  return spots.filter(isDiscoverableLocalHiddenSpot);
+  return spots;
 }
 
 export async function countLocalHiddenSpotsForUser(userId: string): Promise<number> {
@@ -210,18 +284,36 @@ export async function countLocalHiddenSpotsForUser(userId: string): Promise<numb
 }
 
 export async function getLocalHiddenSpotById(spotId: string): Promise<LocalHiddenSpot | null> {
-  if (!isSupabaseConfigured() || !spotId.trim()) return null;
+  if (!spotId.trim()) return null;
+
+  console.log('[LocalGems] open gem', spotId);
+
+  if (spotId.startsWith('sample:')) {
+    return LOCAL_GEMS_SAMPLE_DATA.find((spot) => spot.id === spotId) ?? null;
+  }
+
+  if (!isSupabaseConfigured()) return null;
 
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from('local_hidden_spots')
-    .select(SPOT_SELECT)
-    .eq('id', spotId)
-    .maybeSingle();
+  let row: SpotRow | null = null;
 
-  if (error || !data) return null;
+  const extended = await supabase.from('local_hidden_spots').select(SPOT_SELECT).eq('id', spotId).maybeSingle();
+  if (!extended.error && extended.data) {
+    row = extended.data as SpotRow;
+  } else {
+    const legacy = await supabase
+      .from('local_hidden_spots')
+      .select(SPOT_SELECT_LEGACY)
+      .eq('id', spotId)
+      .maybeSingle();
+    if (!legacy.error && legacy.data) {
+      row = legacy.data as SpotRow;
+    }
+  }
 
-  let spot = rowToSpot(data as SpotRow);
+  if (!row) return null;
+
+  let spot = rowToSpot(row);
   if (!isDiscoverableLocalHiddenSpot(spot)) {
     const userId = await getCurrentUserId();
     if (userId !== spot.userId) return null;
@@ -249,30 +341,68 @@ export async function submitLocalHiddenSpot(
   }
 
   const displayName = getUserDisplayName(user);
+  const visibility = input.visibility ?? 'public';
+
+  const payload = {
+    user_id: user.id,
+    name: input.name.trim(),
+    area: input.area.trim(),
+    category: input.category,
+    description: input.description.trim(),
+    best_time: input.bestTime?.trim() ?? '',
+    estimated_budget: input.estimatedBudget?.trim() ?? '',
+    crowd_tip: input.crowdTip?.trim() ?? '',
+    caution: input.caution?.trim() ?? '',
+    recommended_for: input.recommendedFor?.trim() ?? '',
+    google_maps_url: input.googleMapsUrl?.trim() ?? '',
+    instagram_url: input.instagramUrl?.trim() ?? '',
+    tiktok_url: input.tiktokUrl?.trim() ?? '',
+    image_url: input.imageUrl?.trim() ?? '',
+    tags: input.tags,
+    visibility,
+    creator_display_name: displayName,
+    moderation_status: 'active',
+  };
+
+  console.log('[LocalGems] create gem', payload);
 
   const { data, error } = await supabase
     .from('local_hidden_spots')
-    .insert({
-      user_id: user.id,
-      name: input.name.trim(),
-      area: input.area.trim(),
-      category: input.category,
-      description: input.description.trim(),
-      best_time: input.bestTime?.trim() ?? '',
-      estimated_budget: input.estimatedBudget?.trim() ?? '',
-      crowd_tip: input.crowdTip?.trim() ?? '',
-      caution: input.caution?.trim() ?? '',
-      google_maps_url: input.googleMapsUrl?.trim() ?? '',
-      image_url: input.imageUrl?.trim() ?? '',
-      tags: input.tags,
-      creator_display_name: displayName,
-      moderation_status: 'active',
-    })
+    .insert(payload)
     .select(SPOT_SELECT)
     .single();
 
-  if (error || !data) {
-    throw new Error(error?.message ?? '穴場スポットの投稿に失敗しました');
+  if (error) {
+    console.warn('[LocalGems] extended insert failed, retrying legacy', error.message);
+    const { data: legacyData, error: legacyError } = await supabase
+      .from('local_hidden_spots')
+      .insert({
+        user_id: payload.user_id,
+        name: payload.name,
+        area: payload.area,
+        category: payload.category,
+        description: payload.description,
+        best_time: payload.best_time,
+        estimated_budget: payload.estimated_budget,
+        crowd_tip: payload.crowd_tip,
+        caution: payload.caution,
+        google_maps_url: payload.google_maps_url,
+        image_url: payload.image_url,
+        tags: payload.tags,
+        creator_display_name: payload.creator_display_name,
+        moderation_status: 'active',
+      })
+      .select(SPOT_SELECT_LEGACY)
+      .single();
+
+    if (legacyError || !legacyData) {
+      throw new Error(legacyError?.message ?? '穴場スポットの投稿に失敗しました');
+    }
+    return rowToSpot(legacyData as SpotRow);
+  }
+
+  if (!data) {
+    throw new Error('穴場スポットの投稿に失敗しました');
   }
 
   return rowToSpot(data as SpotRow);
@@ -377,5 +507,7 @@ export function shouldPrioritizeLocalHiddenSpots(input: {
     .filter(Boolean)
     .join(' ');
 
-  return /穴場|ローカル|地元|観光客.*少|隠れ|知る人ぞ知る|穴場好き/i.test(haystack);
+  return /穴場|ローカル|ローカル感|地元|観光客.*少|隠れ|知る人ぞ知る|穴場好き|グルメ|デート/i.test(
+    haystack,
+  );
 }

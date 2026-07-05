@@ -1,7 +1,9 @@
 import { router, Stack } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import {
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -19,10 +21,14 @@ import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { submitLocalHiddenSpot } from '@/lib/local-hidden-spots';
 import {
+  LOCAL_GEM_VISIBILITY_LABELS,
   LOCAL_HIDDEN_SPOT_CATEGORIES,
   LOCAL_HIDDEN_SPOT_TAGS,
   type LocalHiddenSpotCategory,
+  type LocalHiddenSpotVisibility,
 } from '@/types/local-hidden-spot';
+
+const VISIBILITY_OPTIONS: LocalHiddenSpotVisibility[] = ['private', 'unlisted', 'public'];
 
 function Field({
   label,
@@ -59,36 +65,68 @@ export default function LocalSpotSubmitScreen() {
   const [area, setArea] = useState('');
   const [category, setCategory] = useState<LocalHiddenSpotCategory>('カフェ');
   const [description, setDescription] = useState('');
-  const [bestTime, setBestTime] = useState('');
   const [estimatedBudget, setEstimatedBudget] = useState('');
   const [crowdTip, setCrowdTip] = useState('');
+  const [recommendedFor, setRecommendedFor] = useState('');
   const [caution, setCaution] = useState('');
   const [googleMapsUrl, setGoogleMapsUrl] = useState('');
+  const [instagramUrl, setInstagramUrl] = useState('');
+  const [tiktokUrl, setTiktokUrl] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [localImageUri, setLocalImageUri] = useState<string | null>(null);
   const [tags, setTags] = useState<string[]>([]);
+  const [visibility, setVisibility] = useState<LocalHiddenSpotVisibility>('public');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const toggleTag = (tag: string) => {
     setTags((prev) => (prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag]));
   };
 
+  const pickPhoto = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('権限が必要です', '写真を選ぶにはライブラリへのアクセスを許可してください');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+    });
+
+    if (!result.canceled && result.assets[0]?.uri) {
+      setLocalImageUri(result.assets[0].uri);
+      setImageUrl('');
+    }
+  };
+
   const handleSubmit = async () => {
     setIsSubmitting(true);
     try {
-      const spot = await submitLocalHiddenSpot({
+      const gemPayload = {
         name,
         area,
         category,
         description,
-        bestTime,
         estimatedBudget,
         crowdTip,
+        recommendedFor,
         caution,
         googleMapsUrl,
-        imageUrl,
+        instagramUrl,
+        tiktokUrl,
+        imageUrl: imageUrl || localImageUri || '',
         tags,
+        visibility,
+      };
+      console.log('[LocalGems] create gem', gemPayload);
+
+      const spot = await submitLocalHiddenSpot({
+        ...gemPayload,
+        bestTime: '',
       });
-      Alert.alert('投稿しました', 'ローカルの穴場として公開されました。', [
+
+      Alert.alert('投稿しました', 'ローカルの穴場として保存されました。', [
         { text: 'OK', onPress: () => router.replace(`/local-spot/${spot.id}`) },
       ]);
     } catch (error) {
@@ -113,7 +151,7 @@ export default function LocalSpotSubmitScreen() {
           <Pressable onPress={() => router.back()}>
             <Text style={styles.back}>← 戻る</Text>
           </Pressable>
-          <Text style={styles.title}>穴場スポットを投稿</Text>
+          <Text style={styles.title}>穴場を投稿</Text>
           <Text style={styles.subtitle}>
             公開施設・店舗名で投稿してください。個人住所は不可です。
           </Text>
@@ -137,18 +175,31 @@ export default function LocalSpotSubmitScreen() {
             </View>
 
             <Field
-              label="おすすめ理由 *"
+              label="おすすめポイント *"
               value={description}
               onChangeText={setDescription}
               placeholder="なぜここが好き？どんな雰囲気？"
               multiline
             />
-            <Field label="ベストな時間帯" value={bestTime} onChangeText={setBestTime} placeholder="例）平日15時ごろ" />
-            <Field label="予算目安" value={estimatedBudget} onChangeText={setEstimatedBudget} placeholder="例）1,000円前後" />
-            <Field label="混雑しにくい時間" value={crowdTip} onChangeText={setCrowdTip} placeholder="例）開店直後が空いてる" />
-            <Field label="注意点" value={caution} onChangeText={setCaution} placeholder="例）現金のみ、定休日火曜" multiline />
-            <Field label="Google Maps リンク（任意）" value={googleMapsUrl} onChangeText={setGoogleMapsUrl} placeholder="https://maps.google.com/..." />
+
+            <Text style={styles.fieldLabel}>写真</Text>
+            <View style={styles.photoRow}>
+              {localImageUri ? (
+                <Image source={{ uri: localImageUri }} style={styles.photoPreview} />
+              ) : null}
+              <Pressable style={styles.photoBtn} onPress={() => void pickPhoto()}>
+                <Text style={styles.photoBtnText}>写真を選ぶ</Text>
+              </Pressable>
+            </View>
             <Field label="写真URL（任意）" value={imageUrl} onChangeText={setImageUrl} placeholder="https://..." />
+
+            <Field label="予算感" value={estimatedBudget} onChangeText={setEstimatedBudget} placeholder="例）1,000円前後" />
+            <Field label="混み具合" value={crowdTip} onChangeText={setCrowdTip} placeholder="例）開店直後が空いてる" />
+            <Field label="誰におすすめ？" value={recommendedFor} onChangeText={setRecommendedFor} placeholder="例）デート、一人時間" />
+            <Field label="注意点" value={caution} onChangeText={setCaution} placeholder="例）現金のみ、定休日火曜" multiline />
+            <Field label="Google Maps URL（任意）" value={googleMapsUrl} onChangeText={setGoogleMapsUrl} placeholder="https://maps.google.com/..." />
+            <Field label="Instagram URL（任意）" value={instagramUrl} onChangeText={setInstagramUrl} placeholder="https://instagram.com/..." />
+            <Field label="TikTok URL（任意）" value={tiktokUrl} onChangeText={setTiktokUrl} placeholder="https://tiktok.com/..." />
 
             <Text style={styles.fieldLabel}>タグ</Text>
             <View style={styles.chipGrid}>
@@ -164,10 +215,25 @@ export default function LocalSpotSubmitScreen() {
               ))}
             </View>
 
+            <Text style={styles.fieldLabel}>公開設定</Text>
+            <View style={styles.chipGrid}>
+              {VISIBILITY_OPTIONS.map((option) => (
+                <Pressable
+                  key={option}
+                  style={[styles.chip, visibility === option && styles.chipSelected]}
+                  onPress={() => setVisibility(option)}>
+                  <Text style={[styles.chipText, visibility === option && styles.chipTextSelected]}>
+                    {LOCAL_GEM_VISIBILITY_LABELS[option]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
             <PrimaryButton
               label={isSubmitting ? '投稿中...' : '穴場を投稿する'}
               onPress={handleSubmit}
               disabled={isSubmitting || !name.trim() || !area.trim() || !description.trim()}
+              variant="mint"
             />
           </PremiumCard>
         </ScrollView>
@@ -242,8 +308,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.one + 2,
   },
   chipSelected: {
-    backgroundColor: NS.colors.accentSoft,
-    borderColor: NS.colors.accentBorder,
+    backgroundColor: NS.colors.mintSoft,
+    borderColor: '#059669',
   },
   chipText: {
     color: NS.colors.textSecondary,
@@ -251,6 +317,29 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   chipTextSelected: {
-    color: NS.colors.accent,
+    color: '#047857',
+  },
+  photoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  photoPreview: {
+    width: 72,
+    height: 72,
+    borderRadius: NS.radius.md,
+  },
+  photoBtn: {
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    backgroundColor: NS.colors.bgInput,
+  },
+  photoBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: NS.colors.textSecondary,
   },
 });

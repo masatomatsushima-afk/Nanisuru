@@ -1,15 +1,14 @@
 import { useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { LocalGemAddToPlanSheet } from '@/components/local-gem-add-to-plan-sheet';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import {
   toggleLocalHiddenSpotLike,
   toggleLocalHiddenSpotSave,
-  toggleLocalHiddenSpotWant,
 } from '@/lib/local-hidden-spots';
-import { setPendingLocalSpotForPlan } from '@/lib/plan-local-spot-intent';
 import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
 
 type LocalHiddenSpotActionsProps = {
@@ -17,7 +16,6 @@ type LocalHiddenSpotActionsProps = {
   isLoggedIn: boolean;
   onRequireLogin: () => void;
   onSpotUpdate: (spot: LocalHiddenSpot) => void;
-  onAddToPlan?: () => void;
 };
 
 function ActionButton({
@@ -51,15 +49,12 @@ export function LocalHiddenSpotActions({
   isLoggedIn,
   onRequireLogin,
   onSpotUpdate,
-  onAddToPlan,
 }: LocalHiddenSpotActionsProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showAddSheet, setShowAddSheet] = useState(false);
 
-  const runToggle = async (
-    key: string,
-    action: () => Promise<LocalHiddenSpot>,
-  ) => {
+  const runToggle = async (key: string, action: () => Promise<LocalHiddenSpot>) => {
     if (!isLoggedIn) {
       onRequireLogin();
       return;
@@ -75,51 +70,72 @@ export function LocalHiddenSpotActions({
     }
   };
 
-  const handleAddToPlan = async () => {
-    await setPendingLocalSpotForPlan({
-      spotId: spot.id,
-      name: spot.name,
-      area: spot.area,
+  const openUrl = (url: string, label: string) => {
+    if (!url.trim()) return;
+    void Linking.openURL(url.trim()).catch(() => {
+      Alert.alert('エラー', `${label}を開けませんでした`);
     });
-    setSuccess('プラン作成画面に追加しました');
-    setTimeout(() => setSuccess(null), 1600);
-    onAddToPlan?.();
-  };
-
-  const handleMaps = () => {
-    if (!spot.googleMapsUrl.trim()) return;
-    void Linking.openURL(spot.googleMapsUrl.trim());
   };
 
   return (
     <View style={styles.wrap}>
       <View style={styles.row}>
         <ActionButton
-          label={spot.likedByMe ? `❤️ ${spot.likeCount}` : `🤍 ${spot.likeCount}`}
-          active={spot.likedByMe}
-          disabled={busy === 'like'}
-          onPress={() => runToggle('like', () => toggleLocalHiddenSpotLike(spot.id))}
-        />
-        <ActionButton
-          label={spot.savedByMe ? `🔖 保存済 ${spot.saveCount}` : `🔖 ${spot.saveCount}`}
+          label={spot.savedByMe ? `保存済み ${spot.saveCount}` : `保存 ${spot.saveCount}`}
           active={spot.savedByMe}
           disabled={busy === 'save'}
           onPress={() => runToggle('save', () => toggleLocalHiddenSpotSave(spot.id))}
         />
         <ActionButton
-          label={spot.wantedByMe ? `👀 行きたい ${spot.wantCount}` : `👀 ${spot.wantCount}`}
-          active={spot.wantedByMe}
-          disabled={busy === 'want'}
-          onPress={() => runToggle('want', () => toggleLocalHiddenSpotWant(spot.id))}
+          label={spot.likedByMe ? `♥ ${spot.likeCount}` : `♡ ${spot.likeCount}`}
+          active={spot.likedByMe}
+          disabled={busy === 'like'}
+          onPress={() => runToggle('like', () => toggleLocalHiddenSpotLike(spot.id))}
         />
       </View>
 
       <View style={styles.row}>
-        <ActionButton label="🗓 プランに追加" onPress={handleAddToPlan} />
         {spot.googleMapsUrl.trim() ? (
-          <ActionButton label="🗺 Maps" onPress={handleMaps} />
+          <ActionButton
+            label="Google Mapsで開く"
+            onPress={() => openUrl(spot.googleMapsUrl, 'Google Maps')}
+          />
+        ) : null}
+        {spot.instagramUrl.trim() ? (
+          <ActionButton
+            label="Instagramで見る"
+            onPress={() => openUrl(spot.instagramUrl, 'Instagram')}
+          />
+        ) : null}
+        {spot.tiktokUrl.trim() ? (
+          <ActionButton label="TikTokで見る" onPress={() => openUrl(spot.tiktokUrl, 'TikTok')} />
         ) : null}
       </View>
+
+      <ActionButton
+        label="この場所をプランに追加"
+        onPress={() => {
+          if (!isLoggedIn) {
+            onRequireLogin();
+            return;
+          }
+          if (spot.id.startsWith('sample:')) {
+            Alert.alert('サンプルデータ', '保存済みプランへの追加は、実際の投稿データでお試しください。');
+            return;
+          }
+          setShowAddSheet(true);
+        }}
+      />
+
+      <LocalGemAddToPlanSheet
+        visible={showAddSheet}
+        spot={spot}
+        onClose={() => setShowAddSheet(false)}
+        onAdded={() => {
+          setSuccess('プランに追加しました');
+          setTimeout(() => setSuccess(null), 1600);
+        }}
+      />
 
       <SuccessOverlay visible={Boolean(success)} message={success ?? ''} />
     </View>

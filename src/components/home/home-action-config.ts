@@ -9,6 +9,7 @@ export const HOME_ROUTES = {
   memories: '/memories' as Href,
   afterPlan: '/after-plan' as Href,
   myTrips: '/my-trips' as Href,
+  localGems: '/local-gems' as Href,
 } as const;
 
 export type HomePlanMode = 'now' | 'travel' | 'night';
@@ -103,7 +104,7 @@ export const HOME_FEATURE_ACTIONS: HomeActionConfig[] = [
     bg: '#A7F3D0',
     border: '#6EE7B7',
     accent: '#047857',
-    target: { kind: 'href', href: HOME_ROUTES.explore, routeLabel: '/(tabs)/explore?category=hidden' },
+    target: { kind: 'href', href: HOME_ROUTES.localGems, routeLabel: '/local-gems' },
   },
   {
     id: 'memory',

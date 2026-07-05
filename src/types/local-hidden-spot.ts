@@ -1,20 +1,35 @@
 import type { ModerationStatus } from '@/types/moderation';
 
 export const LOCAL_HIDDEN_SPOT_CATEGORIES = [
+  'グルメ',
   'カフェ',
-  'レストラン',
-  '景色',
-  '散歩',
+  '自然',
   '夜景',
   '買い物',
-  '体験',
-  '雨の日',
   'デート',
   '一人時間',
+  '雨の日',
+  '夜遊び',
   'その他',
 ] as const;
 
+/** @deprecated Legacy DB values — kept for display compatibility */
+export const LEGACY_LOCAL_HIDDEN_SPOT_CATEGORIES = [
+  'レストラン',
+  '景色',
+  '散歩',
+  '体験',
+] as const;
+
 export type LocalHiddenSpotCategory = (typeof LOCAL_HIDDEN_SPOT_CATEGORIES)[number];
+
+export type LocalHiddenSpotVisibility = 'private' | 'unlisted' | 'public';
+
+export const LOCAL_GEM_VISIBILITY_LABELS: Record<LocalHiddenSpotVisibility, string> = {
+  private: '自分だけ',
+  unlisted: '共有リンクのみ',
+  public: '公開する',
+};
 
 export const LOCAL_HIDDEN_SPOT_TAGS = [
   '地元民おすすめ',
@@ -23,9 +38,9 @@ export const LOCAL_HIDDEN_SPOT_TAGS = [
   '映える',
   '雨の日OK',
   'デート向き',
-  '一人でも行きやすい',
+  '一人OK',
   '夜も安心',
-  '要予約',
+  '予約推奨',
 ] as const;
 
 export type LocalHiddenSpotTag = (typeof LOCAL_HIDDEN_SPOT_TAGS)[number];
@@ -35,15 +50,19 @@ export type LocalHiddenSpot = {
   userId: string;
   name: string;
   area: string;
-  category: LocalHiddenSpotCategory;
+  category: LocalHiddenSpotCategory | string;
   description: string;
   bestTime: string;
   estimatedBudget: string;
   crowdTip: string;
   caution: string;
+  recommendedFor: string;
   googleMapsUrl: string;
+  instagramUrl: string;
+  tiktokUrl: string;
   imageUrl: string;
   tags: string[];
+  visibility: LocalHiddenSpotVisibility;
   moderationStatus: ModerationStatus;
   creatorDisplayName: string;
   creatorArea?: string;
@@ -68,9 +87,13 @@ export type SubmitLocalHiddenSpotInput = {
   estimatedBudget?: string;
   crowdTip?: string;
   caution?: string;
+  recommendedFor?: string;
   googleMapsUrl?: string;
+  instagramUrl?: string;
+  tiktokUrl?: string;
   imageUrl?: string;
   tags: string[];
+  visibility?: LocalHiddenSpotVisibility;
 };
 
 export type LocalHiddenSpotComment = {
@@ -83,22 +106,31 @@ export type LocalHiddenSpotComment = {
 };
 
 export function isDiscoverableLocalHiddenSpot(spot: LocalHiddenSpot): boolean {
-  return spot.moderationStatus === 'active';
+  return spot.moderationStatus === 'active' && spot.visibility === 'public';
 }
 
-export function getLocalHiddenSpotCategoryIcon(category: LocalHiddenSpotCategory): string {
-  const icons: Record<LocalHiddenSpotCategory, string> = {
-    カフェ: '☕',
+export function getLocalHiddenSpotCategoryIcon(category: string): string {
+  const icons: Record<string, string> = {
+    グルメ: '🍽',
     レストラン: '🍽',
+    カフェ: '☕',
+    自然: '🌿',
     景色: '🌄',
     散歩: '🚶',
     夜景: '🌃',
     買い物: '🛍',
-    体験: '✨',
-    '雨の日': '☔',
     デート: '💑',
     一人時間: '🧘',
+    '雨の日': '☔',
+    夜遊び: '🌙',
+    体験: '✨',
     その他: '📍',
   };
   return icons[category] ?? '📍';
 }
+
+export type LocalGemsFeedSection = {
+  id: string;
+  title: string;
+  spots: LocalHiddenSpot[];
+};

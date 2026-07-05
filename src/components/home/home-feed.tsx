@@ -328,8 +328,10 @@ function FeatureActionGrid({
         onTravelPress();
         break;
       case 'popular':
-      case 'local':
         router.push('/(tabs)/explore');
+        break;
+      case 'local':
+        router.push('/local-gems');
         break;
       case 'night':
         router.push({

@@ -116,7 +116,7 @@ export default function LocalSpotDetailScreen() {
           { paddingTop: insets.top + Spacing.three, paddingBottom: insets.bottom + Spacing.five },
         ]}>
         <Pressable onPress={() => router.back()}>
-          <Text style={styles.back}>← 発見に戻る</Text>
+          <Text style={styles.back}>← 戻る</Text>
         </Pressable>
 
         {spot.imageUrl.trim() ? (
@@ -157,10 +157,13 @@ export default function LocalSpotDetailScreen() {
               <InfoRow label="ベスト時間" value={spot.bestTime} />
             ) : null}
             {spot.estimatedBudget.trim() ? (
-              <InfoRow label="予算目安" value={spot.estimatedBudget} />
+              <InfoRow label="予算感" value={spot.estimatedBudget} />
             ) : null}
             {spot.crowdTip.trim() ? (
-              <InfoRow label="混雑" value={spot.crowdTip} />
+              <InfoRow label="混み具合" value={spot.crowdTip} />
+            ) : null}
+            {spot.recommendedFor.trim() ? (
+              <InfoRow label="誰におすすめ？" value={spot.recommendedFor} />
             ) : null}
             {spot.caution.trim() ? (
               <InfoRow label="注意点" value={spot.caution} />
@@ -180,7 +183,6 @@ export default function LocalSpotDetailScreen() {
             isLoggedIn={Boolean(session)}
             onRequireLogin={() => router.push('/login')}
             onSpotUpdate={setSpot}
-            onAddToPlan={() => router.push('/(tabs)')}
           />
 
           <Pressable style={styles.reportLink} onPress={() => setShowReport(true)}>
