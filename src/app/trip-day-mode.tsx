@@ -30,6 +30,7 @@ import {
   resolveCurrentAndNextItems,
   resolveTodayDayIndex,
 } from '@/lib/trip-day-mode';
+import { buildTripMemoriesParams } from '@/lib/trip-memories-nav';
 import { buildItineraryItemId, type ItineraryEditTarget, type PartialItineraryEditResult } from '@/types/itinerary-edit';
 import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
 import { COMPANION_OPTIONS, PERSONALITY_OPTIONS } from '@/types/plan';
@@ -502,6 +503,24 @@ export default function TripDayModeScreen() {
           assistantDisabled={!folderId}
         />
 
+        {savedTripId ? (
+          <Pressable
+            style={({ pressed }) => [styles.memoryButton, pressed && styles.memoryButtonPressed]}
+            onPress={() =>
+              router.push({
+                pathname: '/trip-memories',
+                params: buildTripMemoriesParams({
+                  savedTripId,
+                  folderId,
+                  linkDayIndex: focusIndex !== null ? dayIndex : undefined,
+                  linkItemIndex: focusIndex,
+                }),
+              })
+            }>
+            <Text style={styles.memoryButtonText}>思い出を残す</Text>
+          </Pressable>
+        ) : null}
+
         {delayMinutes > 0 ? (
           <Text style={styles.delayStatus}>{delayMinutes}分の遅れを想定しています</Text>
         ) : null}
@@ -644,5 +663,23 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     textAlign: 'center',
     marginTop: Spacing.five,
+  },
+  memoryButton: {
+    marginTop: Spacing.four,
+    backgroundColor: NS.colors.coralSoft,
+    borderRadius: NS.radius.lg,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    borderWidth: 1,
+    borderColor: NS.colors.coral,
+    alignItems: 'center',
+  },
+  memoryButtonPressed: {
+    opacity: 0.9,
+  },
+  memoryButtonText: {
+    color: NS.colors.coral,
+    fontSize: 15,
+    fontWeight: '800',
   },
 });

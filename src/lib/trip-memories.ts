@@ -187,10 +187,15 @@ function buildMemoryMetaFromTrip(trip: SavedTrip): {
 
 export function extractItineraryMemorySlots(trip: SavedTrip): ItineraryMemorySlot[] {
   const slots: ItineraryMemorySlot[] = [];
-  for (const day of trip.payload.days) {
-    for (const item of day.items) {
+  for (let dayIndex = 0; dayIndex < trip.payload.days.length; dayIndex += 1) {
+    const day = trip.payload.days[dayIndex];
+    for (let itemIndex = 0; itemIndex < day.items.length; itemIndex += 1) {
+      const item = day.items[itemIndex];
       slots.push({
+        dayIndex,
+        itemIndex,
         dayNumber: day.dayNumber,
+        dayLabel: day.label,
         time: item.time,
         activity: item.activity,
         placeName: item.placeAddress ?? item.activity,
@@ -239,6 +244,14 @@ export async function ensureTripMemoryForSavedTrip(trip: SavedTrip): Promise<Tri
   }
 
   return rowToMemory(data as MemoryRow);
+}
+
+export async function ensureTripMemoryForTripId(tripId: string): Promise<TripMemory | null> {
+  assertConfigured();
+  const { getTripById } = await import('@/lib/saved-trips');
+  const trip = await getTripById(tripId);
+  if (!trip) return null;
+  return ensureTripMemoryForSavedTrip(trip);
 }
 
 export async function fetchTripMemoryWithMedia(memoryId: string): Promise<TripMemoryWithMedia | null> {
@@ -562,6 +575,14 @@ export async function addTripMemoryMedia(input: AddTripMemoryMediaInput): Promis
 
   const media = rowToMedia(data as MediaRow);
 
+  console.log('[TripMemories] add memory', {
+    memoryId: input.memoryId,
+    mediaType: input.mediaType,
+    placeName: input.placeName ?? slot?.placeName,
+    dayIndex: slot?.dayIndex,
+    itemIndex: slot?.itemIndex,
+  });
+
   if (input.mediaType === 'photo' && input.mediaUrl) {
     await updateTripMemoryCover(input.memoryId, input.mediaUrl);
   }
@@ -578,6 +599,7 @@ export async function addTripMemoryNote(
   memoryId: string,
   note: string,
   itinerarySlot?: ItineraryMemorySlot | null,
+  placeName?: string,
 ): Promise<TripMemoryMedia> {
   const trimmed = note.trim();
   if (!trimmed) throw new Error('メモを入力してください');
@@ -587,6 +609,7 @@ export async function addTripMemoryNote(
     mediaType: 'note',
     caption: trimmed,
     itinerarySlot,
+    placeName: placeName ?? itinerarySlot?.placeName,
   });
 }
 
@@ -666,13 +689,16 @@ export async function uploadTripMemoryFile(
   if (error) throw new Error(error.message ?? 'アップロードに失敗しました');
 
   const { data } = supabase.storage.from(TRIP_MEMORY_BUCKET).getPublicUrl(storagePath);
-  return { mediaUrl: data.publicUrl, storagePath };
+  const result = { mediaUrl: data.publicUrl, storagePath };
+  console.log('[TripMemories] upload success', result);
+  return result;
 }
 
 export async function pickAndUploadTripMemoryPhoto(
   memoryId: string,
   userId: string,
   itinerarySlot?: ItineraryMemorySlot | null,
+  extras?: { placeName?: string; caption?: string },
 ): Promise<TripMemoryMedia | null> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {
@@ -700,7 +726,8 @@ export async function pickAndUploadTripMemoryPhoto(
     storagePath,
     mediaType: 'photo',
     itinerarySlot,
-    placeName: itinerarySlot?.placeName,
+    placeName: extras?.placeName ?? itinerarySlot?.placeName,
+    caption: extras?.caption,
   });
 }
 
@@ -708,6 +735,7 @@ export async function pickAndUploadTripMemoryVideo(
   memoryId: string,
   userId: string,
   itinerarySlot?: ItineraryMemorySlot | null,
+  extras?: { placeName?: string; caption?: string },
 ): Promise<TripMemoryMedia | null> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {
@@ -735,7 +763,8 @@ export async function pickAndUploadTripMemoryVideo(
     storagePath,
     mediaType: 'video',
     itinerarySlot,
-    placeName: itinerarySlot?.placeName,
+    placeName: extras?.placeName ?? itinerarySlot?.placeName,
+    caption: extras?.caption,
   });
 }
 

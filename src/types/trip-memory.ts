@@ -8,6 +8,12 @@ export type TripMemoryAiSummary = {
   highlights: [string, string, string];
   emotionalNote: string;
   nextTimeTips: string;
+  /** おすすめだった場所 */
+  recommendedPlaces?: string[];
+  /** 次回行きたい場所 */
+  nextVisitPlaces?: string[];
+  /** SNS投稿用キャプション */
+  snsCaption?: string;
 };
 
 export type TripMemory = {
@@ -65,7 +71,10 @@ export type TripMemoryComment = {
 };
 
 export type ItineraryMemorySlot = {
+  dayIndex: number;
+  itemIndex: number;
   dayNumber: number;
+  dayLabel?: string;
   time: string;
   activity: string;
   placeName?: string;

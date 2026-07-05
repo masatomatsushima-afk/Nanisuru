@@ -64,6 +64,9 @@ function parseAiSummary(raw: string): TripMemoryAiSummary {
     highlights: [highlights[0]!, highlights[1]!, highlights[2]!],
     emotionalNote: data.emotionalNote ?? '',
     nextTimeTips: data.nextTimeTips ?? '',
+    recommendedPlaces: data.recommendedPlaces?.filter(Boolean) ?? [],
+    nextVisitPlaces: data.nextVisitPlaces?.filter(Boolean) ?? [],
+    snsCaption: data.snsCaption ?? '',
   };
 }
 
@@ -91,11 +94,14 @@ ${mediaContext}
 
 JSONのみで返してください:
 {
-  "memoryTitle": "今日の思い出タイトル（20字以内、感情が伝わる）",
-  "oneLineSummary": "旅の一言まとめ（40字以内）",
-  "highlights": ["ハイライト1", "ハイライト2", "ハイライト3"],
+  "memoryTitle": "旅のタイトル（20字以内、感情が伝わる）",
+  "oneLineSummary": "旅の一言まとめ（例: 韓国2泊3日のグルメ旅。初日は市場グルメ、2日目はカフェ巡り…）",
+  "highlights": ["旅のハイライト1", "楽しかったポイント2", "楽しかったポイント3"],
   "emotionalNote": "感情メモ（2〜3文、温かみのある文体）",
-  "nextTimeTips": "次回に活かすこと（1〜2文）"
+  "nextTimeTips": "次回に活かすこと（1〜2文）",
+  "recommendedPlaces": ["おすすめだった場所1", "おすすめだった場所2"],
+  "nextVisitPlaces": ["次回行きたい場所1"],
+  "snsCaption": "SNS投稿用キャプション（100字以内、ハッシュタグなし）"
 }`;
 
   let response: Response;
@@ -130,6 +136,7 @@ JSONのみで返してください:
 
   const data = await response.json();
   const summary = parseAiSummary(extractResponseText(data));
+  console.log('[TripMemories] AI summary', summary);
   await updateTripMemoryAiSummary(memory.id, summary);
   return summary;
 }

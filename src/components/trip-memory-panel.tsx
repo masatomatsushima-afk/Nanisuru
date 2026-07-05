@@ -338,7 +338,7 @@ export function TripMemoryPanel({ trip, userId, isConfigured, compact }: TripMem
               </Pressable>
               {itinerarySlots.map((slot) => (
                 <Pressable
-                  key={`${slot.dayNumber}-${slot.time}-${slot.activity}`}
+                  key={`${slot.dayIndex}-${slot.itemIndex}`}
                   style={styles.slotItem}
                   onPress={() => confirmSlot(slot)}>
                   <Text style={styles.slotItemText}>

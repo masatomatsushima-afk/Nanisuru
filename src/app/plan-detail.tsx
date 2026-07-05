@@ -34,6 +34,7 @@ import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/it
 import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
 import { COMPANION_OPTIONS, isDateRelatedCompanion, PERSONALITY_OPTIONS } from '@/types/plan';
 import { buildTripDayModeParams } from '@/lib/trip-day-mode-nav';
+import { buildTripMemoriesParams } from '@/lib/trip-memories-nav';
 import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { WeatherReplanPreviewSuccess } from '@/types/weather-replan';
 
@@ -442,6 +443,20 @@ export default function PlanDetailScreen() {
               <Text style={styles.dayModeButtonText}>当日モードを開く</Text>
             </Pressable>
           </View>
+          {savedTripId ? (
+            <View style={styles.shareButtonWrap}>
+              <Pressable
+                style={({ pressed }) => [styles.memoryButton, pressed && styles.memoryButtonPressed]}
+                onPress={() =>
+                  router.push({
+                    pathname: '/trip-memories',
+                    params: buildTripMemoriesParams({ savedTripId }),
+                  })
+                }>
+                <Text style={styles.memoryButtonText}>思い出を残す</Text>
+              </Pressable>
+            </View>
+          ) : null}
           <View style={styles.shareButtonWrap}>
             <ShareTripSection
               location={location}
@@ -693,6 +708,24 @@ const styles = StyleSheet.create({
   },
   dayModeButtonText: {
     color: NS.colors.accent,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  memoryButton: {
+    alignSelf: 'stretch',
+    backgroundColor: NS.colors.coralSoft,
+    borderRadius: NS.radius.lg,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    borderWidth: 1,
+    borderColor: NS.colors.coral,
+    alignItems: 'center',
+  },
+  memoryButtonPressed: {
+    opacity: 0.9,
+  },
+  memoryButtonText: {
+    color: NS.colors.coral,
     fontSize: 15,
     fontWeight: '800',
   },

@@ -13,6 +13,7 @@ import { countPlansInFolder, formatPlanUpdatedAt } from '@/lib/my-trips';
 import { savedTripPayloadToPlanParams, savedTripToPlanParams, getTripById } from '@/lib/saved-trips';
 import { getTripFolderById } from '@/lib/trip-folders';
 import { buildTripDayModeFolderParams } from '@/lib/trip-day-mode-nav';
+import { buildTripMemoriesFolderParams } from '@/lib/trip-memories-nav';
 import { formatTripDateRangeLabel } from '@/lib/trip-schedule';
 import type { SavedTrip } from '@/types/trip';
 import type { TripFolder } from '@/types/trip-folder';
@@ -177,6 +178,18 @@ export default function TripFolderDetailScreen() {
                   router.push({
                     pathname: '/trip-day-mode',
                     params: buildTripDayModeFolderParams(folder.id, folder.title),
+                  })
+                }
+                variant="secondary"
+              />
+              <PrimaryButton
+                label="思い出を残す"
+                onPress={() =>
+                  router.push({
+                    pathname: '/trip-memories',
+                    params: buildTripMemoriesFolderParams(folder.id, {
+                      tripTitle: folder.title,
+                    }),
                   })
                 }
                 variant="secondary"
