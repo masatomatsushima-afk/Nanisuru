@@ -578,7 +578,7 @@ export default function TravelSecretaryScreen() {
               </FadeInView>
             ) : !isConfigured ? (
               <View style={styles.noTripCard}>
-                <Text style={styles.noTripText}>Supabase の設定後、旅行フォルダが使えます。</Text>
+                <Text style={styles.noTripText}>ログインすると旅行フォルダが使えます。</Text>
               </View>
             ) : isLoadingFolders ? (
               <View style={styles.loadingBox}>

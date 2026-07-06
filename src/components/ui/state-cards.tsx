@@ -117,5 +117,7 @@ const styles = StyleSheet.create({
   loadingText: {
     color: NS.colors.textSecondary,
     fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 22,
   },
 });

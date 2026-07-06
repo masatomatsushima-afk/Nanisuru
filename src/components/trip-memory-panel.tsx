@@ -197,7 +197,7 @@ export function TripMemoryPanel({ trip, userId, isConfigured, compact }: TripMem
   if (!isConfigured) {
     return (
       <View style={styles.notice}>
-        <Text style={styles.noticeText}>思い出機能を使うには Supabase の設定が必要です</Text>
+        <Text style={styles.noticeText}>思い出を残すにはログインが必要です</Text>
       </View>
     );
   }

@@ -191,6 +191,7 @@ export function PrimaryButton({
         style={[
           buttonStyles.label,
           isSecondary && buttonStyles.labelSecondary,
+          disabled && !isSecondary && buttonStyles.labelDisabled,
         ]}>
         {trimmedLabel}
       </Text>
@@ -219,7 +220,8 @@ const buttonStyles = StyleSheet.create({
     elevation: 0,
   },
   disabled: {
-    opacity: 0.45,
+    opacity: 0.55,
+    backgroundColor: '#E2E8F0',
     shadowOpacity: 0,
     elevation: 0,
   },
@@ -244,6 +246,9 @@ const buttonStyles = StyleSheet.create({
   },
   labelSecondary: {
     color: NS.colors.accent,
+  },
+  labelDisabled: {
+    color: NS.colors.textMuted,
   },
 });
 
@@ -272,6 +277,7 @@ export function SelectChip({
         selected && {
           backgroundColor: palette.bg,
           borderColor: palette.border,
+          borderWidth: 2.5,
         },
         pressed && chipStyles.chipPressed,
       ]}
@@ -310,6 +316,7 @@ const chipStyles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     flex: 1,
+    lineHeight: 20,
   },
   dot: {
     width: 8,

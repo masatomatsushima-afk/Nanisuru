@@ -28,6 +28,7 @@ import {
   type HomePlanMode,
 } from '@/components/home/home-action-config';
 import { VISUAL_PRESETS } from '@/lib/visual-placeholders';
+import { Spacing } from '@/constants/theme';
 import type { PlanCreationType } from '@/types/plan-creation';
 import {
   getTravelUserPreferenceChips,
@@ -44,7 +45,7 @@ const STORY = 64;
 const STORY_INNER = 52;
 const CARD_H = 90;
 const GRID_GAP = 12;
-const BOTTOM_NAV_PAD = 120;
+const BOTTOM_NAV_PAD = 128;
 
 const PAGE_BG = '#FFFCF8';
 /** Bright coastal road / travel — warm, not a dark car shot */
@@ -898,10 +899,11 @@ const styles = StyleSheet.create({
 
   sectionLabel: {
     color: '#64748B',
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: -2,
-    marginBottom: 2,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    marginTop: Spacing.one,
+    marginBottom: Spacing.two,
   },
 
   heroWrap: { alignSelf: 'center', gap: 0 },
@@ -961,19 +963,19 @@ const styles = StyleSheet.create({
     lineHeight: 25,
   },
   heroSub: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: '#475569',
-    lineHeight: 15,
+    lineHeight: 17,
   },
-  heroChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },
+  heroChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   heroChip: {
     borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderWidth: 1,
   },
-  heroChipText: { fontSize: 10, fontWeight: '800' },
+  heroChipText: { fontSize: 11, fontWeight: '800' },
   heroDots: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1035,10 +1037,10 @@ const styles = StyleSheet.create({
   featureCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 10,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 12,
     borderWidth: 1.5,
   },
   featureIconCircle: {
@@ -1053,8 +1055,8 @@ const styles = StyleSheet.create({
   },
   featureIconEmoji: { fontSize: 20 },
   featureCopy: { flex: 1, gap: 2, minWidth: 0, justifyContent: 'center' },
-  featureTitle: { fontSize: 13, fontWeight: '900', letterSpacing: -0.25 },
-  featureSub: { fontSize: 10, fontWeight: '600', color: '#475569', lineHeight: 14 },
+  featureTitle: { fontSize: 14, fontWeight: '900', letterSpacing: -0.25 },
+  featureSub: { fontSize: 11, fontWeight: '600', color: '#475569', lineHeight: 15 },
   featureArrow: {
     width: 26,
     height: 26,

@@ -1429,11 +1429,6 @@ export default function HomeScreen() {
 
   const travelFormReady = isTravelPlanFormValid(travelValidationErrors);
   const travelValidationMessages = getTravelPlanValidationMessages(travelValidationErrors);
-  const travelGenerateDisabledReason = isLoading
-    ? null
-    : !travelFormReady
-      ? '必須項目が未入力です'
-      : null;
 
   const handleTravelGenerate = async () => {
     console.log('[GenerateButton] clicked');
@@ -1644,7 +1639,6 @@ export default function HomeScreen() {
             error={error}
             onGenerate={handleTravelGenerate}
             generateDisabled={!travelFormReady}
-            devDisabledReason={travelGenerateDisabledReason}
             validationMessages={travelValidationMessages}
             onRetry={handleTravelGenerate}
           />

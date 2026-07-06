@@ -55,7 +55,7 @@ export function PlanPublishVisibilitySection({
   if (!isConfigured) {
     return (
       <View style={styles.notice}>
-        <Text style={styles.noticeText}>公開設定には Supabase の設定が必要です</Text>
+        <Text style={styles.noticeText}>公開設定はログイン後に変更できます</Text>
       </View>
     );
   }

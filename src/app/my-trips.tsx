@@ -204,7 +204,7 @@ export default function MyTripsScreen() {
           />
         ) : !isConfigured ? (
           <Text style={styles.warningText}>
-            Supabaseが未設定のため、データを読み込めません。ローカル表示のみ利用できます。
+            クラウドに接続できないため、保存したプランが表示されない場合があります。
           </Text>
         ) : isLoading ? (
           <LoadingState message="マイトリップを読み込み中…" />
@@ -215,7 +215,7 @@ export default function MyTripsScreen() {
             <Text style={styles.emptyIcon}>🗺️</Text>
             <Text style={styles.emptyTitle}>まだ保存された旅行はありません</Text>
             <Text style={styles.emptyText}>
-              旅行プランを作成して保存すると、ここに表示されます
+              旅行プランを作ってみましょう。保存するとここに表示されます。
             </Text>
             <PrimaryButton label="旅行プランを作る" onPress={() => router.push('/(tabs)')} variant="primary" />
           </View>

@@ -65,7 +65,7 @@ export function DiscoverTripMemoriesSection({
       {!isConfigured ? (
         <PremiumCard style={styles.notice}>
           <Text style={styles.noticeText}>
-            思い出機能を使うには Supabase の設定が必要です
+            思い出機能はログイン後にご利用いただけます
           </Text>
         </PremiumCard>
       ) : isLoading ? (

@@ -78,7 +78,7 @@ export function DiscoverLocalSpotsSection({
       {!isConfigured ? (
         <PremiumCard style={styles.notice}>
           <Text style={styles.noticeText}>
-            Supabase に local_hidden_spots.sql を実行すると、穴場投稿が使えます。
+            穴場スポットはログイン後に投稿・閲覧できます
           </Text>
         </PremiumCard>
       ) : isLoading ? (

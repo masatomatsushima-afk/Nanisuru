@@ -200,7 +200,8 @@ export function classifyError(error: unknown): AppError {
 export function formatPlanGenerationDevError(userMessage: string, error: unknown): string {
   if (!__DEV__) return userMessage;
   const detail = extractPlanGenerationErrorDetail(error);
-  return `${userMessage}\n\n開発用エラー:\n${detail}`;
+  console.warn('[PlanGeneration]', detail);
+  return userMessage;
 }
 
 export function getErrorMessage(error: unknown): string {
@@ -209,15 +210,11 @@ export function getErrorMessage(error: unknown): string {
 
 export function getPlanGenerationErrorMessage(error: unknown): string {
   const classified = classifyError(error);
-  const detail = extractPlanGenerationErrorDetail(error);
 
   switch (classified.code) {
     case 'INPUT_INCOMPLETE':
       return classified.message || APP_MESSAGES.inputIncomplete;
     case 'OPENAI_FAILED':
-      if (__DEV__) {
-        return `${APP_MESSAGES.openAiApiFailed}\n\n開発用エラー:\n${detail}`;
-      }
       return APP_MESSAGES.openAiApiFailed;
     case 'PLACES_API_FAILED':
       return APP_MESSAGES.placesApiFailed;

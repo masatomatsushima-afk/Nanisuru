@@ -116,7 +116,7 @@ function SamplePlanPreviewModal({
           </View>
 
           <Text style={styles.modalNote}>
-            これは Nanisuru のサンプルプランです。Supabase には保存されません。
+            これは Nanisuru のサンプルプランです。編集して自分だけのプランとして保存できます。
           </Text>
 
           <PrimaryButton

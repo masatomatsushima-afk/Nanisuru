@@ -187,7 +187,7 @@ export default function SavedTripsScreen() {
         <LoginPrompt />
       ) : !isConfigured ? (
         <Text style={styles.errorText}>
-          Supabaseの設定を確認し、trips テーブルを作成してください。
+          保存したプランを読み込めません。しばらくしてからもう一度お試しください。
         </Text>
       ) : isLoading ? (
         <LoadingState message="保存済みプランを読み込み中..." />

@@ -237,9 +237,9 @@ export function TripMemoriesAlbumView({
   if (!isConfigured) {
     return (
       <View style={styles.notice}>
-        <Text style={styles.noticeTitle}>思い出アルバム（ローカルプレビュー）</Text>
+        <Text style={styles.noticeTitle}>思い出アルバム</Text>
         <Text style={styles.noticeText}>
-          Supabase の設定と trip_memories.sql の実行後、写真・動画・メモを保存できます。
+          保存するにはログインが必要です。ログイン後、写真・動画・メモを残せます。
         </Text>
       </View>
     );

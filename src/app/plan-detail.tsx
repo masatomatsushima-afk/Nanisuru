@@ -405,7 +405,8 @@ export default function PlanDetailScreen() {
 
       {personality && tripDuration ? (
         <View style={styles.actionButtons}>
-          <View style={styles.shareButtonWrap}>
+          <Text style={styles.actionSectionLabel}>プランを保存</Text>
+          <View style={styles.actionPrimaryGroup}>
             <SaveTripButton
               location={location}
               budget={budget}
@@ -427,14 +428,14 @@ export default function PlanDetailScreen() {
               onSaved={handleTripSaved}
             />
           </View>
-          <View style={styles.shareButtonWrap}>
+
+          <Text style={styles.actionSectionLabel}>旅行中のサポート</Text>
+          <View style={styles.actionSecondaryGroup}>
             <AddTripSecretaryFolderButton
               variant="plan-payload"
               payload={planPayload}
               savedTripId={savedTripId}
             />
-          </View>
-          <View style={styles.shareButtonWrap}>
             <Pressable
               style={({ pressed }) => [styles.dayModeButton, pressed && styles.dayModeButtonPressed]}
               onPress={() =>
@@ -446,43 +447,59 @@ export default function PlanDetailScreen() {
               <Text style={styles.dayModeButtonText}>当日モードを開く</Text>
             </Pressable>
           </View>
+
           {savedTripId ? (
-            <View style={styles.shareButtonWrap}>
-              <Pressable
-                style={({ pressed }) => [styles.memoryButton, pressed && styles.memoryButtonPressed]}
-                onPress={() =>
-                  router.push({
-                    pathname: '/trip-memories',
-                    params: buildTripMemoriesParams({ savedTripId }),
-                  })
-                }>
-                <Text style={styles.memoryButtonText}>思い出を残す</Text>
-              </Pressable>
-            </View>
-          ) : null}
-          {savedTripId ? (
-            <View style={styles.publishSectionWrap}>
-              <PlanPublishVisibilitySection
-                savedTripId={savedTripId}
-                isConfigured={isConfigured}
+            <>
+              <Text style={styles.actionSectionLabel}>思い出・共有</Text>
+              <View style={styles.actionSecondaryGroup}>
+                <Pressable
+                  style={({ pressed }) => [styles.memoryButton, pressed && styles.memoryButtonPressed]}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/trip-memories',
+                      params: buildTripMemoriesParams({ savedTripId }),
+                    })
+                  }>
+                  <Text style={styles.memoryButtonText}>思い出を残す</Text>
+                </Pressable>
+                <ShareTripSection
+                  location={location}
+                  budget={budget}
+                  currency={currency}
+                  people={people}
+                  mood={mood}
+                  companion={companion}
+                  personality={personality}
+                  tripDuration={tripDuration}
+                  days={days}
+                  items={localItems}
+                  details={planDetails}
+                />
+              </View>
+              <View style={styles.publishSectionWrap}>
+                <PlanPublishVisibilitySection
+                  savedTripId={savedTripId}
+                  isConfigured={isConfigured}
+                />
+              </View>
+            </>
+          ) : (
+            <View style={styles.actionSecondaryGroup}>
+              <ShareTripSection
+                location={location}
+                budget={budget}
+                currency={currency}
+                people={people}
+                mood={mood}
+                companion={companion}
+                personality={personality}
+                tripDuration={tripDuration}
+                days={days}
+                items={localItems}
+                details={planDetails}
               />
             </View>
-          ) : null}
-          <View style={styles.shareButtonWrap}>
-            <ShareTripSection
-              location={location}
-              budget={budget}
-              currency={currency}
-              people={people}
-              mood={mood}
-              companion={companion}
-              personality={personality}
-              tripDuration={tripDuration}
-              days={days}
-              items={localItems}
-              details={planDetails}
-            />
-          </View>
+          )}
         </View>
       ) : null}
 
@@ -697,16 +714,27 @@ const styles = StyleSheet.create({
     marginTop: Spacing.five,
   },
   actionButtons: {
-    gap: Spacing.three,
-    marginTop: Spacing.four,
+    gap: Spacing.four,
+    marginTop: Spacing.five,
+    paddingTop: Spacing.four,
+    borderTopWidth: 1,
+    borderTopColor: NS.colors.border,
   },
-  shareButtonWrap: {
-    marginTop: Spacing.four,
-    marginBottom: Spacing.two,
+  actionSectionLabel: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  actionPrimaryGroup: {
+    gap: Spacing.two,
+  },
+  actionSecondaryGroup: {
+    gap: Spacing.two,
   },
   publishSectionWrap: {
-    marginTop: Spacing.two,
-    marginBottom: Spacing.two,
+    marginTop: Spacing.one,
   },
   dayModeButton: {
     alignSelf: 'stretch',

@@ -79,7 +79,6 @@ type TravelPlanSheetFormProps = {
   error: string | null;
   onGenerate: () => void;
   generateDisabled: boolean;
-  devDisabledReason?: string | null;
   validationMessages?: string[];
   onRetry?: () => void;
 };
@@ -137,7 +136,6 @@ export function TravelPlanSheetForm({
   error,
   onGenerate,
   generateDisabled,
-  devDisabledReason,
   validationMessages = [],
   onRetry,
   customPreferences,
@@ -157,8 +155,6 @@ export function TravelPlanSheetForm({
 
   const isButtonDisabled = generateDisabled || isLoading;
   const showValidationSummary = showValidation && !isLoading && validationMessages.length > 0;
-  const showDevDisabledHint =
-    __DEV__ && isButtonDisabled && !isLoading && Boolean(devDisabledReason);
 
   useEffect(() => {
     if (!__DEV__) return;
@@ -174,7 +170,6 @@ export function TravelPlanSheetForm({
         peopleCount: people,
         companionType: companion,
       },
-      devDisabledReason,
     });
   }, [
     isButtonDisabled,
@@ -186,7 +181,6 @@ export function TravelPlanSheetForm({
     budget,
     people,
     companion,
-    devDisabledReason,
   ]);
 
   const handleGeneratePress = () => {
@@ -439,12 +433,6 @@ export function TravelPlanSheetForm({
         />
       </View>
 
-      {showDevDisabledHint ? (
-        <Text style={styles.devDisabledHint}>
-          {`開発用:\n理由: ${devDisabledReason}`}
-        </Text>
-      ) : null}
-
       {showValidationSummary ? (
         <View style={styles.validationSummary}>
           <Text style={styles.validationSummaryTitle}>未入力の項目があります</Text>
@@ -467,7 +455,7 @@ export function TravelPlanSheetForm({
 
 const styles = StyleSheet.create({
   wrap: {
-    gap: Spacing.three,
+    gap: NS.layout.sectionGap,
     paddingBottom: 48,
   },
   scheduleSection: {
@@ -533,13 +521,15 @@ const styles = StyleSheet.create({
     paddingTop: 14,
   },
   inputError: {
-    borderColor: '#EF4444',
+    borderColor: NS.colors.danger,
+    borderWidth: 1.5,
   },
   fieldError: {
-    color: '#DC2626',
+    color: NS.colors.danger,
     fontSize: 12,
     fontWeight: '600',
-    marginTop: -2,
+    marginTop: Spacing.one,
+    lineHeight: 18,
   },
   row: {
     flexDirection: 'row',
@@ -583,8 +573,9 @@ const styles = StyleSheet.create({
     backgroundColor: NS.colors.bgCard,
   },
   currencyChipSelected: {
-    borderColor: NS.colors.orange,
-    backgroundColor: NS.colors.orangeSoft,
+    borderColor: NS.colors.coral,
+    borderWidth: 2,
+    backgroundColor: NS.colors.coralSoft,
   },
   currencyCode: {
     color: NS.colors.textSecondary,
@@ -592,45 +583,39 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   currencyCodeSelected: {
-    color: NS.colors.orange,
+    color: NS.colors.coral,
   },
   chipGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.one + 2,
+    gap: NS.layout.chipGap,
   },
   generateWrap: {
     marginTop: Spacing.two,
   },
   validationSummary: {
-    gap: Spacing.one,
-    backgroundColor: '#FEF2F2',
+    gap: Spacing.one + 2,
+    backgroundColor: NS.colors.dangerSoft,
     borderRadius: NS.radius.md,
-    padding: Spacing.two + 2,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.2)',
+    padding: Spacing.three,
   },
   validationSummaryTitle: {
-    color: '#B91C1C',
+    color: NS.colors.danger,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   validationSummaryItem: {
-    color: '#DC2626',
-    fontSize: 12,
-    lineHeight: 18,
+    color: NS.colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
     fontWeight: '600',
-  },
-  devDisabledHint: {
-    color: '#B45309',
-    fontSize: 12,
-    lineHeight: 18,
-    textAlign: 'center',
-    backgroundColor: '#FEF3C7',
-    borderRadius: NS.radius.md,
-    padding: Spacing.two,
   },
   helperText: {
     color: NS.colors.textMuted,
-    fontSize: 12,
+    fontSize: 13,
     textAlign: 'center',
+    lineHeight: 20,
   },
 });

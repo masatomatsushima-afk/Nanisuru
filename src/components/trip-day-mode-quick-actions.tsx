@@ -131,13 +131,16 @@ const styles = StyleSheet.create({
     backgroundColor: NS.colors.bgCard,
     borderRadius: NS.radius.lg,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingVertical: Spacing.two + 2,
     borderWidth: 1,
     borderColor: NS.colors.border,
+    minWidth: '47%',
+    flexGrow: 1,
   },
   buttonPrimary: {
-    backgroundColor: NS.colors.accentSoft,
-    borderColor: NS.colors.accent,
+    backgroundColor: NS.colors.coralSoft,
+    borderColor: NS.colors.coral,
+    borderWidth: 1.5,
   },
   buttonDanger: {
     backgroundColor: 'rgba(248, 113, 113, 0.12)',
@@ -155,7 +158,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   buttonLabelPrimary: {
-    color: NS.colors.accent,
+    color: NS.colors.coral,
   },
   buttonLabelDanger: {
     color: NS.colors.danger,

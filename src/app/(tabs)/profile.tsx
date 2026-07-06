@@ -462,7 +462,7 @@ export default function ProfileScreen() {
 
         {!isConfigured ? (
           <View style={styles.notice}>
-            <Text style={styles.noticeText}>Supabaseの設定を確認してください</Text>
+            <Text style={styles.noticeText}>データの同期に接続できません。しばらくしてからお試しください。</Text>
           </View>
         ) : null}
       </ScrollView>
