@@ -11,6 +11,7 @@ import { WeatherReplanPreviewSheet } from '@/components/weather-replan-preview-s
 import { LoadingState } from '@/components/ui/state-cards';
 import { ScreenBackground } from '@/components/ui/screen-background';
 import { NS } from '@/constants/nanisuru-ui';
+import { getStackScreenPaddingBottom } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
 import { parseCurrencyCode } from '@/constants/currency';
 import { useAuth } from '@/contexts/auth-context';
@@ -442,7 +443,7 @@ export default function TripDayModeScreen() {
           styles.content,
           {
             paddingTop: insets.top + Spacing.three,
-            paddingBottom: insets.bottom + Spacing.six,
+            paddingBottom: getStackScreenPaddingBottom(insets.bottom),
           },
         ]}
         showsVerticalScrollIndicator={false}>

@@ -288,8 +288,8 @@ export default function PublicPlanDetailScreen() {
 
       {plan.tags.length > 0 ? (
         <View style={styles.tagsSection}>
-          {plan.tags.map((tag) => (
-            <View key={tag} style={styles.hashTag}>
+          {plan.tags.map((tag, tagIndex) => (
+            <View key={`${plan.id}-tag-${tag}-${tagIndex}`} style={styles.hashTag}>
               <Text style={styles.hashTagText}>#{tag}</Text>
             </View>
           ))}

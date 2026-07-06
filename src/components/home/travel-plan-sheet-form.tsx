@@ -13,6 +13,7 @@ import {
   type CurrencyCode,
 } from '@/constants/currency';
 import { NS } from '@/constants/nanisuru-ui';
+import { MIN_TOUCH_TARGET } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
 import {
   normalizeBudgetInput,
@@ -571,6 +572,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.two + 2,
     paddingVertical: Spacing.one + 3,
     backgroundColor: NS.colors.bgCard,
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
   },
   currencyChipSelected: {
     borderColor: NS.colors.coral,
@@ -592,6 +595,7 @@ const styles = StyleSheet.create({
   },
   generateWrap: {
     marginTop: Spacing.two,
+    marginBottom: Spacing.two,
   },
   validationSummary: {
     gap: Spacing.one + 2,

@@ -13,9 +13,16 @@ type WeatherReplanActionsProps = {
   payload: SavedTripPayload;
   onApply: (nextPayload: SavedTripPayload, preview: WeatherReplanPreviewSuccess) => Promise<void>;
   compact?: boolean;
+  /** inline = note + button; weather-note = note only; actions = button in action group */
+  placement?: 'inline' | 'weather-note' | 'actions';
 };
 
-export function WeatherReplanActions({ payload, onApply, compact = false }: WeatherReplanActionsProps) {
+export function WeatherReplanActions({
+  payload,
+  onApply,
+  compact = false,
+  placement = 'inline',
+}: WeatherReplanActionsProps) {
   const [showSheet, setShowSheet] = useState(false);
   const tripDate = payload.details.tripDate;
   const eligibility = useMemo(
@@ -28,8 +35,39 @@ export function WeatherReplanActions({ payload, onApply, compact = false }: Weat
   }
 
   if (eligibility.status === 'future') {
+    if (placement === 'actions') return null;
     return (
       <Text style={[styles.futureNote, compact && styles.futureNoteCompact]}>{eligibility.message}</Text>
+    );
+  }
+
+  const button = (
+    <Pressable
+      style={[styles.button, compact && styles.buttonCompact, placement === 'actions' && styles.buttonAction]}
+      onPress={() => setShowSheet(true)}>
+      <Text style={styles.buttonText}>天気に合わせて再調整</Text>
+    </Pressable>
+  );
+
+  if (placement === 'weather-note') {
+    return eligibility.highlight ? (
+      <Text style={[styles.highlightNote, compact && styles.highlightNoteCompact]}>
+        季節の傾向で作成したプランです。出発が近づいたので、最新の天気に合わせて調整できます。
+      </Text>
+    ) : null;
+  }
+
+  if (placement === 'actions') {
+    return (
+      <>
+        {button}
+        <WeatherReplanPreviewSheet
+          visible={showSheet}
+          payload={payload}
+          onClose={() => setShowSheet(false)}
+          onApply={onApply}
+        />
+      </>
     );
   }
 
@@ -41,11 +79,7 @@ export function WeatherReplanActions({ payload, onApply, compact = false }: Weat
             季節の傾向で作成したプランです。出発が近づいたので、最新の天気に合わせて調整できます。
           </Text>
         ) : null}
-        <Pressable
-          style={[styles.button, compact && styles.buttonCompact]}
-          onPress={() => setShowSheet(true)}>
-          <Text style={styles.buttonText}>天気に合わせて再調整</Text>
-        </Pressable>
+        {button}
       </View>
 
       <WeatherReplanPreviewSheet
@@ -71,6 +105,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
+  highlightNoteCompact: {
+    marginTop: Spacing.one,
+  },
   futureNote: {
     color: NS.colors.textMuted,
     fontSize: 12,
@@ -94,6 +131,10 @@ const styles = StyleSheet.create({
   buttonCompact: {
     paddingVertical: Spacing.one + 2,
     paddingHorizontal: Spacing.three,
+  },
+  buttonAction: {
+    minHeight: 48,
+    justifyContent: 'center',
   },
   buttonText: {
     color: NS.colors.coral,

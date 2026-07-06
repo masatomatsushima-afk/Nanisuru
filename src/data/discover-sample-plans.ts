@@ -78,7 +78,7 @@ function buildSamplePayload(input: {
 
 export const DISCOVER_SAMPLE_PLANS: DiscoverSamplePlan[] = [
   {
-    id: 'osaka-night-date',
+    id: 'discover-sample-1',
     title: '大阪・夜デートプラン',
     description:
       '道頓堀のネオンから梅田スカイビルまで。夜景とグルメを楽しむ、大人の夜デートコース。',
@@ -110,7 +110,7 @@ export const DISCOVER_SAMPLE_PLANS: DiscoverSamplePlan[] = [
     }),
   },
   {
-    id: 'melbourne-cafe-hop',
+    id: 'discover-sample-2',
     title: 'メルボルン・カフェ巡り',
     description:
       'ランewaysのストリートアートと specialty coffee。のんびり歩きながら味わう半日プラン。',
@@ -142,7 +142,7 @@ export const DISCOVER_SAMPLE_PLANS: DiscoverSamplePlan[] = [
     }),
   },
   {
-    id: 'tokyo-rainy-date',
+    id: 'discover-sample-3',
     title: '東京・雨の日デート',
     description:
       '雨でも楽しめる屋内デート。美術館、カフェ、ショッピングを組み合わせた安心コース。',
@@ -175,7 +175,7 @@ export const DISCOVER_SAMPLE_PLANS: DiscoverSamplePlan[] = [
     }),
   },
   {
-    id: 'seoul-gourmet-trip',
+    id: 'discover-sample-4',
     title: 'ソウル・グルメ旅',
     description:
       '広蔵市場からカロフルな弘大まで。K-フードを堪能する1日グルメ旅。',
@@ -207,7 +207,7 @@ export const DISCOVER_SAMPLE_PLANS: DiscoverSamplePlan[] = [
     }),
   },
   {
-    id: 'kyoto-slow-walk',
+    id: 'discover-sample-5',
     title: '京都・ゆっくり散歩',
     description:
       '哲学の道から祇園まで。古都の風情を感じる、のんびり半日散歩プラン。',

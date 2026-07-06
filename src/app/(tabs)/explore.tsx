@@ -203,7 +203,7 @@ export default function DiscoverScreen() {
                 <View style={styles.feedGrid}>
                   {section.plans.map((plan, index) => (
                     <DiscoverCompactPlanCard
-                      key={plan.id}
+                      key={`${section.id}-${plan.id}-${index}`}
                       plan={plan}
                       variant="grid"
                       colorIndex={index}
@@ -233,7 +233,7 @@ export default function DiscoverScreen() {
                   <View style={styles.feedGrid}>
                     {displayedPlans.map((plan, index) => (
                       <DiscoverCompactPlanCard
-                        key={plan.id}
+                        key={`search-${plan.id}-${index}`}
                         plan={plan}
                         variant="grid"
                         colorIndex={index}

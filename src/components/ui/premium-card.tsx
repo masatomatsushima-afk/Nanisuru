@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
 import { NS, getChipPalette, gradientStyle } from '@/constants/nanisuru-ui';
+import { MIN_TOUCH_TARGET } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
 
 type PremiumCardProps = {
@@ -302,6 +303,7 @@ const chipStyles = StyleSheet.create({
     borderRadius: NS.radius.pill,
     paddingHorizontal: Spacing.three,
     paddingVertical: 14,
+    minHeight: MIN_TOUCH_TARGET,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',

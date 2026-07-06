@@ -84,8 +84,8 @@ function SamplePlanPreviewModal({
           <Text style={styles.modalDescription}>{sample.description}</Text>
 
           <View style={styles.modalTagRow}>
-            {sample.tags.map((tag) => (
-              <View key={tag} style={styles.tag}>
+            {sample.tags.map((tag, tagIndex) => (
+              <View key={`${sample.id}-tag-${tag}-${tagIndex}`} style={styles.tag}>
                 <Text style={styles.tagText}>#{tag}</Text>
               </View>
             ))}
@@ -94,8 +94,8 @@ function SamplePlanPreviewModal({
           {sample.payload.details.highlights.length > 0 ? (
             <View style={styles.modalSection}>
               <Text style={styles.modalSectionTitle}>✨ ハイライト</Text>
-              {sample.payload.details.highlights.map((item) => (
-                <Text key={item} style={styles.modalBullet}>
+              {sample.payload.details.highlights.map((item, highlightIndex) => (
+                <Text key={`${sample.id}-highlight-${highlightIndex}`} style={styles.modalBullet}>
                   · {item}
                 </Text>
               ))}
@@ -104,8 +104,8 @@ function SamplePlanPreviewModal({
 
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>📅 行程イメージ</Text>
-            {sample.payload.days[0]?.items.map((item) => (
-              <View key={`${item.time}-${item.activity}`} style={styles.timelineRow}>
+            {sample.payload.days[0]?.items.map((item, timelineIndex) => (
+              <View key={`${sample.id}-timeline-${timelineIndex}`} style={styles.timelineRow}>
                 <Text style={styles.timelineTime}>{item.time}</Text>
                 <View style={styles.timelineBody}>
                   <Text style={styles.timelineActivity}>{item.activity}</Text>
@@ -196,8 +196,8 @@ function DiscoverSamplePlanCard({
           </View>
 
           <View style={styles.tagRow}>
-            {sample.tags.map((tag) => (
-              <View key={tag} style={styles.tag}>
+            {sample.tags.map((tag, tagIndex) => (
+              <View key={`${sample.id}-tag-${tag}-${tagIndex}`} style={styles.tag}>
                 <Text style={styles.tagText}>#{tag}</Text>
               </View>
             ))}

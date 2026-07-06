@@ -171,9 +171,9 @@ export default function ProfileScreen() {
           />
         ) : (
           <View style={styles.grid}>
-            {plans.map((plan) => (
+            {plans.map((plan, index) => (
               <ProfilePlanGridCard
-                key={plan.id}
+                key={plan.id ?? `profile-plan-${index}`}
                 plan={plan}
                 onPress={() => router.push(`/public-plan/${plan.id}`)}
               />
@@ -191,9 +191,9 @@ export default function ProfileScreen() {
           />
         ) : (
           <View style={styles.grid}>
-            {memories.map((memory) => (
+            {memories.map((memory, index) => (
               <ProfileMemoryGridCard
-                key={memory.id}
+                key={memory.id ?? `profile-memory-${index}`}
                 memory={memory}
                 onPress={() => router.push(`/memory/${memory.id}`)}
               />

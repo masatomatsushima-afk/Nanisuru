@@ -19,6 +19,7 @@ import { PrimaryButton } from '@/components/ui/premium-card';
 import { ScreenBackground } from '@/components/ui/screen-background';
 import { LoadingState } from '@/components/ui/state-cards';
 import { NS } from '@/constants/nanisuru-ui';
+import { getChatKeyboardOffset, MIN_TOUCH_TARGET } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { APP_MESSAGES } from '@/lib/app-errors';
@@ -67,14 +68,22 @@ function formatMessageTime(iso: string): string {
   return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
 }
 
-function ChatHeader({ folder, onBack }: { folder: TripFolder; onBack: () => void }) {
+function ChatHeader({
+  folder,
+  onBack,
+  topInset,
+}: {
+  folder: TripFolder;
+  onBack: () => void;
+  topInset: number;
+}) {
   const dateLabel =
     formatTripDateRangeLabel(folder.departureDate, folder.returnDate) ??
     folder.durationLabel ??
     folder.destination;
 
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { paddingTop: topInset + Spacing.two }]}>
       <Pressable style={styles.backButton} onPress={onBack} hitSlop={8}>
         <Text style={styles.backButtonText}>←</Text>
       </Pressable>
@@ -493,9 +502,9 @@ export default function TripAssistantScreen() {
     <ScreenBackground>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
-        <ChatHeader folder={folder} onBack={() => router.back()} />
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={getChatKeyboardOffset(insets.top)}>
+        <ChatHeader folder={folder} onBack={() => router.back()} topInset={insets.top} />
 
         <ScrollView
           ref={scrollRef}
@@ -599,9 +608,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.9)',
   },
   backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: NS.colors.bgElevated,
     borderWidth: 1,
     borderColor: NS.colors.border,
@@ -686,7 +695,9 @@ const styles = StyleSheet.create({
   },
   secondaryAction: {
     alignItems: 'center',
-    paddingVertical: Spacing.one,
+    paddingVertical: Spacing.two,
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
   },
   secondaryActionPressed: { opacity: 0.85 },
   secondaryActionText: {
@@ -730,6 +741,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(251, 113, 133, 0.35)',
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
   },
   quickChipDisabled: { opacity: 0.5 },
   quickChipPressed: { opacity: 0.88 },
@@ -742,7 +755,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    minHeight: 44,
+    minHeight: MIN_TOUCH_TARGET,
     maxHeight: 120,
     backgroundColor: NS.colors.bgInput,
     borderRadius: NS.radius.lg,
@@ -760,7 +773,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
     minWidth: 64,
+    minHeight: MIN_TOUCH_TARGET,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   sendButtonDisabled: { opacity: 0.45 },
   sendButtonPressed: { opacity: 0.88 },

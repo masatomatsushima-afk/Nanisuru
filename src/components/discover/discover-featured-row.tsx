@@ -37,7 +37,7 @@ export function DiscoverFeaturedRow({ trending }: DiscoverFeaturedRowProps) {
         contentContainerStyle={styles.scroll}>
         {trending.slice(0, 3).map((item, index) => (
           <DiscoverCompactPlanCard
-            key={item.plan.id}
+            key={`featured-${item.plan.id}-${index}`}
             plan={item.plan}
             variant="featured"
             colorIndex={index}

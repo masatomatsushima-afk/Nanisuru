@@ -39,8 +39,8 @@ export function DiscoverTrendingSection({
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}>
-        {trending.map((item) => (
-          <View key={item.plan.id} style={styles.trendingCardWrap}>
+        {trending.map((item, index) => (
+          <View key={`trending-${item.plan.id}-${index}`} style={styles.trendingCardWrap}>
             <PublicPlanCard
               plan={item.plan}
               index={item.rank}

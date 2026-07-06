@@ -24,6 +24,7 @@ import { ItineraryDaysView } from '@/components/itinerary-days-view';
 import { ItineraryItemEditSheet } from '@/components/itinerary-item-edit-sheet';
 import { CurrentLocationButton } from '@/components/current-location-button';
 import { Spacing } from '@/constants/theme';
+import { getStackScreenPaddingBottom, MIN_TOUCH_TARGET } from '@/constants/mobile-layout';
 import { NS } from '@/constants/nanisuru-ui';
 import { useAuth } from '@/contexts/auth-context';
 import { parseCurrencyCode } from '@/constants/currency';
@@ -319,7 +320,7 @@ export default function PlanDetailScreen() {
         styles.content,
         {
           paddingTop: insets.top + Spacing.three,
-          paddingBottom: insets.bottom + Spacing.five,
+          paddingBottom: getStackScreenPaddingBottom(insets.bottom),
         },
       ]}
       showsVerticalScrollIndicator={false}>
@@ -367,7 +368,11 @@ export default function PlanDetailScreen() {
       {planDetails.weather ? (
         <View>
           <WeatherSection weather={planDetails.weather} />
-          <WeatherReplanActions payload={planPayload} onApply={handleApplyWeatherReplan} />
+          <WeatherReplanActions
+            payload={planPayload}
+            onApply={handleApplyWeatherReplan}
+            placement="weather-note"
+          />
         </View>
       ) : null}
 
@@ -428,7 +433,7 @@ export default function PlanDetailScreen() {
 
       {personality && tripDuration ? (
         <View style={styles.actionButtons}>
-          <Text style={styles.actionSectionLabel}>プランを保存</Text>
+          <Text style={styles.actionSectionLabel}>メイン</Text>
           <View style={styles.actionPrimaryGroup}>
             <SaveTripButton
               location={location}
@@ -450,14 +455,20 @@ export default function PlanDetailScreen() {
               variant="primary"
               onSaved={handleTripSaved}
             />
-          </View>
-
-          <Text style={styles.actionSectionLabel}>旅行中のサポート</Text>
-          <View style={styles.actionSecondaryGroup}>
             <AddTripSecretaryFolderButton
               variant="plan-payload"
               payload={planPayload}
               savedTripId={savedTripId}
+              label="旅行秘書を開く"
+            />
+          </View>
+
+          <Text style={styles.actionSectionLabel}>その他の操作</Text>
+          <View style={styles.actionSecondaryGroup}>
+            <WeatherReplanActions
+              payload={planPayload}
+              onApply={handleApplyWeatherReplan}
+              placement="actions"
             />
             <Pressable
               style={({ pressed }) => [styles.dayModeButton, pressed && styles.dayModeButtonPressed]}
@@ -469,12 +480,8 @@ export default function PlanDetailScreen() {
               }>
               <Text style={styles.dayModeButtonText}>当日モードを開く</Text>
             </Pressable>
-          </View>
-
-          {savedTripId ? (
-            <>
-              <Text style={styles.actionSectionLabel}>思い出・共有</Text>
-              <View style={styles.actionSecondaryGroup}>
+            {savedTripId ? (
+              <>
                 <Pressable
                   style={({ pressed }) => [styles.memoryButton, pressed && styles.memoryButtonPressed]}
                   onPress={() =>
@@ -485,28 +492,17 @@ export default function PlanDetailScreen() {
                   }>
                   <Text style={styles.memoryButtonText}>思い出を残す</Text>
                 </Pressable>
-                <ShareTripSection
-                  location={location}
-                  budget={budget}
-                  currency={currency}
-                  people={people}
-                  mood={mood}
-                  companion={companion}
-                  personality={personality}
-                  tripDuration={tripDuration}
-                  days={days}
-                  items={localItems}
-                  details={planDetails}
-                />
-              </View>
-              <View style={styles.publishSectionWrap}>
-                <PlanPublishVisibilitySection
-                  savedTripId={savedTripId}
-                  isConfigured={isConfigured}
-                />
-              </View>
-            </>
-          ) : (
+                <View style={styles.publishSectionWrap}>
+                  <PlanPublishVisibilitySection
+                    savedTripId={savedTripId}
+                    isConfigured={isConfigured}
+                  />
+                </View>
+              </>
+            ) : null}
+          </View>
+
+          {!savedTripId ? (
             <View style={styles.actionSecondaryGroup}>
               <ShareTripSection
                 location={location}
@@ -522,6 +518,20 @@ export default function PlanDetailScreen() {
                 details={planDetails}
               />
             </View>
+          ) : (
+            <ShareTripSection
+              location={location}
+              budget={budget}
+              currency={currency}
+              people={people}
+              mood={mood}
+              companion={companion}
+              personality={personality}
+              tripDuration={tripDuration}
+              days={days}
+              items={localItems}
+              details={planDetails}
+            />
           )}
         </View>
       ) : null}
@@ -768,6 +778,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: NS.colors.accent,
     alignItems: 'center',
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
   },
   dayModeButtonPressed: {
     opacity: 0.9,
@@ -786,6 +798,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: NS.colors.coral,
     alignItems: 'center',
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
   },
   memoryButtonPressed: {
     opacity: 0.9,

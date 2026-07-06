@@ -110,6 +110,15 @@ function sectionPriority(sectionId: string, prefs: TravelUserPreferences): numbe
   return score;
 }
 
+function uniquePlansById(plans: PublicPlan[]): PublicPlan[] {
+  const seen = new Set<string>();
+  return plans.filter((plan) => {
+    if (seen.has(plan.id)) return false;
+    seen.add(plan.id);
+    return true;
+  });
+}
+
 export function personalizeDiscoverFeedSections(
   sections: DiscoverFeedSection[],
   prefs: TravelUserPreferences | null,
@@ -131,7 +140,7 @@ export function personalizeDiscoverFeedSections(
 
   if (!personalizedTitle) return sorted;
 
-  const topPlans = sorted.flatMap((section) => section.plans).slice(0, 4);
+  const topPlans = uniquePlansById(sorted.flatMap((section) => section.plans)).slice(0, 4);
   if (!topPlans.length) return sorted;
 
   return [

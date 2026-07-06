@@ -176,7 +176,7 @@ function AiSearchModal({
                   <Text style={styles.modalResultsTitle}>AIのおすすめ</Text>
                   {result.items.map((item, index) => (
                     <RecommendedPlanCard
-                      key={item.plan.id}
+                      key={`ai-${item.plan.id}-${index}`}
                       item={item}
                       index={index}
                       currentUserId={currentUserId}
@@ -281,7 +281,7 @@ export function DiscoverRecommendationsSection({
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.categoryScroll}>
                 {category.items.map((item, index) => (
-                  <View key={item.plan.id} style={styles.horizontalCardWrap}>
+                  <View key={`${category.id}-${item.plan.id}-${index}`} style={styles.horizontalCardWrap}>
                     <RecommendedPlanCard
                       item={item}
                       index={index}

@@ -40,7 +40,7 @@ export function DiscoverCategoryChips({ activeId, onChange }: DiscoverCategoryCh
         const palette = getChipPalette(index);
         return (
           <Pressable
-            key={item.id}
+            key={`${item.label}-${index}`}
             style={({ pressed }) => [
               styles.chip,
               active

@@ -28,6 +28,7 @@ import {
   type HomePlanMode,
 } from '@/components/home/home-action-config';
 import { VISUAL_PRESETS } from '@/lib/visual-placeholders';
+import { getSheetScrollPaddingBottom } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
 import type { PlanCreationType } from '@/types/plan-creation';
 import {
@@ -162,7 +163,7 @@ const CATEGORIES: HomeCategoryConfig[] = [
 
 const DISCOVER = [
   {
-    id: '1',
+    id: 'home-discover-sample-1',
     badge: '夜デートに♡',
     badgeBg: 'rgba(251,113,133,0.94)',
     title: '夜カフェから始まる梅田デート',
@@ -177,7 +178,7 @@ const DISCOVER = [
     fallback: '#E0E7FF',
   },
   {
-    id: '2',
+    id: 'home-discover-sample-2',
     badge: '雨の日も楽しい',
     badgeBg: 'rgba(56,189,248,0.94)',
     title: '雨の日の神戸ゆる旅',
@@ -192,7 +193,7 @@ const DISCOVER = [
     fallback: '#DBEAFE',
   },
   {
-    id: '3',
+    id: 'home-discover-sample-3',
     badge: 'ローカルおすすめ',
     badgeBg: 'rgba(52,211,153,0.94)',
     title: 'ローカルが教える浅草の穴場3選',
@@ -410,7 +411,8 @@ function PlanFormSheet({
           accessibilityLabel="閉じる"
         />
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
           style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHeader}>
@@ -421,7 +423,7 @@ function PlanFormSheet({
             <Pressable
               style={[styles.closeBtn, preventClose && styles.closeBtnDisabled]}
               onPress={handleCloseRequest}
-              disabled={false}>
+              hitSlop={8}>
               <Text style={[styles.closeBtnText, preventClose && styles.closeBtnTextMuted]}>
                 閉じる
               </Text>
@@ -430,9 +432,14 @@ function PlanFormSheet({
           <ScrollView
             ref={formScrollRef}
             style={styles.sheetScroll}
-            contentContainerStyle={styles.sheetScrollContent}
+            contentContainerStyle={[
+              styles.sheetScrollContent,
+              { paddingBottom: getSheetScrollPaddingBottom(insets.bottom) },
+            ]}
             keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}>
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled>
             {children}
           </ScrollView>
         </KeyboardAvoidingView>
@@ -746,11 +753,11 @@ export function ReferenceHomeScreen({
                 : 'これまでの保存や閲覧から、あなたの「好き」をまとめました'}
             </Text>
             <View style={styles.prefChips}>
-              {prefChips.map((label) => {
+              {prefChips.map((label, chipIndex) => {
                 const preset = PREF_CHIPS.find((c) => c.label === label);
                 return (
                 <View
-                  key={label}
+                  key={`pref-${label}-${chipIndex}`}
                   style={[
                     styles.prefChip,
                     {
@@ -793,6 +800,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: PAD,
     gap: 12,
     backgroundColor: PAGE_BG,
+    width: '100%',
+    maxWidth: MAX_W,
+    alignSelf: 'center',
   },
   coverFallbackEmoji: { fontSize: 28, opacity: 0.85 },
 
@@ -829,7 +839,9 @@ const styles = StyleSheet.create({
   sheetSubtitle: { fontSize: 12, fontWeight: '600', color: '#64748B' },
   closeBtn: {
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    minHeight: 44,
+    justifyContent: 'center',
     borderRadius: 999,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
@@ -839,7 +851,14 @@ const styles = StyleSheet.create({
   closeBtnDisabled: { opacity: 0.85 },
   closeBtnTextMuted: { color: '#94A3B8' },
   sheetScroll: { flexGrow: 1, flexShrink: 1 },
-  sheetScrollContent: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 48 },
+  sheetScrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    flexGrow: 1,
+    width: '100%',
+    maxWidth: MAX_W,
+    alignSelf: 'center',
+  },
 
   header: {
     flexDirection: 'row',

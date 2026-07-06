@@ -130,7 +130,7 @@ export function DiscoverRankingSection({
         <View style={styles.list}>
           {ranked.slice(0, 20).map((item, index) => (
             <PublicPlanCard
-              key={item.plan.id}
+              key={`ranking-${item.plan.id}-${index}`}
               plan={item.plan}
               index={index}
               currentUserId={currentUserId}

@@ -9,6 +9,7 @@ import { FadeInView } from '@/components/ui/fade-in-view';
 import { ErrorStateCard, LoadingState } from '@/components/ui/state-cards';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
+import { getStackScreenPaddingBottom } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import {
@@ -185,7 +186,7 @@ export default function MyTripsScreen() {
           styles.content,
           {
             paddingTop: insets.top + Spacing.three,
-            paddingBottom: insets.bottom + Spacing.six,
+            paddingBottom: getStackScreenPaddingBottom(insets.bottom),
           },
         ]}
         showsVerticalScrollIndicator={false}>

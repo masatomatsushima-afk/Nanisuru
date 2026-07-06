@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { FadeInView } from '@/components/ui/fade-in-view';
@@ -18,36 +18,45 @@ export function AuthLayout({ eyebrow, title, subtitle, children, footer }: AuthL
   const insets = useSafeAreaInsets();
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[
-        styles.content,
-        {
-          paddingTop: insets.top + Spacing.six,
-          paddingBottom: insets.bottom + Spacing.five,
-        },
-      ]}
-      showsVerticalScrollIndicator={false}
-      keyboardShouldPersistTaps="handled">
-      <FadeInView>
-        <View style={styles.hero}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoEmoji}>✈️</Text>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: insets.top + Spacing.six,
+            paddingBottom: insets.bottom + Spacing.five,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive">
+        <FadeInView>
+          <View style={styles.hero}>
+            <View style={styles.logoBadge}>
+              <Text style={styles.logoEmoji}>✈️</Text>
+            </View>
+            <Text style={styles.eyebrow}>{eyebrow}</Text>
+            <Text style={styles.title}>{title}</Text>
+            <Text style={styles.subtitle}>{subtitle}</Text>
           </View>
-          <Text style={styles.eyebrow}>{eyebrow}</Text>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.subtitle}>{subtitle}</Text>
-        </View>
-      </FadeInView>
+        </FadeInView>
 
-      <FadeInView delay={80}>{children}</FadeInView>
+        <FadeInView delay={80}>{children}</FadeInView>
 
-      {footer ? <FadeInView delay={140}>{footer}</FadeInView> : null}
-    </ScrollView>
+        {footer ? <FadeInView delay={140}>{footer}</FadeInView> : null}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: NS.colors.bg,

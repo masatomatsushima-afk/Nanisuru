@@ -55,7 +55,12 @@ export function PublicPlanImageGallery({
 }: PublicPlanImageGalleryProps) {
   const { width } = useWindowDimensions();
   const sorted = [...images].sort((a, b) => a.orderIndex - b.orderIndex);
-  const cardHeight = variant === 'profile' ? 168 : variant === 'detail' ? 280 : 196;
+  const cardHeight =
+    variant === 'profile'
+      ? Math.min(168, Math.round(width * 0.42))
+      : variant === 'detail'
+        ? Math.min(240, Math.round(width * 0.52))
+        : Math.min(180, Math.round(width * 0.46));
   const detailWidth = Math.min(width - Spacing.four * 2, 480);
 
   if (sorted.length === 0) {

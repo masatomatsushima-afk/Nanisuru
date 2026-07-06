@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { useAuth } from '@/contexts/auth-context';
+import { APP_MESSAGES } from '@/lib/app-errors';
 import { promptAuthRequired } from '@/lib/require-auth';
 import {
   createOrAttachTripFolder,
@@ -40,6 +41,10 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
 
   const showSuccess = (folder: TripFolder) => {
     props.onFolderAttached?.(folder);
+    if (label === '旅行秘書を開く') {
+      openAssistant(folder.id);
+      return;
+    }
     Alert.alert('旅行秘書フォルダに追加しました', 'この旅行の文脈でAI旅行秘書が相談に乗ります。', [
       { text: 'OK' },
       { text: '旅行秘書を開く', onPress: () => openAssistant(folder.id) },
@@ -52,7 +57,7 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
       return;
     }
     if (!isConfigured) {
-      Alert.alert('Supabase未設定', '旅行秘書フォルダには Supabase の設定が必要です。');
+      Alert.alert('接続できません', APP_MESSAGES.supabaseNotConfigured);
       return;
     }
 
@@ -61,6 +66,10 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
       if (props.variant === 'saved-trip') {
         const existing = await getTripFolderBySavedTripId(props.trip.id);
         if (existing) {
+          if (label === '旅行秘書を開く') {
+            openAssistant(existing.id);
+            return;
+          }
           const result = await createOrAttachTripFolder({
             payload: props.trip.payload,
             savedTripId: props.trip.id,
@@ -70,9 +79,19 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
           return;
         }
         const folder = await createTripFolderFromSavedTrip(props.trip);
-        console.log('[TripFolder] success', { folderId: folder.id, action: 'created-from-trip' });
+        if (__DEV__) {
+          console.log('[TripFolder] success', { folderId: folder.id, action: 'created-from-trip' });
+        }
         showSuccess(folder);
         return;
+      }
+
+      if (props.savedTripId) {
+        const existing = await getTripFolderBySavedTripId(props.savedTripId);
+        if (existing) {
+          openAssistant(existing.id);
+          return;
+        }
       }
 
       const result = await createOrAttachTripFolder({
@@ -93,7 +112,7 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
 
   return (
     <PrimaryButton
-      label={busy ? '追加中…' : label}
+      label={busy ? '準備中…' : label}
       onPress={() => void handlePress()}
       disabled={busy}
       variant="secondary"

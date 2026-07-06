@@ -142,10 +142,10 @@ export default function LocalSpotDetailScreen() {
 
           {spot.tags.length > 0 ? (
             <View style={styles.tagRow}>
-              {spot.tags.map((tag, index) => (
+              {spot.tags.map((tag, tagIndex) => (
                 <View
-                  key={tag}
-                  style={[styles.tagChip, { backgroundColor: getChipPalette(index).bg }]}>
+                  key={`${spot.id}-tag-${tag}-${tagIndex}`}
+                  style={[styles.tagChip, { backgroundColor: getChipPalette(tagIndex).bg }]}>
                   <Text style={styles.tagText}>{tag}</Text>
                 </View>
               ))}

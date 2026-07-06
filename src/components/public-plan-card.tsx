@@ -136,8 +136,8 @@ export function PublicPlanCard({
 
           {plan.tags.length > 0 ? (
             <View style={styles.tagRow}>
-              {plan.tags.slice(0, 4).map((tag) => (
-                <View key={tag} style={styles.tag}>
+              {plan.tags.slice(0, 4).map((tag, tagIndex) => (
+                <View key={`${plan.id}-tag-${tag}-${tagIndex}`} style={styles.tag}>
                   <Text style={styles.tagText}>#{tag}</Text>
                 </View>
               ))}

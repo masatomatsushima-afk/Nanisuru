@@ -86,8 +86,8 @@ export function LocalGemCard({
           </Text>
           {tags.length ? (
             <View style={styles.tagRow}>
-              {tags.map((tag) => (
-                <View key={tag} style={styles.tag}>
+              {tags.map((tag, tagIndex) => (
+                <View key={`${spot.id}-tag-${tag}-${tagIndex}`} style={styles.tag}>
                   <Text style={styles.tagText}>{tag}</Text>
                 </View>
               ))}

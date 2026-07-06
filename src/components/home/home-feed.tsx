@@ -559,8 +559,8 @@ function DiscoverPreview({ width }: { width: number }) {
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ gap: ACTION_GAP }}>
-          {cards.map((c) => (
-            <DiscoverCardView key={c.id} card={c} width={cardW} />
+          {cards.map((c, index) => (
+            <DiscoverCardView key={c.id ?? `home-discover-${index}`} card={c} width={cardW} />
           ))}
         </ScrollView>
       )}

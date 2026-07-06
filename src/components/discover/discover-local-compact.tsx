@@ -78,8 +78,8 @@ export function DiscoverLocalCompact({
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.scroll}>
-          {spots.map((spot) => (
-            <View key={spot.id} style={styles.cardWrap}>
+          {spots.map((spot, index) => (
+            <View key={`${spot.id}-${index}`} style={styles.cardWrap}>
               <LocalGemCard
                 spot={spot}
                 isLoggedIn={isLoggedIn}

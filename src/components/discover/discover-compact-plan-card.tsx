@@ -58,8 +58,8 @@ export function DiscoverCompactPlanCard({
           borderRadius={NS.lifestyle.tileRadius}>
           <View style={styles.coverTop}>
             <View style={styles.tagRow}>
-              {tags.map((tag) => (
-                <View key={tag} style={styles.tagBadge}>
+              {tags.map((tag, index) => (
+                <View key={`${plan.id}-tag-${tag}-${index}`} style={styles.tagBadge}>
                   <Text style={styles.tagText}>#{tag}</Text>
                 </View>
               ))}

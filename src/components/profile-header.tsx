@@ -76,8 +76,8 @@ export function ProfileHeader({
 
         {profile.styleTags.length > 0 ? (
           <View style={styles.tagRow}>
-            {profile.styleTags.slice(0, 4).map((tag) => (
-              <View key={tag} style={styles.tag}>
+            {profile.styleTags.slice(0, 4).map((tag, tagIndex) => (
+              <View key={`profile-tag-${tag}-${tagIndex}`} style={styles.tag}>
                 <Text style={styles.tagText}>{tag}</Text>
               </View>
             ))}

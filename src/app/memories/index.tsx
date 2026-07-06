@@ -16,6 +16,7 @@ import { FadeInView } from '@/components/ui/fade-in-view';
 import { PremiumCard } from '@/components/ui/premium-card';
 import { RequireAuthGate } from '@/components/require-auth-gate';
 import { NS } from '@/constants/nanisuru-ui';
+import { getStackScreenPaddingBottom } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import {
@@ -93,7 +94,7 @@ export default function MemoriesHubScreen() {
             styles.content,
             {
               paddingTop: insets.top + Spacing.four,
-              paddingBottom: insets.bottom + Spacing.six,
+              paddingBottom: getStackScreenPaddingBottom(insets.bottom),
             },
           ]}
           showsVerticalScrollIndicator={false}>

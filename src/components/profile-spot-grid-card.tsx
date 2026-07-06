@@ -36,8 +36,8 @@ export function ProfileSpotGridCard({ spot, index, onPress }: ProfileSpotGridCar
         </Text>
         {spot.tags.length > 0 ? (
           <View style={styles.tagRow}>
-            {spot.tags.slice(0, 2).map((tag) => (
-              <View key={tag} style={styles.tag}>
+            {spot.tags.slice(0, 2).map((tag, tagIndex) => (
+              <View key={`${spot.id}-tag-${tag}-${tagIndex}`} style={styles.tag}>
                 <Text style={styles.tagText}>{tag}</Text>
               </View>
             ))}

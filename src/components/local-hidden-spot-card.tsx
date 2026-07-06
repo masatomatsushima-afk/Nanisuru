@@ -51,7 +51,7 @@ export function LocalHiddenSpotCard({
           <View style={styles.tagRow}>
             {spot.tags.slice(0, compact ? 2 : 4).map((tag, tagIndex) => (
               <View
-                key={tag}
+                key={`${spot.id}-tag-${tag}-${tagIndex}`}
                 style={[
                   styles.tagChip,
                   { backgroundColor: getChipPalette(index + tagIndex + 1).bg },
