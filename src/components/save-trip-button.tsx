@@ -1,10 +1,10 @@
-import { router } from 'expo-router';
 import { useState } from 'react';
 import { Alert } from 'react-native';
 
 import { SuccessOverlay } from '@/components/success-overlay';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { useAuth } from '@/contexts/auth-context';
+import { promptAuthRequired } from '@/lib/require-auth';
 import { saveOrUpdateTrip } from '@/lib/saved-trips';
 import type { CurrencyCode } from '@/constants/currency';
 import type { TravelBudgetIncludeOption } from '@/lib/travel-budget-includes';
@@ -65,7 +65,7 @@ export function SaveTripButton({
   variant = 'secondary',
   onSaved,
 }: SaveTripButtonProps) {
-  const { session, isConfigured } = useAuth();
+  const { isLoggedIn, isConfigured } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
 
@@ -78,11 +78,8 @@ export function SaveTripButton({
       return;
     }
 
-    if (!session) {
-      Alert.alert('ログインが必要です', 'プランを保存するにはログインしてください。', [
-        { text: 'キャンセル', style: 'cancel' },
-        { text: 'ログイン', onPress: () => router.push('/login') },
-      ]);
+    if (!isLoggedIn) {
+      promptAuthRequired('saveTravelPlan');
       return;
     }
 

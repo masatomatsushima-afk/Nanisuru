@@ -10,7 +10,7 @@ import { NS } from '@/constants/nanisuru-ui';
 const accent = NS.colors.accent;
 
 export default function IndexScreen() {
-  const { session, isLoading: authLoading } = useAuth();
+  const { isLoading: authLoading } = useAuth();
   const [isReady, setIsReady] = useState(false);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [hasCompletedPreferenceOnboarding, setHasCompletedPreferenceOnboarding] = useState(false);
@@ -38,10 +38,6 @@ export default function IndexScreen() {
 
   if (!hasCompletedPreferenceOnboarding) {
     return <Redirect href="/preference-onboarding" />;
-  }
-
-  if (!session) {
-    return <Redirect href="/login" />;
   }
 
   return <Redirect href="/(tabs)" />;

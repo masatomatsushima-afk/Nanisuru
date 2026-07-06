@@ -5,6 +5,8 @@ import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 import type { Session, User } from '@supabase/supabase-js';
 
+import { toAuthErrorMessage } from '@/lib/auth-errors';
+
 import { getSupabase, isSupabaseConfigured } from './supabase';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -237,10 +239,131 @@ export async function signInWithApple(): Promise<void> {
   await createSessionFromUrl(result.url);
 }
 
+export async function getAuthenticatedUserId(): Promise<string | null> {
+  if (!isSupabaseConfigured()) return null;
+
+  try {
+    const {
+      data: { user },
+    } = await getSupabase().auth.getUser();
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function bootstrapUserProfile(user: User): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+
+  try {
+    const { ensureProfileForUserId } = await import('@/lib/user-profiles');
+    await ensureProfileForUserId(user.id, getUserDisplayName(user));
+  } catch (error) {
+    console.warn('[Auth] profile bootstrap failed', error);
+  }
+}
+
+export async function signInWithEmailPassword(email: string, password: string): Promise<User> {
+  assertSupabaseConfigured();
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail) {
+    throw new Error('メールアドレスを入力してください');
+  }
+  if (!password) {
+    throw new Error('パスワードを入力してください');
+  }
+
+  const supabase = getSupabase();
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: trimmedEmail,
+    password,
+  });
+
+  if (error) {
+    throw new Error(toAuthErrorMessage(error, 'ログインに失敗しました'));
+  }
+  if (!data.user) {
+    throw new Error('ログインに失敗しました');
+  }
+
+  console.log('[Auth] signed in', data.user.id);
+  await bootstrapUserProfile(data.user);
+  return data.user;
+}
+
+export async function signUpWithEmailPassword(email: string, password: string): Promise<User> {
+  assertSupabaseConfigured();
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail) {
+    throw new Error('メールアドレスを入力してください');
+  }
+  if (password.length < 6) {
+    throw new Error('パスワードは6文字以上で入力してください');
+  }
+
+  const supabase = getSupabase();
+  const { data, error } = await supabase.auth.signUp({
+    email: trimmedEmail,
+    password,
+    options: {
+      emailRedirectTo: redirectTo,
+    },
+  });
+
+  if (error) {
+    throw new Error(toAuthErrorMessage(error, '新規登録に失敗しました'));
+  }
+  if (!data.user) {
+    throw new Error('新規登録に失敗しました');
+  }
+
+  console.log('[Auth] signed in', data.user.id);
+  await bootstrapUserProfile(data.user);
+  return data.user;
+}
+
+export async function signInWithMagicLink(email: string): Promise<void> {
+  assertSupabaseConfigured();
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail) {
+    throw new Error('メールアドレスを入力してください');
+  }
+
+  const { error } = await getSupabase().auth.signInWithOtp({
+    email: trimmedEmail,
+    options: {
+      emailRedirectTo: redirectTo,
+    },
+  });
+
+  if (error) {
+    throw new Error(toAuthErrorMessage(error, '通信に失敗しました'));
+  }
+}
+
+export async function resetPasswordForEmail(email: string): Promise<void> {
+  assertSupabaseConfigured();
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail) {
+    throw new Error('メールアドレスを入力してください');
+  }
+
+  const { error } = await getSupabase().auth.resetPasswordForEmail(trimmedEmail, {
+    redirectTo,
+  });
+
+  if (error) {
+    throw new Error(toAuthErrorMessage(error, '通信に失敗しました'));
+  }
+}
+
 export async function signOut(): Promise<void> {
   if (!isSupabaseConfigured()) return;
   const { error } = await getSupabase().auth.signOut();
-  if (error) throw error;
+  if (error) {
+    throw new Error(toAuthErrorMessage(error, '通信に失敗しました'));
+  }
+  console.log('[Auth] signed out');
 }
 
 export function getUserDisplayName(user: User): string {

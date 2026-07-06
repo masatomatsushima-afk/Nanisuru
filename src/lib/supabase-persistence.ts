@@ -6,6 +6,7 @@
  *
  * Table map: see supabase/AUDIT.md and supabase/migrations/README.md
  */
+import { getAuthenticatedUserId } from '@/lib/auth';
 import { saveItineraryEdit as saveItineraryEditRaw } from '@/lib/itinerary-edits';
 import { fetchLocalHiddenSpots, submitLocalHiddenSpot } from '@/lib/local-hidden-spots';
 import {
@@ -41,6 +42,19 @@ import type { WeatherReplanRecord } from '@/types/weather-replan';
 
 const LOG_PREFIX = '[SupabasePersistence]';
 const SETUP_PREFIX = '[SupabaseSetup]';
+const AUTH_LOG_PREFIX = '[Auth]';
+
+function warnAuthFallback(): void {
+  console.warn(`${AUTH_LOG_PREFIX} user not logged in, using local fallback`);
+}
+
+async function requireAuthenticatedUserId(): Promise<string | null> {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    warnAuthFallback();
+  }
+  return userId;
+}
 
 export type SupabaseTableProbeResult = 'ok' | 'missing' | 'skipped';
 
@@ -161,6 +175,9 @@ export async function saveTravelPlan(
     warnMissing('プラン保存');
     return null;
   }
+  if (!(await requireAuthenticatedUserId())) {
+    return null;
+  }
   try {
     if (tripId?.trim()) {
       return await saveOrUpdateTrip(tripId, input);
@@ -176,6 +193,9 @@ export async function saveTravelPlan(
 export async function loadSavedTravelPlans(): Promise<SavedTrip[]> {
   if (!isSupabaseConfigured()) {
     warnMissing('保存プラン読み込み');
+    return [];
+  }
+  if (!(await requireAuthenticatedUserId())) {
     return [];
   }
   try {
@@ -196,6 +216,9 @@ export async function createOrGetTripFolder(options: {
     warnMissing('旅行フォルダ取得');
     return null;
   }
+  if (!(await requireAuthenticatedUserId())) {
+    return null;
+  }
   try {
     const result = await createOrAttachTripFolder(options);
     return result.folder;
@@ -213,6 +236,9 @@ export async function addPlanToTripFolder(
 ): Promise<TripFolder | null> {
   if (!isSupabaseConfigured()) {
     warnMissing('フォルダへのプラン追加');
+    return null;
+  }
+  if (!(await requireAuthenticatedUserId())) {
     return null;
   }
   try {
@@ -238,6 +264,9 @@ export async function saveTripAssistantMessage(
 ): Promise<TripAssistantMessage | null> {
   if (!isSupabaseConfigured()) {
     warnMissing('秘書メッセージ保存');
+    return null;
+  }
+  if (!(await requireAuthenticatedUserId())) {
     return null;
   }
   try {
@@ -266,6 +295,9 @@ export async function saveItineraryEdit(input: {
     warnMissing('行程編集履歴保存');
     return null;
   }
+  if (!(await requireAuthenticatedUserId())) {
+    return null;
+  }
   try {
     return await saveItineraryEditRaw(input);
   } catch (error) {
@@ -286,6 +318,9 @@ export async function saveWeatherReplan(input: {
     warnMissing('天気再調整履歴保存');
     return null;
   }
+  if (!(await requireAuthenticatedUserId())) {
+    return null;
+  }
   try {
     return await saveWeatherReplanRaw(input);
   } catch (error) {
@@ -298,6 +333,9 @@ export async function saveWeatherReplan(input: {
 export async function saveTripMemory(trip: SavedTrip): Promise<TripMemory | null> {
   if (!isSupabaseConfigured()) {
     warnMissing('思い出アルバム保存');
+    return null;
+  }
+  if (!(await requireAuthenticatedUserId())) {
     return null;
   }
   try {
@@ -314,6 +352,9 @@ export async function loadTripMemories(): Promise<TripMemory[]> {
     warnMissing('思い出読み込み');
     return [];
   }
+  if (!(await requireAuthenticatedUserId())) {
+    return [];
+  }
   try {
     return await fetchUserTripMemories();
   } catch (error) {
@@ -328,6 +369,9 @@ export async function saveLocalGem(
 ): Promise<LocalHiddenSpot | null> {
   if (!isSupabaseConfigured()) {
     warnMissing('穴場スポット保存');
+    return null;
+  }
+  if (!(await requireAuthenticatedUserId())) {
     return null;
   }
   try {

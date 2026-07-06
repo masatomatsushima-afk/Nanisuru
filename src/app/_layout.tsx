@@ -56,6 +56,12 @@ export default function RootLayout() {
               animation: 'slide_from_right',
             }}
           />
+          <Stack.Screen
+            name="profile-edit"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
           <Stack.Screen name="auth/callback" options={{ animation: 'none' }} />
           <Stack.Screen name="(tabs)" />
           <Stack.Screen

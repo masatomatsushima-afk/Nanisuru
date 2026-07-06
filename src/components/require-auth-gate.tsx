@@ -21,7 +21,7 @@ export function RequireAuthGate({
   loadingMessage = '認証状態を確認中...',
 }: RequireAuthGateProps) {
   const insets = useSafeAreaInsets();
-  const { user, isLoading, session } = useAuth();
+  const { user, isLoading, isLoggedIn } = useAuth();
 
   if (isLoading) {
     return (
@@ -32,7 +32,7 @@ export function RequireAuthGate({
     );
   }
 
-  if (!user && !session) {
+  if (!isLoggedIn || !user) {
     return (
       <View
         style={[

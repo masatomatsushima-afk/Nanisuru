@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { useAuth } from '@/contexts/auth-context';
+import { promptAuthRequired } from '@/lib/require-auth';
 import {
   createOrAttachTripFolder,
   createTripFolderFromSavedTrip,
@@ -29,7 +30,7 @@ type AddTripSecretaryFolderButtonProps =
     };
 
 export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButtonProps) {
-  const { session, isConfigured } = useAuth();
+  const { isLoggedIn, isConfigured } = useAuth();
   const [busy, setBusy] = useState(false);
   const label = props.label ?? '旅行秘書フォルダに追加';
 
@@ -46,8 +47,8 @@ export function AddTripSecretaryFolderButton(props: AddTripSecretaryFolderButton
   };
 
   const handlePress = async () => {
-    if (!session) {
-      router.push('/login');
+    if (!isLoggedIn) {
+      promptAuthRequired('createOrGetTripFolder');
       return;
     }
     if (!isConfigured) {

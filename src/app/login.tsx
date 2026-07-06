@@ -3,16 +3,23 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AuthLayout } from '@/components/auth/auth-layout';
+import { EmailAuthForm } from '@/components/auth/email-auth-form';
 import { OAuthButtons } from '@/components/auth/oauth-buttons';
 import { LoadingState } from '@/components/ui/state-cards';
 import { PremiumCard } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
-import { signInWithApple, signInWithGoogle } from '@/lib/auth';
+import { toAuthErrorMessage } from '@/lib/auth-errors';
+import {
+  resetPasswordForEmail,
+  signInWithApple,
+  signInWithGoogle,
+  signInWithMagicLink,
+} from '@/lib/auth';
 
 export default function LoginScreen() {
-  const { isConfigured, session, isLoading: authLoading } = useAuth();
+  const { isConfigured, session, isLoading: authLoading, signIn } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProvider, setLoadingProvider] = useState<'google' | 'apple' | null>(null);
 
@@ -27,12 +34,9 @@ export default function LoginScreen() {
     router.replace('/(tabs)');
   };
 
-  const handleAuthError = (error: unknown) => {
-    const message =
-      error instanceof Error ? error.message : 'ログインに失敗しました。もう一度お試しください。';
-
+  const handleAuthError = (error: unknown, fallback: string) => {
+    const message = toAuthErrorMessage(error, fallback);
     if (message.includes('キャンセル')) return;
-
     Alert.alert('ログインエラー', message);
   };
 
@@ -52,10 +56,59 @@ export default function LoginScreen() {
       await action();
       handleSuccess();
     } catch (error) {
-      handleAuthError(error);
+      handleAuthError(error, 'ログインに失敗しました');
     } finally {
       setIsLoading(false);
       setLoadingProvider(null);
+    }
+  };
+
+  const handleEmailLogin = async (email: string, password: string) => {
+    if (!isConfigured) {
+      Alert.alert('Supabase未設定', 'Supabaseの設定を確認してください。');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await signIn(email, password);
+      handleSuccess();
+    } catch (error) {
+      handleAuthError(error, 'ログインに失敗しました');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleMagicLink = async (email: string) => {
+    if (!isConfigured) return;
+    setIsLoading(true);
+    try {
+      await signInWithMagicLink(email);
+      Alert.alert(
+        'メールを確認してください',
+        'ログインリンクを送信しました。メール内のリンクからログインできます。',
+      );
+    } catch (error) {
+      handleAuthError(error, '通信に失敗しました');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (email: string) => {
+    if (!isConfigured) return;
+    setIsLoading(true);
+    try {
+      await resetPasswordForEmail(email);
+      Alert.alert(
+        'メールを確認してください',
+        'パスワード再設定用のリンクを送信しました。',
+      );
+    } catch (error) {
+      handleAuthError(error, '通信に失敗しました');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -71,18 +124,17 @@ export default function LoginScreen() {
     <AuthLayout
       eyebrow="LOGIN"
       title="おかえりなさい"
-      subtitle="ログインして、保存したプランやお気に入りにアクセスしましょう"
+      subtitle="ログインして、保存したプランや思い出にアクセスしましょう"
       footer={
         <View style={styles.footer}>
           <Text style={styles.footerText}>アカウントをお持ちでない方</Text>
           <Pressable onPress={() => router.push('/sign-up')} hitSlop={8}>
-            <Text style={styles.footerLink}>新規登録はこちら</Text>
+            <Text style={styles.footerLink}>新規登録</Text>
           </Pressable>
         </View>
       }>
       <PremiumCard style={styles.card}>
         <Text style={styles.cardTitle}>ログイン</Text>
-        <Text style={styles.cardSubtitle}>Google または Apple アカウントでサインイン</Text>
 
         {!isConfigured ? (
           <View style={styles.notice}>
@@ -91,14 +143,30 @@ export default function LoginScreen() {
               .env に Supabase の URL と Anon Key を追加し、Expo を再起動してください。
             </Text>
           </View>
-        ) : null}
+        ) : (
+          <>
+            <EmailAuthForm
+              mode="login"
+              onSubmitEmail={handleEmailLogin}
+              onMagicLink={handleMagicLink}
+              onForgotPassword={handleForgotPassword}
+              isLoading={isLoading}
+            />
 
-        <OAuthButtons
-          onGooglePress={() => runSignIn('google', signInWithGoogle)}
-          onApplePress={() => runSignIn('apple', signInWithApple)}
-          isLoading={isLoading}
-          loadingProvider={loadingProvider}
-        />
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>または</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <OAuthButtons
+              onGooglePress={() => runSignIn('google', signInWithGoogle)}
+              onApplePress={() => runSignIn('apple', signInWithApple)}
+              isLoading={isLoading}
+              loadingProvider={loadingProvider}
+            />
+          </>
+        )}
       </PremiumCard>
     </AuthLayout>
   );
@@ -107,23 +175,32 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   card: {
     padding: Spacing.five,
+    gap: Spacing.three,
   },
   cardTitle: {
     color: NS.colors.text,
     ...NS.typography.headline,
-    marginBottom: Spacing.one,
   },
-  cardSubtitle: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    marginBottom: Spacing.five,
-    lineHeight: 22,
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginVertical: Spacing.two,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: NS.colors.border,
+  },
+  dividerText: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
   },
   notice: {
     backgroundColor: NS.colors.dangerSoft,
     borderRadius: NS.radius.md,
     padding: Spacing.three,
-    marginBottom: Spacing.four,
     borderWidth: 1,
     borderColor: 'rgba(248, 113, 113, 0.2)',
   },

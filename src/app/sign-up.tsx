@@ -3,16 +3,18 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AuthLayout } from '@/components/auth/auth-layout';
+import { EmailAuthForm } from '@/components/auth/email-auth-form';
 import { OAuthButtons } from '@/components/auth/oauth-buttons';
 import { LoadingState } from '@/components/ui/state-cards';
 import { PremiumCard } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { toAuthErrorMessage } from '@/lib/auth-errors';
 import { signInWithApple, signInWithGoogle } from '@/lib/auth';
 
 export default function SignUpScreen() {
-  const { isConfigured, session, isLoading: authLoading } = useAuth();
+  const { isConfigured, session, isLoading: authLoading, signUp } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProvider, setLoadingProvider] = useState<'google' | 'apple' | null>(null);
 
@@ -32,11 +34,8 @@ export default function SignUpScreen() {
   };
 
   const handleAuthError = (error: unknown) => {
-    const message =
-      error instanceof Error ? error.message : '登録に失敗しました。もう一度お試しください。';
-
+    const message = toAuthErrorMessage(error, '新規登録に失敗しました');
     if (message.includes('キャンセル')) return;
-
     Alert.alert('登録エラー', message);
   };
 
@@ -63,6 +62,27 @@ export default function SignUpScreen() {
     }
   };
 
+  const handleEmailSignUp = async (email: string, password: string) => {
+    if (!isConfigured) {
+      Alert.alert('Supabase未設定', 'Supabaseの設定を確認してください。');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await signUp(email, password);
+      Alert.alert(
+        '登録完了',
+        'アカウントを作成しました。確認メールが届く場合は、リンクを開いて有効化してください。',
+      );
+      handleSuccess();
+    } catch (error) {
+      handleAuthError(error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <AuthLayout
       eyebrow="SIGN UP"
@@ -72,20 +92,17 @@ export default function SignUpScreen() {
         <View style={styles.footer}>
           <Text style={styles.footerText}>すでにアカウントをお持ちの方</Text>
           <Pressable onPress={() => router.push('/login')} hitSlop={8}>
-            <Text style={styles.footerLink}>ログインはこちら</Text>
+            <Text style={styles.footerLink}>ログイン</Text>
           </Pressable>
         </View>
       }>
       <PremiumCard style={styles.card}>
         <Text style={styles.cardTitle}>新規登録</Text>
-        <Text style={styles.cardSubtitle}>
-          Google または Apple アカウントで、かんたんに登録できます
-        </Text>
 
         <View style={styles.benefits}>
           <Text style={styles.benefitItem}>☁️ プランをクラウドに保存</Text>
           <Text style={styles.benefitItem}>✈️ どの端末からでもアクセス</Text>
-          <Text style={styles.benefitItem}>🔒 安全なソーシャルログイン</Text>
+          <Text style={styles.benefitItem}>🔒 安全なログイン</Text>
         </View>
 
         {!isConfigured ? (
@@ -95,14 +112,28 @@ export default function SignUpScreen() {
               .env に Supabase の URL と Anon Key を追加し、Expo を再起動してください。
             </Text>
           </View>
-        ) : null}
+        ) : (
+          <>
+            <EmailAuthForm
+              mode="signup"
+              onSubmitEmail={handleEmailSignUp}
+              isLoading={isLoading}
+            />
 
-        <OAuthButtons
-          onGooglePress={() => runSignUp('google', signInWithGoogle)}
-          onApplePress={() => runSignUp('apple', signInWithApple)}
-          isLoading={isLoading}
-          loadingProvider={loadingProvider}
-        />
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>または</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <OAuthButtons
+              onGooglePress={() => runSignUp('google', signInWithGoogle)}
+              onApplePress={() => runSignUp('apple', signInWithApple)}
+              isLoading={isLoading}
+              loadingProvider={loadingProvider}
+            />
+          </>
+        )}
 
         <Text style={styles.terms}>
           登録することで、Nanisuruの利用規約およびプライバシーポリシーに同意したものとみなされます。
@@ -115,21 +146,14 @@ export default function SignUpScreen() {
 const styles = StyleSheet.create({
   card: {
     padding: Spacing.five,
+    gap: Spacing.three,
   },
   cardTitle: {
     color: NS.colors.text,
     ...NS.typography.headline,
-    marginBottom: Spacing.one,
-  },
-  cardSubtitle: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    marginBottom: Spacing.four,
-    lineHeight: 22,
   },
   benefits: {
     gap: Spacing.two,
-    marginBottom: Spacing.four,
     padding: Spacing.three,
     backgroundColor: NS.colors.accentSoft,
     borderRadius: NS.radius.md,
@@ -141,11 +165,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
   },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginVertical: Spacing.two,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: NS.colors.border,
+  },
+  dividerText: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   notice: {
     backgroundColor: NS.colors.dangerSoft,
     borderRadius: NS.radius.md,
     padding: Spacing.three,
-    marginBottom: Spacing.four,
     borderWidth: 1,
     borderColor: 'rgba(248, 113, 113, 0.2)',
   },
@@ -164,7 +203,6 @@ const styles = StyleSheet.create({
     color: NS.colors.textMuted,
     fontSize: 11,
     lineHeight: 18,
-    marginTop: Spacing.four,
     textAlign: 'center',
   },
   footer: {

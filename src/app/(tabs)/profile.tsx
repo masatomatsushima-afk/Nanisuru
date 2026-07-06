@@ -31,7 +31,8 @@ import { ScreenBackground } from '@/components/ui/screen-background';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
-import { getAuthProviderLabel, getUserDisplayName } from '@/lib/auth';
+import { getAuthProviderLabel, getUserDisplayName, getUserInitial } from '@/lib/auth';
+import { confirmSignOut, showSignedOutMessage } from '@/lib/require-auth';
 import { fetchLocalHiddenSpotsByUserId } from '@/lib/local-hidden-spots';
 import { fetchUserSavedPortfolioItems } from '@/lib/profile-saves';
 import { fetchPublicPlansByUserId } from '@/lib/public-plans';
@@ -52,7 +53,7 @@ import {
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const { user, isConfigured, signOut } = useAuth();
+  const { user, isConfigured, isLoggedIn, signOut } = useAuth();
   const scrollRef = useRef<ScrollView>(null);
   const profileEditorY = useRef(0);
   const preferencesEditorY = useRef(0);
@@ -136,27 +137,18 @@ export default function ProfileScreen() {
     }, [loadPortfolio, loadPreferences]),
   );
 
-  const handleSignOut = async () => {
-    Alert.alert('ログアウト', 'ログアウトしますか？', [
-      { text: 'キャンセル', style: 'cancel' },
-      {
-        text: 'ログアウト',
-        style: 'destructive',
-        onPress: async () => {
-          setIsSigningOut(true);
-          try {
-            await signOut();
-            router.replace('/login');
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : 'ログアウトに失敗しました';
-            Alert.alert('エラー', message);
-          } finally {
-            setIsSigningOut(false);
-          }
-        },
-      },
-    ]);
+  const handleSignOut = () => {
+    confirmSignOut(async () => {
+      setIsSigningOut(true);
+      try {
+        await signOut();
+        showSignedOutMessage();
+      } catch {
+        Alert.alert('エラー', '通信に失敗しました');
+      } finally {
+        setIsSigningOut(false);
+      }
+    });
   };
 
   const renderTabContent = () => {
@@ -251,7 +243,7 @@ export default function ProfileScreen() {
     }
   };
 
-  if (!user) {
+  if (!isLoggedIn || !user) {
     return (
       <ScreenBackground>
         <ScrollView
@@ -270,11 +262,15 @@ export default function ProfileScreen() {
             <Text style={styles.guestEmoji}>👤</Text>
             <Text style={styles.guestTitle}>ログインしていません</Text>
             <Text style={styles.guestText}>
-              ログインすると、公開プランや思い出、保存したコンテンツを確認できます。
+              ログインすると、旅行プランや思い出を保存できます
             </Text>
-            <PrimaryButton label="ログイン" onPress={() => router.push('/login')} variant="warm" />
+            <PrimaryButton
+              label="ログインする"
+              onPress={() => router.push('/login')}
+              variant="warm"
+            />
             <Pressable style={styles.signUpLink} onPress={() => router.push('/sign-up')}>
-              <Text style={styles.signUpLinkText}>新規登録はこちら</Text>
+              <Text style={styles.signUpLinkText}>新規登録</Text>
             </Pressable>
           </PremiumCard>
 
@@ -337,11 +333,35 @@ export default function ProfileScreen() {
         ]}
         showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
-          <View>
-            <Text style={styles.screenTitle}>マイページ</Text>
-            <Text style={styles.screenSubtitle}>あなたの旅の記録</Text>
+          <View style={styles.loggedInHeader}>
+            <View style={styles.avatarCircle}>
+              <Text style={styles.avatarInitial}>{getUserInitial(user)}</Text>
+            </View>
+            <View style={styles.loggedInMeta}>
+              <Text style={styles.screenTitle}>{displayProfile.displayName}</Text>
+              <Text style={styles.screenSubtitle}>{user.email ?? 'メール非公開'}</Text>
+            </View>
           </View>
         </View>
+
+        <PremiumCard style={styles.quickActionsCard}>
+          <PrimaryButton
+            label="プロフィール編集"
+            onPress={() => router.push('/profile-edit')}
+            variant="secondary"
+          />
+          <PrimaryButton
+            label="好み設定"
+            onPress={() => router.push('/preference-onboarding')}
+            variant="secondary"
+          />
+          <PrimaryButton
+            label={isSigningOut ? 'ログアウト中...' : 'ログアウト'}
+            onPress={handleSignOut}
+            disabled={isSigningOut}
+            variant="secondary"
+          />
+        </PremiumCard>
 
         <NotificationEntryButton isConfigured={isConfigured} />
 
@@ -371,7 +391,7 @@ export default function ProfileScreen() {
             />
 
             <ProfileOwnerActions
-              onEditProfile={() => scrollTo(profileEditorY)}
+              onEditProfile={() => router.push('/profile-edit')}
               onEditPreferences={() => router.push('/preference-onboarding')}
               onPrivacySettings={() => scrollTo(privacySectionY)}
             />
@@ -438,12 +458,6 @@ export default function ProfileScreen() {
           <Text style={styles.accountMeta}>
             {user.email ?? 'メール非公開'} · {providerLabel}
           </Text>
-          <PrimaryButton
-            label={isSigningOut ? 'ログアウト中...' : 'ログアウト'}
-            onPress={handleSignOut}
-            disabled={isSigningOut}
-            variant="secondary"
-          />
         </PremiumCard>
 
         {!isConfigured ? (
@@ -472,6 +486,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  loggedInHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  avatarCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: NS.colors.accentSoft,
+    borderWidth: 1,
+    borderColor: NS.colors.accentBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitial: {
+    color: NS.colors.accent,
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  loggedInMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  quickActionsCard: {
+    padding: Spacing.three,
+    gap: Spacing.two,
   },
   screenTitle: {
     color: NS.colors.text,
