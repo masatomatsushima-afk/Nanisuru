@@ -1,4 +1,4 @@
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
@@ -29,7 +29,7 @@ async function openUrl(url: string): Promise<void> {
   try {
     await Linking.openURL(url);
   } catch {
-    console.warn(APP_MESSAGES.mapsOpenFailed);
+    Alert.alert('リンクを開けませんでした', APP_MESSAGES.mapsOpenFailed);
   }
 }
 

@@ -2,15 +2,16 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
+import { showFeatureComingSoonAlert } from '@/lib/feature-unavailable';
 
-/** Google login placeholder — provider setup required in Supabase Dashboard. */
+/** Google login placeholder — shows friendly coming-soon message when tapped. */
 export function GoogleLoginPlaceholder() {
   return (
-    <Pressable style={styles.button} disabled>
+    <Pressable style={styles.button} onPress={showFeatureComingSoonAlert}>
       <Text style={styles.icon}>G</Text>
       <View style={styles.textWrap}>
         <Text style={styles.label}>Googleでログイン</Text>
-        <Text style={styles.note}>準備中（SupabaseでGoogle OAuthを設定してください）</Text>
+        <Text style={styles.note}>この機能は現在準備中です</Text>
       </View>
     </Pressable>
   );
@@ -27,7 +28,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: NS.colors.border,
     backgroundColor: NS.colors.bg,
-    opacity: 0.72,
   },
   icon: {
     fontSize: 18,
@@ -41,7 +41,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   label: {
-    color: NS.colors.textMuted,
+    color: NS.colors.text,
     fontSize: 15,
     fontWeight: '700',
   },

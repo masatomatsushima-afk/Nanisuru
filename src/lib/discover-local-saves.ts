@@ -16,3 +16,7 @@ export function toggleDiscoverPlanSavedLocally(planId: string): boolean {
 export function getLocalSavedDiscoverCount(): number {
   return savedPlanIds.size;
 }
+
+export function clearLocalDiscoverSaves(): void {
+  savedPlanIds.clear();
+}

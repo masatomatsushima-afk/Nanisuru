@@ -12,3 +12,7 @@ export function toggleLocalGemSavedLocally(gemId: string): boolean {
   savedGemIds.add(gemId);
   return true;
 }
+
+export function clearLocalGemSaves(): void {
+  savedGemIds.clear();
+}

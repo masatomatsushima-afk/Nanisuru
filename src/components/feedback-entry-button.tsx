@@ -5,18 +5,16 @@ import { PremiumCard } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 
-export function BetaTestEntryButton() {
+export function FeedbackEntryButton() {
   return (
-    <PremiumCard style={styles.card} onPress={() => router.push('/beta-test')}>
+    <PremiumCard style={styles.card} onPress={() => router.push('/feedback')}>
       <View style={styles.row}>
         <View style={styles.iconWrap}>
-          <Text style={styles.icon}>🧪</Text>
+          <Text style={styles.icon}>💬</Text>
         </View>
         <View style={styles.textWrap}>
-          <Text style={styles.title}>テストに協力する</Text>
-          <Text style={styles.subtitle}>
-            チェックリスト（docs/MVP_TEST_CHECKLIST.md）と感想フォーム
-          </Text>
+          <Text style={styles.title}>フィードバックを送る</Text>
+          <Text style={styles.subtitle}>使い心地やバグ報告をお聞かせください</Text>
         </View>
         <Text style={styles.chevron}>→</Text>
       </View>
@@ -27,7 +25,6 @@ export function BetaTestEntryButton() {
 const styles = StyleSheet.create({
   card: {
     padding: Spacing.four,
-    marginBottom: Spacing.three,
   },
   row: {
     flexDirection: 'row',
@@ -38,9 +35,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: NS.colors.successSoft,
+    backgroundColor: NS.colors.coralSoft,
     borderWidth: 1,
-    borderColor: 'rgba(52, 211, 153, 0.25)',
+    borderColor: 'rgba(251, 113, 133, 0.25)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -63,7 +60,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   chevron: {
-    color: NS.colors.accent,
+    color: NS.colors.coral,
     fontSize: 18,
     fontWeight: '700',
   },

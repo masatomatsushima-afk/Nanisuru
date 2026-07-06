@@ -149,6 +149,12 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="feedback"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
             name="memories/index"
             options={{
               animation: 'slide_from_right',

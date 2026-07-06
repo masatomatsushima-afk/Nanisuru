@@ -5,33 +5,32 @@ export const APP_MESSAGES = {
     '実在スポットを取得できませんでした。代わりに主要スポットをもとにプランを作成します。',
   noPlacesFound:
     'このエリアではスポットが見つかりませんでした。エリア名をもう少し具体的に入力してください。',
-  openAiFailed: 'AIプランの生成に失敗しました。少し時間をおいてもう一度お試しください。',
+  openAiFailed: 'プラン作成に失敗しました。少し時間をおいてもう一度お試しください。',
   inputIncomplete: '入力が不足しています。必須項目を確認してください。',
-  openAiApiFailed: 'AI APIとの通信に失敗しました。しばらくしてからもう一度お試しください。',
+  openAiApiFailed: 'プラン作成に失敗しました。しばらくしてからもう一度お試しください。',
   placesFetchWarning: '実在スポットの取得に失敗しました。代替データでプランを作成します。',
-  planSaveWarning: 'プランは作成できましたが、保存に失敗しました。通信環境を確認してください。',
-  networkError: '通信に失敗しました。インターネット接続を確認してください。',
+  planSaveWarning: '保存に失敗しました',
+  networkError: '通信に失敗しました。もう一度お試しください',
   locationFetchFailed: '現在地を取得できませんでした',
-  mapsOpenFailed: 'Google Mapsを開けませんでした',
-  openAiNotConfigured:
-    'OpenAI APIキーが設定されていません。.env に EXPO_PUBLIC_OPENAI_API_KEY を追加して Expo を再起動してください。',
+  mapsOpenFailed: 'マップを開けませんでした',
+  openAiNotConfigured: 'プラン作成に失敗しました。しばらくしてからもう一度お試しください。',
   locationRequired: '場所を入力してください',
   retry: 'もう一度試す',
   loadingSearchingPlaces: '実在スポットを探しています…',
   loadingAiPlanning: 'AIが最高の1日を設計しています…',
   loadingPreparingRoute: 'ルート情報を準備しています…',
-  googleMapsNotConfigured:
-    'Google Maps APIキーが設定されていません。.env に EXPO_PUBLIC_GOOGLE_MAPS_API_KEY を追加して Expo を再起動してください。',
+  googleMapsNotConfigured: 'マップを開けませんでした',
   nearbySearchFailed: '周辺スポットの検索に失敗しました。もう一度お試しください。',
   noNearbyPlaces: '近くにスポットが見つかりませんでした。別の場所でお試しください。',
   secretaryFailed: 'メッセージの送信に失敗しました。少し時間をおいてもう一度お試しください。',
-  supabaseFailed: 'データの保存・取得に失敗しました。通信環境を確認して、もう一度お試しください。',
-  supabaseNotConfigured:
-    'Supabase が未設定です。.env を確認し、必要な SQL を実行してください。',
+  supabaseFailed: 'データを読み込めませんでした',
+  supabaseNotConfigured: 'データを読み込めませんでした',
+  loadFailed: 'データを読み込めませんでした',
   imageUploadFailed: '画像のアップロードに失敗しました。もう一度お試しください。',
-  dataNotFound: 'データが見つかりませんでした。',
-  authRequired: 'ログインが必要です。ログインしてからもう一度お試しください。',
+  dataNotFound: 'データを読み込めませんでした',
+  authRequired: 'ログインが必要です',
   genericActionFailed: '操作に失敗しました。もう一度お試しください。',
+  featureComingSoon: 'この機能は現在準備中です',
 } as const;
 
 export type AppErrorCode =
@@ -249,9 +248,57 @@ export function getActionErrorMessage(
   fallback: string = APP_MESSAGES.genericActionFailed,
 ): string {
   const classified = classifyError(error);
-  if (classified.code === 'UNKNOWN' && classified.message !== fallback) {
-    return classified.message;
+  if (classified.code === 'UNKNOWN') {
+    const raw = error instanceof Error ? error.message : String(error);
+    return sanitizeUserFacingMessage(raw || fallback);
   }
-  if (classified.code === 'UNKNOWN') return fallback;
   return classified.message;
+}
+
+const TECHNICAL_USER_MESSAGE_PATTERN =
+  /supabase|openai|\.env|EXPO_PUBLIC|APIキー|テーブル|row level|gotrue|anon key|service role/i;
+
+/** Strip developer-facing details before showing errors to testers. */
+export function sanitizeUserFacingMessage(message: string): string {
+  const trimmed = message.trim();
+  if (!trimmed) return APP_MESSAGES.genericActionFailed;
+
+  if (TECHNICAL_USER_MESSAGE_PATTERN.test(trimmed)) {
+    if (/保存|save|insert|update|upload/i.test(trimmed)) {
+      return APP_MESSAGES.planSaveWarning;
+    }
+    if (/upload|画像|storage|bucket|photo/i.test(trimmed)) {
+      return APP_MESSAGES.imageUploadFailed;
+    }
+    if (/ログイン|auth|session|sign in/i.test(trimmed)) {
+      return APP_MESSAGES.authRequired;
+    }
+    return APP_MESSAGES.loadFailed;
+  }
+
+  if (OPENAI_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return APP_MESSAGES.openAiApiFailed;
+  }
+  if (NETWORK_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return APP_MESSAGES.networkError;
+  }
+  if (/開発用|debug|stack trace/i.test(trimmed)) {
+    return APP_MESSAGES.genericActionFailed;
+  }
+  if (trimmed.length > 120) {
+    return APP_MESSAGES.genericActionFailed;
+  }
+
+  return trimmed;
+}
+
+export function sanitizeUserFacingError(
+  error: unknown,
+  fallback: string = APP_MESSAGES.genericActionFailed,
+): string {
+  if (error instanceof AppError) {
+    return error.message;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return sanitizeUserFacingMessage(message || fallback);
 }

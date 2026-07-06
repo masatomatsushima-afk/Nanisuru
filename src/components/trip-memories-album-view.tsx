@@ -16,6 +16,7 @@ import { ProfileShowOnProfileButton } from '@/components/profile-show-on-profile
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
+import { sanitizeUserFacingError } from '@/lib/app-errors';
 import { generateTripMemoryAiSummary } from '@/lib/trip-memory-ai';
 import {
   filterFavoriteMemories,
@@ -145,7 +146,7 @@ export function TripMemoriesAlbumView({
       const ensured = await ensureTripMemoryForSavedTrip(trip);
       await reload(ensured.id);
     } catch (error) {
-      Alert.alert('エラー', error instanceof Error ? error.message : '思い出の読み込みに失敗しました');
+      Alert.alert('エラー', sanitizeUserFacingError(error, '思い出の読み込みに失敗しました'));
     } finally {
       setIsLoading(false);
     }
@@ -166,7 +167,7 @@ export function TripMemoriesAlbumView({
     try {
       await action();
     } catch (error) {
-      Alert.alert('エラー', error instanceof Error ? error.message : '操作に失敗しました');
+      Alert.alert('エラー', sanitizeUserFacingError(error, '操作に失敗しました'));
     } finally {
       setBusyAction(null);
     }

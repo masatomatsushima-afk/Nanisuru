@@ -21,6 +21,7 @@ import { LoadingState } from '@/components/ui/state-cards';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { APP_MESSAGES } from '@/lib/app-errors';
 import { isOpenAiConfigured } from '@/lib/travel-secretary';
 import { detectTripAssistantAction } from '@/lib/trip-assistant-action';
 import { applyTripAssistantAction } from '@/lib/trip-assistant-apply';
@@ -410,7 +411,7 @@ export default function TripAssistantScreen() {
     }
 
     if (!isOpenAiConfigured()) {
-      setError('AI設定が未完了です。OpenAI APIキーを設定してください。');
+      setError(APP_MESSAGES.secretaryFailed);
       return;
     }
 

@@ -12,6 +12,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BetaTestEntryButton } from '@/components/beta-test-entry-button';
+import { DevTestDataResetButton } from '@/components/dev-test-data-reset-button';
+import { FeedbackEntryButton } from '@/components/feedback-entry-button';
 import { NotificationEntryButton } from '@/components/notification-entry-button';
 import { PreferenceSettingsCard } from '@/components/preference-settings-card';
 import { ProfileEmptyState } from '@/components/profile-empty-state';
@@ -29,6 +31,7 @@ import { UserPreferencesSection } from '@/components/user-preferences-section';
 import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { ScreenBackground } from '@/components/ui/screen-background';
 import { NS } from '@/constants/nanisuru-ui';
+import { MVP_VERSION_LABEL } from '@/constants/mvp-qa';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { getAuthProviderLabel, getUserDisplayName, getUserInitial } from '@/lib/auth';
@@ -280,6 +283,8 @@ export default function ProfileScreen() {
 
           <BetaTestEntryButton />
 
+          <FeedbackEntryButton />
+
           {userPreferences ? <UserPreferencesSection preferences={userPreferences} /> : null}
 
           <PreferenceSettingsCard preferences={travelUserPreferences ?? EMPTY_TRAVEL_USER_PREFERENCES} />
@@ -297,6 +302,8 @@ export default function ProfileScreen() {
             isConfigured={isConfigured}
             onRequireLogin={() => router.push('/login')}
           />
+
+          <Text style={styles.versionLabel}>{MVP_VERSION_LABEL}</Text>
         </ScrollView>
       </ScreenBackground>
     );
@@ -457,6 +464,10 @@ export default function ProfileScreen() {
 
         <BetaTestEntryButton />
 
+        <FeedbackEntryButton />
+
+        <DevTestDataResetButton />
+
         <PremiumCard style={styles.accountCard}>
           <Text style={styles.accountTitle}>アカウント</Text>
           <Text style={styles.accountMeta}>
@@ -469,6 +480,8 @@ export default function ProfileScreen() {
             <Text style={styles.noticeText}>データの同期に接続できません。しばらくしてからお試しください。</Text>
           </View>
         ) : null}
+
+        <Text style={styles.versionLabel}>{MVP_VERSION_LABEL}</Text>
       </ScrollView>
     </ScreenBackground>
   );
@@ -651,5 +664,13 @@ const styles = StyleSheet.create({
     color: NS.colors.textSecondary,
     fontSize: 13,
     textAlign: 'center',
+  },
+  versionLabel: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: Spacing.two,
+    marginBottom: Spacing.one,
   },
 });

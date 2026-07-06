@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { PrimaryButton } from '@/components/ui/premium-card';
 import { useAuth } from '@/contexts/auth-context';
+import { APP_MESSAGES } from '@/lib/app-errors';
 import { promptAuthRequired } from '@/lib/require-auth';
 import { saveOrUpdateTrip } from '@/lib/saved-trips';
 import type { CurrencyCode } from '@/constants/currency';
@@ -71,10 +72,7 @@ export function SaveTripButton({
 
   const handleSave = async () => {
     if (!isConfigured) {
-      Alert.alert(
-        'Supabase未設定',
-        '.env に EXPO_PUBLIC_SUPABASE_URL と EXPO_PUBLIC_SUPABASE_ANON_KEY を設定してください。',
-      );
+      Alert.alert('保存できません', APP_MESSAGES.loadFailed);
       return;
     }
 
@@ -108,7 +106,7 @@ export function SaveTripButton({
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 1600);
     } catch {
-      Alert.alert('保存に失敗しました', '保存に失敗しました。もう一度お試しください');
+      Alert.alert('保存に失敗しました', APP_MESSAGES.planSaveWarning);
     } finally {
       setIsSaving(false);
     }
