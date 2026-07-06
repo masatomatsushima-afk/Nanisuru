@@ -101,7 +101,7 @@ export default function ProfileScreen() {
 
     setIsLoading(true);
     try {
-      console.log('[Profile] loading user profile');
+      if (__DEV__) console.log('[Profile] loading user profile');
       const [loadedProfile, loadedPlans, loadedMemories, loadedSpots, loadedSaved] =
         await Promise.all([
           ensureUserProfile(),
@@ -111,8 +111,12 @@ export default function ProfileScreen() {
           fetchUserSavedPortfolioItems().catch(() => [] as ProfileSavedItem[]),
         ]);
 
-      console.log('[Profile] public plans', loadedPlans);
-      console.log('[Profile] public memories', loadedMemories);
+      if (__DEV__) {
+        console.log('[Profile] loaded', {
+          plans: loadedPlans.length,
+          memories: loadedMemories.length,
+        });
+      }
 
       setProfile({ ...loadedProfile, isSelf: true });
       setPlans(loadedPlans);
@@ -377,7 +381,7 @@ export default function ProfileScreen() {
         {isLoading ? (
           <View style={styles.loadingWrap}>
             <ActivityIndicator size="large" color={NS.colors.accent} />
-            <Text style={styles.loadingText}>読み込み中...</Text>
+            <Text style={styles.loadingText}>読み込み中…</Text>
           </View>
         ) : (
           <>

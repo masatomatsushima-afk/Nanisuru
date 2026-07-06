@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -62,10 +62,13 @@ function DetailCard({
   );
 }
 
-function BulletList({ items }: { items: string[] }) {
+function BulletList({ items }: { items?: string[] }) {
+  const safeItems = (items ?? []).filter(Boolean);
+  if (safeItems.length === 0) return null;
+
   return (
     <View style={styles.bulletList}>
-      {items.map((item) => (
+      {safeItems.map((item) => (
         <View key={item} style={styles.bulletRow}>
           <View style={styles.bulletDot} />
           <Text style={styles.bulletText}>{item}</Text>
@@ -154,6 +157,64 @@ export default function PlanDetailScreen() {
       companion: companion ?? '一人',
       items: localItems,
     });
+
+  const transportContext = useMemo(
+    () => ({
+      location,
+      weather: planDetails.weather,
+      travelTiming: planDetails.travelTiming,
+      companion: companion ?? '一人',
+      budget,
+    }),
+    [location, planDetails.weather, planDetails.travelTiming, companion, budget],
+  );
+
+  const derivedOutfitAdvice = useMemo(() => {
+    if (planDetails.outfitAdvice || !planDetails.weather) return null;
+    return generateOutfitPackingAdvice({
+      days,
+      weather: planDetails.weather,
+      location,
+      companion: companion ?? '一人',
+      dayCount: days.length,
+      tripDate: planDetails.tripDate,
+    });
+  }, [planDetails.outfitAdvice, planDetails.weather, planDetails.tripDate, days, location, companion]);
+
+  const planPayload: SavedTripPayload = useMemo(
+    () => ({
+      location,
+      budget,
+      currency,
+      people,
+      mood,
+      companion: companion ?? '一人',
+      personality: personality ?? 'のんびり',
+      tripDuration,
+      days,
+      items: localItems,
+      details: planDetails,
+      budgetIncludes,
+      travelPurpose,
+      savedAt: preserveSavedAt,
+    }),
+    [
+      location,
+      budget,
+      currency,
+      people,
+      mood,
+      companion,
+      personality,
+      tripDuration,
+      days,
+      localItems,
+      planDetails,
+      budgetIncludes,
+      travelPurpose,
+      preserveSavedAt,
+    ],
+  );
 
   const handleApplyWeatherReplan = async (
     nextPayload: SavedTripPayload,
@@ -246,23 +307,6 @@ export default function PlanDetailScreen() {
     );
   }
 
-  const planPayload: SavedTripPayload = {
-    location,
-    budget,
-    currency,
-    people,
-    mood,
-    companion,
-    personality: personality ?? 'のんびり',
-    tripDuration,
-    days,
-    items: localItems,
-    details: planDetails,
-    budgetIncludes,
-    travelPurpose,
-    savedAt: preserveSavedAt,
-  };
-
   const handleTripSaved = (trip: SavedTrip) => {
     setSavedTripId(trip.id);
     setPreserveSavedAt(trip.payload.savedAt);
@@ -329,17 +373,8 @@ export default function PlanDetailScreen() {
 
       {planDetails.outfitAdvice ? (
         <OutfitPackingSection advice={planDetails.outfitAdvice} />
-      ) : planDetails.weather ? (
-        <OutfitPackingSection
-          advice={generateOutfitPackingAdvice({
-            days,
-            weather: planDetails.weather,
-            location,
-            companion,
-            dayCount: days.length,
-            tripDate: planDetails.tripDate,
-          })}
-        />
+      ) : derivedOutfitAdvice ? (
+        <OutfitPackingSection advice={derivedOutfitAdvice} />
       ) : null}
 
       <DetailCard icon="✨" title="おすすめポイント">
@@ -370,26 +405,14 @@ export default function PlanDetailScreen() {
             setEditTarget(target);
             setShowEditSheet(true);
           }}
-          transportContext={{
-            location,
-            weather: planDetails.weather,
-            travelTiming: planDetails.travelTiming,
-            companion,
-            budget,
-          }}
+          transportContext={transportContext}
         />
       </View>
 
       <ConciergeAccessSection
         days={days}
         location={location}
-        transportContext={{
-          location,
-          weather: planDetails.weather,
-          travelTiming: planDetails.travelTiming,
-          companion,
-          budget,
-        }}
+        transportContext={transportContext}
       />
 
       {days.length >= 2 ? (

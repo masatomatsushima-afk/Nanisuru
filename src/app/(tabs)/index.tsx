@@ -860,7 +860,6 @@ export default function HomeScreen() {
   }, []);
 
   const showGenerationOverlay = useCallback(async () => {
-    console.log('[GenerateButton] show overlay');
     setScheduleError(null);
     setIsLoading(true);
     setError(null);
@@ -869,10 +868,6 @@ export default function HomeScreen() {
     setGenerationStepIndex(INITIAL_GENERATION_STEP);
     await waitForOverlayPaint();
   }, []);
-
-  useEffect(() => {
-    console.log('[PlanGenerationOverlay] visible', isLoading);
-  }, [isLoading]);
 
   const handleCancelGeneration = () => {
     generationAbortRef.current?.abort();
@@ -923,7 +918,6 @@ export default function HomeScreen() {
       ]);
 
       setUserPreferences(prefs);
-      void refreshTravelMemories();
 
       if (prefs.favoriteTravelStyle) {
         setPersonality(prefs.favoriteTravelStyle);
@@ -1029,7 +1023,9 @@ export default function HomeScreen() {
   };
 
   const handleTravelPurposeSelect = (option: (typeof TRAVEL_SHEET_PURPOSE_OPTIONS)[number]) => {
-    console.log('[TravelPlanForm] selected purpose', option.label);
+    if (__DEV__) {
+      console.log('[TravelPlanForm] selected purpose', option.label);
+    }
     setSelectedTravelPurposeId(option.id);
     setTravelPurpose(option.label);
     if (option.travelIntent) {
@@ -1183,7 +1179,7 @@ export default function HomeScreen() {
     const effectiveCustomPreferences = snap?.customPreferences ?? customPreferences;
 
     if (generationInFlightRef.current && !options?.overlayReady) {
-      console.log('[GenerateButton] blocked: generation already in flight');
+      if (__DEV__) console.log('[GenerateButton] blocked: generation already in flight');
       return;
     }
 
@@ -1197,14 +1193,14 @@ export default function HomeScreen() {
         customPreferences: effectiveCustomPreferences,
       })
     ) {
-      console.log('[GenerateButton] blocked: canGeneratePlan', {
-        planType,
-        companion,
-        personality,
-        mood,
-        travelIntent: effectiveTravelIntent,
-        customTravelIntent: effectiveCustomPreferences.customTravelIntent,
-      });
+      if (__DEV__) {
+        console.log('[GenerateButton] blocked: canGeneratePlan', {
+          planType,
+          companion,
+          personality,
+          mood,
+        });
+      }
       if (openedPlanMode === 'travel') {
         setError(TRAVEL_PLAN_USER_ERROR);
       }
@@ -1217,7 +1213,7 @@ export default function HomeScreen() {
 
     const scheduleValidation = validateTripSchedule(effectiveTripSchedule);
     if (scheduleValidation) {
-      console.log('[GenerateButton] blocked: scheduleValidation', scheduleValidation);
+      if (__DEV__) console.log('[GenerateButton] blocked: scheduleValidation', scheduleValidation);
       setScheduleError(scheduleValidation);
       return;
     }
@@ -1431,7 +1427,17 @@ export default function HomeScreen() {
   const travelValidationMessages = getTravelPlanValidationMessages(travelValidationErrors);
 
   const handleTravelGenerate = async () => {
-    console.log('[GenerateButton] clicked');
+    setTravelValidationAttempted(true);
+
+    if (generationInFlightRef.current || isLoading) {
+      return;
+    }
+
+    if (!isTravelPlanFormValid(travelValidationErrors)) {
+      return;
+    }
+
+    generationInFlightRef.current = true;
 
     const formState = {
       destination: location,
@@ -1449,37 +1455,6 @@ export default function HomeScreen() {
     };
 
     const resolvedTravelPurpose = resolveTravelPurpose(formState);
-    console.log('[TravelPlanForm] final selected purpose', resolvedTravelPurpose);
-
-    const durationMeta = getTravelPlanDurationMeta(formState);
-    const { departureDate, returnDate, durationLabel, nights, days } = durationMeta;
-    console.log('[TravelPlanForm] duration', {
-      departureDate,
-      returnDate,
-      durationLabel,
-      nights,
-      days,
-    });
-    console.log('[TravelPlanForm] budget includes', getTravelPlanBudgetIncludes(formState));
-
-    console.log('[GenerateButton] disabled state', {
-      disabled: !travelFormReady || isLoading,
-      isGeneratingPlan: isLoading,
-      validationErrors: travelValidationErrors,
-      formState,
-    });
-
-    setTravelValidationAttempted(true);
-
-    if (generationInFlightRef.current) {
-      console.log('[GenerateButton] blocked: generation already in flight');
-      return;
-    }
-
-    if (!isTravelPlanFormValid(travelValidationErrors)) {
-      console.log('[GenerateButton] blocked: validation', travelValidationErrors);
-      return;
-    }
 
     await showGenerationOverlay();
 
@@ -1551,25 +1526,6 @@ export default function HomeScreen() {
 
     setTripSchedule(nextTripSchedule);
 
-    const payload = buildTravelPlanSubmitPayload({
-      ...formInput,
-      destination: normalizedState.location,
-      arrivalTime: normalizedState.arrivalTime,
-      departureTime: normalizedState.departureTime,
-      budget: normalizedState.budget,
-      peopleCount: normalizedState.people,
-      travelIntent: nextTravelIntent,
-      customPreferences: nextCustomPreferences,
-      travelPurpose: nextTravelPurpose,
-    });
-
-    console.log('[TravelPlanForm] raw form state', {
-      ...formState,
-      departureDate: durationMeta.departureDate,
-      returnDate: durationMeta.returnDate,
-    });
-    console.log('[TravelPlanForm] final payload', payload);
-
     setLocation(normalizedState.location);
     setBudget(normalizedState.budget);
     setPeople(normalizedState.people);
@@ -1583,16 +1539,11 @@ export default function HomeScreen() {
     try {
       await handleGenerate({ overlayReady: true });
     } catch (error) {
-      console.error('[GenerateButton] error', error);
+      if (__DEV__) console.error('[GenerateButton] error', error);
       if (!isAbortError(error)) {
         logTravelPlanGenerationError(error);
         setError(formatPlanGenerationDevError(TRAVEL_PLAN_USER_ERROR, error));
       }
-    } finally {
-      generationInFlightRef.current = false;
-      stopGenerationProgress();
-      setIsLoading(false);
-      setGenerationStepIndex(INITIAL_GENERATION_STEP);
     }
   };
 

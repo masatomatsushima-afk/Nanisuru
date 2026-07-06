@@ -30,15 +30,18 @@ export default function LocalGemsScreen() {
   const [feed, setFeed] = useState<LocalGemsFeedResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(
     async (refresh = false) => {
       if (refresh) setIsRefreshing(true);
       else setIsLoading(true);
+      setError(null);
       try {
         setFeed(await loadLocalGemsFeed(areaHint));
-      } catch {
+      } catch (err) {
         setFeed(null);
+        setError(err instanceof Error ? err.message : '読み込みに失敗しました');
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
@@ -116,7 +119,12 @@ export default function LocalGemsScreen() {
         {isLoading ? (
           <View style={styles.loadingWrap}>
             <ActivityIndicator size="large" color={NS.colors.accent} />
-            <Text style={styles.loadingText}>読み込み中...</Text>
+            <Text style={styles.loadingText}>読み込み中…</Text>
+          </View>
+        ) : error ? (
+          <View style={styles.errorWrap}>
+            <Text style={styles.errorText}>{error}</Text>
+            <PrimaryButton label="もう一度試す" onPress={() => void load()} variant="secondary" />
           </View>
         ) : feed?.sections.length ? (
           feed.sections.map(renderSection)
@@ -165,6 +173,17 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   loadingText: { color: NS.colors.textSecondary, fontSize: 13 },
+  errorWrap: {
+    alignItems: 'center',
+    paddingVertical: Spacing.four,
+    gap: Spacing.three,
+  },
+  errorText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
   section: { gap: Spacing.two },
   grid: {
     flexDirection: 'row',

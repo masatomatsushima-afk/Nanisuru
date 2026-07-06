@@ -1,4 +1,5 @@
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/premium-card';
@@ -42,16 +43,16 @@ export function TripAssistantActionPreviewModal({
 }: TripAssistantActionPreviewModalProps) {
   const insets = useSafeAreaInsets();
 
-  if (!action) return null;
+  useEffect(() => {
+    if (!__DEV__ || !visible || !action) return;
+    console.log('[TripAssistantAction] preview', {
+      title: action.title,
+      beforeItem: action.beforeItem?.activity,
+      afterItem: action.afterItem?.activity,
+    });
+  }, [visible, action]);
 
-  console.log('[TripAssistantAction] preview', {
-    title: action.title,
-    beforeItem: action.beforeItem.activity,
-    afterItem: action.afterItem.activity,
-    reason: action.reason,
-    budgetImpact: action.budgetImpact,
-    movementNote: action.movementNote,
-  });
+  if (!action) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

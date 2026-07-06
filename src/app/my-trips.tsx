@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -73,7 +73,7 @@ function TripFolderCard({
 function SavedPlanCard({ trip, onOpen }: { trip: SavedTrip; onOpen: () => void }) {
   const { payload } = trip;
   const dateLabel =
-    formatTripDateRangeLabel(payload.details.tripDate, payload.details.tripEndDate) ??
+    formatTripDateRangeLabel(payload.details?.tripDate, payload.details?.tripEndDate) ??
     getDurationDisplayLabel(payload.tripDuration, payload.customDuration);
 
   return (
@@ -103,6 +103,7 @@ export default function MyTripsScreen() {
   const [tripFolders, setTripFolders] = useState<TripFolder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const loadInFlightRef = useRef(false);
 
   const upcomingFolders = useMemo(() => getUpcomingTripFolders(tripFolders), [tripFolders]);
   const isEmpty = savedPlans.length === 0 && tripFolders.length === 0;
@@ -114,6 +115,9 @@ export default function MyTripsScreen() {
       setIsLoading(false);
       return;
     }
+
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
 
     setIsLoading(true);
     setError(null);
@@ -127,6 +131,7 @@ export default function MyTripsScreen() {
       setSavedPlans([]);
       setTripFolders([]);
     } finally {
+      loadInFlightRef.current = false;
       setIsLoading(false);
     }
   }, [session]);
@@ -138,7 +143,6 @@ export default function MyTripsScreen() {
   );
 
   const openFolder = (folderId: string) => {
-    console.log('[MyTrips] open trip folder', folderId);
     router.push(`/trip-folder/${folderId}`);
   };
 
@@ -167,7 +171,6 @@ export default function MyTripsScreen() {
   };
 
   const openSavedPlan = (trip: SavedTrip) => {
-    console.log('[MyTrips] open saved plan', trip.id);
     router.push({
       pathname: '/plan-detail',
       params: savedTripToPlanParams(trip),

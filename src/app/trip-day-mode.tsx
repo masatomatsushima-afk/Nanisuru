@@ -254,12 +254,14 @@ export default function TripDayModeScreen() {
   );
 
   useEffect(() => {
-    if (planPayload) {
-      console.log('[TripDayMode] opened', planPayload);
-      console.log('[TripDayMode] current item', snapshot.currentItem);
-      console.log('[TripDayMode] next item', snapshot.nextItem);
-    }
-  }, [planPayload, snapshot.currentItem, snapshot.nextItem]);
+    if (!__DEV__ || !planPayload) return;
+    console.log('[TripDayMode] opened', {
+      location: planPayload.location,
+      dayCount: planPayload.days?.length ?? 0,
+      current: snapshot.currentItem?.activity,
+      next: snapshot.nextItem?.activity,
+    });
+  }, [planPayload, snapshot.currentItem?.activity, snapshot.nextItem?.activity]);
 
   const persistPlanUpdate = async (
     nextPayload: SavedTripPayload,
@@ -316,7 +318,11 @@ export default function TripDayModeScreen() {
       });
     }
 
-    console.log('[TripDayMode] applied update', nextPayload);
+    if (__DEV__) {
+      console.log('[TripDayMode] applied update', {
+        dayCount: nextPayload.days?.length ?? 0,
+      });
+    }
   };
 
   const handleApplyDelay = async (nextPayload: SavedTripPayload, preview: TripDayDelayPreviewSuccess) => {

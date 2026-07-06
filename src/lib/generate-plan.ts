@@ -713,10 +713,10 @@ async function fetchPlanFromAi(params: {
     },
   };
 
-  console.log('[fetchPlanFromAi] start');
-  console.log('[fetchPlanFromAi] hasOpenAIKey', Boolean(process.env.EXPO_PUBLIC_OPENAI_API_KEY));
-  console.log('[fetchPlanFromAi] model', model);
-  console.log('[fetchPlanFromAi] request payload', requestPayload);
+  if (__DEV__) {
+    console.log('[fetchPlanFromAi] start');
+    console.log('[fetchPlanFromAi] model', model);
+  }
 
   let response: Response;
   try {
@@ -934,11 +934,12 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
         planningMode: weather.planningMode,
       });
     } else if (weather.planningMode === 'seasonal') {
-      console.log('[Weather] using seasonal weather context', {
-        destination: locationTrimmed,
-        planningMode: weather.planningMode,
-        month: weather.seasonalContext?.monthLabel,
-      });
+      if (__DEV__) {
+        console.log('[Weather] using seasonal weather context', {
+          destination: locationTrimmed,
+          planningMode: weather.planningMode,
+        });
+      }
     }
   } catch (error) {
     console.warn('[Weather] fetch failed, continuing without weather', error);
@@ -970,7 +971,9 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   ]);
 
   if (hasTravelUserPreferences(travelUserPreferences)) {
-    console.log('[PlanGeneration] preferences used', travelUserPreferences);
+    if (__DEV__ && travelUserPreferences) {
+      console.log('[PlanGeneration] preferences used');
+    }
   }
 
   const customText = [

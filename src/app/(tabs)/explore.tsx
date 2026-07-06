@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -83,8 +83,13 @@ export default function DiscoverScreen() {
     }
   }, [currentUserId]);
 
+  const loadInFlightRef = useRef(false);
+
   const loadPlans = useCallback(
     async (refresh = false) => {
+      if (loadInFlightRef.current && !refresh) return;
+      loadInFlightRef.current = true;
+
       if (refresh) setIsRefreshing(true);
       else setIsLoading(true);
       setError(null);
@@ -106,6 +111,7 @@ export default function DiscoverScreen() {
         setFeedSections([]);
         setTrending([]);
       } finally {
+        loadInFlightRef.current = false;
         setIsLoading(false);
         setIsRefreshing(false);
       }
@@ -119,10 +125,6 @@ export default function DiscoverScreen() {
       void loadPlans();
     }, [fetchLocation, loadPlans]),
   );
-
-  useEffect(() => {
-    void loadPlans();
-  }, [loadPlans]);
 
   const handleTopCategoryChange = (categoryId: DiscoverTopCategoryId) => {
     setTopCategory(categoryId);
@@ -142,7 +144,7 @@ export default function DiscoverScreen() {
       return (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={NS.colors.accent} />
-          <Text style={styles.loadingText}>読み込み中...</Text>
+          <Text style={styles.loadingText}>読み込み中…</Text>
         </View>
       );
     }

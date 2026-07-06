@@ -172,6 +172,7 @@ export default function MemoriesHubScreen() {
           {authLoading || isLoading ? (
             <View style={styles.loading}>
               <ActivityIndicator size="large" color={NS.colors.accent} />
+              <Text style={styles.loadingText}>読み込み中…</Text>
             </View>
           ) : memories.length === 0 ? (
             <FadeInView delay={80}>
@@ -199,6 +200,14 @@ export default function MemoriesHubScreen() {
                 </View>
               </FadeInView>
             ))
+          ) : filteredMemories.length === 0 ? (
+            <FadeInView delay={80}>
+              <PremiumCard style={styles.empty}>
+                <Text style={styles.emptyEmoji}>🔍</Text>
+                <Text style={styles.emptyTitle}>該当する思い出がありません</Text>
+                <Text style={styles.emptyText}>フィルターを変更してみてください</Text>
+              </PremiumCard>
+            </FadeInView>
           ) : (
             <>
               <FadeInView delay={60}>
@@ -299,6 +308,12 @@ const styles = StyleSheet.create({
   loading: {
     paddingVertical: Spacing.six,
     alignItems: 'center',
+    gap: Spacing.two,
+  },
+  loadingText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
   },
   empty: {
     padding: Spacing.six,

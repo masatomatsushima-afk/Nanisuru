@@ -87,7 +87,7 @@ export async function buildTripAssistantContext(
   const itinerary =
     latestPlan?.items?.length
       ? latestPlan.items
-      : (latestPlan?.days.flatMap((day) => day.items) ?? []);
+      : (latestPlan?.days ?? []).flatMap((day) => day.items ?? []);
 
   const [enriched, userPrefs, travelUserPrefs, editHistorySummary] = await Promise.all([
     buildTripFolderEnrichedContext(folder),
@@ -136,23 +136,14 @@ export async function buildTripAssistantContext(
     editHistorySummary,
   };
 
-  console.log('[TripAssistant] folder context', {
-    folderId: context.folder.id,
-    title: context.folder.title,
-    destination: context.folder.destination,
-    departureDate: context.folder.departureDate,
-    returnDate: context.folder.returnDate,
-    durationLabel: context.folder.durationLabel,
-    planCount: context.savedPlans.length,
-    itineraryCount: context.itinerary.length,
-    budget: context.budget,
-    budgetIncludes: context.budgetIncludes,
-    travelPurpose: context.travelPurpose,
-    companion: context.companion,
-    weatherContext: context.weatherContext,
-    editHistorySummary: context.editHistorySummary,
-    userPreferences: context.userPreferences,
-  });
+  if (__DEV__) {
+    console.log('[TripAssistant] folder context', {
+      folderId: context.folder.id,
+      title: context.folder.title,
+      planCount: context.savedPlans.length,
+      itineraryCount: context.itinerary.length,
+    });
+  }
 
   return context;
 }

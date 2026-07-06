@@ -128,7 +128,7 @@ function MessageBubble({
             <View style={styles.actionBox}>
               <Text style={styles.actionTitle}>{action.title}</Text>
               <Text style={styles.actionSummary}>
-                {action.beforeItem.activity} → {action.afterItem.activity}
+                {action.beforeItem?.activity ?? '—'} → {action.afterItem?.activity ?? '—'}
               </Text>
               <PrimaryButton
                 label={isApplying ? '反映中…' : 'この変更をプランに反映'}
@@ -201,6 +201,7 @@ export default function TripAssistantScreen() {
   }>();
   const { session } = useAuth();
   const scrollRef = useRef<ScrollView>(null);
+  const submitInFlightRef = useRef(false);
 
   const [folder, setFolder] = useState<TripFolder | null>(null);
   const [linkedTrip, setLinkedTrip] = useState<SavedTrip | null>(null);
@@ -398,13 +399,22 @@ export default function TripAssistantScreen() {
 
   const submitMessage = async (rawText: string) => {
     const trimmed = rawText.trim();
-    if (!trimmed || isThinking || !effectiveContext || !folder) return;
+    if (
+      !trimmed ||
+      isThinking ||
+      submitInFlightRef.current ||
+      !effectiveContext ||
+      !folder
+    ) {
+      return;
+    }
 
     if (!isOpenAiConfigured()) {
       setError('AI設定が未完了です。OpenAI APIキーを設定してください。');
       return;
     }
 
+    submitInFlightRef.current = true;
     const userMessage = createMessage('user', trimmed);
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
@@ -449,6 +459,7 @@ export default function TripAssistantScreen() {
     } catch {
       setError('返答の生成に失敗しました。もう一度お試しください。');
     } finally {
+      submitInFlightRef.current = false;
       setIsThinking(false);
       scrollToEnd();
     }
