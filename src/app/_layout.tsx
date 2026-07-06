@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { DevSupabaseSetupProbe } from '@/components/dev-supabase-setup-probe';
 import { AuthProvider } from '@/contexts/auth-context';
 import { UserLocationProvider } from '@/contexts/user-location-context';
 import { NS } from '@/constants/nanisuru-ui';
@@ -28,6 +29,7 @@ export default function RootLayout() {
         <ThemeProvider value={NanisuruTheme}>
         <StatusBar style="dark" />
         <AnimatedSplashOverlay />
+        {__DEV__ ? <DevSupabaseSetupProbe /> : null}
         <Stack
           screenOptions={{
             headerShown: false,
