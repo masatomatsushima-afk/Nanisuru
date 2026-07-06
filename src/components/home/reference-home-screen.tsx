@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
+  FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -12,6 +13,8 @@ import {
   Text,
   View,
   useWindowDimensions,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -49,8 +52,6 @@ const GRID_GAP = 12;
 const BOTTOM_NAV_PAD = 128;
 
 const PAGE_BG = '#FFFCF8';
-/** Bright coastal road / travel — warm, not a dark car shot */
-const HERO_IMAGE = VISUAL_PRESETS.hero.imageUrl;
 
 const softShadow = {
   shadowColor: '#0F172A',
@@ -61,6 +62,7 @@ const softShadow = {
 };
 
 type HeroChip = {
+  id: string;
   label: string;
   bg: string;
   text: string;
@@ -68,34 +70,114 @@ type HeroChip = {
   target: HomeActionTarget;
 };
 
-const HERO_CHIPS: HeroChip[] = [
+type HeroBannerSlide = {
+  id: string;
+  title: string;
+  subtitle: string;
+  imageUrl: string;
+  fallbackColor: string;
+  emoji: string;
+  bannerTarget: HomeActionTarget;
+  chips: HeroChip[];
+};
+
+const HERO_BANNERS: HeroBannerSlide[] = [
   {
-    label: 'カフェ',
-    bg: '#FFEDD5',
-    text: '#C2410C',
-    border: '#FDBA74',
-    target: { kind: 'openForm', mode: 'now', routeLabel: 'openForm:now' },
+    id: 'hero-weekend',
+    title: '週末、なにする？♡',
+    subtitle: '気分にぴったりの過ごし方を見つけよう',
+    imageUrl: VISUAL_PRESETS.hero.imageUrl,
+    fallbackColor: '#FFE8D6',
+    emoji: '🏖',
+    bannerTarget: { kind: 'openForm', mode: 'now', routeLabel: 'openForm:now' },
+    chips: [
+      {
+        id: 'weekend-cafe',
+        label: 'カフェ',
+        bg: '#FFEDD5',
+        text: '#C2410C',
+        border: '#FDBA74',
+        target: { kind: 'openForm', mode: 'now', routeLabel: 'openForm:now' },
+      },
+      {
+        id: 'weekend-date',
+        label: 'デート',
+        bg: '#FFE4E6',
+        text: '#E11D48',
+        border: '#FDA4AF',
+        target: { kind: 'openForm', mode: 'now', planType: 'デートプラン', routeLabel: 'openForm:date' },
+      },
+      {
+        id: 'weekend-travel',
+        label: '旅行',
+        bg: '#DBEAFE',
+        text: '#1D4ED8',
+        border: '#93C5FD',
+        target: { kind: 'openForm', mode: 'travel', routeLabel: 'openForm:travel' },
+      },
+      {
+        id: 'weekend-night',
+        label: '夜遊び',
+        bg: '#E0E7FF',
+        text: '#4338CA',
+        border: '#A5B4FC',
+        target: { kind: 'openForm', mode: 'night', routeLabel: 'openForm:night' },
+      },
+    ],
   },
   {
-    label: 'デート',
-    bg: '#FFE4E6',
-    text: '#E11D48',
-    border: '#FDA4AF',
-    target: { kind: 'openForm', mode: 'now', planType: 'デートプラン', routeLabel: 'openForm:date' },
+    id: 'hero-cafe',
+    title: 'カフェ巡り',
+    subtitle: 'のんびり過ごせるスポットをチェック',
+    imageUrl: VISUAL_PRESETS.cafe.imageUrl,
+    fallbackColor: '#FFEDD5',
+    emoji: '☕',
+    bannerTarget: { kind: 'openForm', mode: 'now', routeLabel: 'openForm:now' },
+    chips: [
+      {
+        id: 'cafe-cafe',
+        label: 'カフェ',
+        bg: '#FFEDD5',
+        text: '#C2410C',
+        border: '#FDBA74',
+        target: { kind: 'openForm', mode: 'now', routeLabel: 'openForm:now' },
+      },
+      {
+        id: 'cafe-walk',
+        label: '散歩',
+        bg: '#ECFDF5',
+        text: '#047857',
+        border: '#A7F3D0',
+        target: { kind: 'openForm', mode: 'now', routeLabel: 'openForm:now' },
+      },
+    ],
   },
   {
-    label: '旅行',
-    bg: '#DBEAFE',
-    text: '#1D4ED8',
-    border: '#93C5FD',
-    target: { kind: 'openForm', mode: 'travel', routeLabel: 'openForm:travel' },
-  },
-  {
-    label: '夜遊び',
-    bg: '#E0E7FF',
-    text: '#4338CA',
-    border: '#A5B4FC',
-    target: { kind: 'openForm', mode: 'night', routeLabel: 'openForm:night' },
+    id: 'hero-night',
+    title: '夜のプラン',
+    subtitle: '2軒目や夜景も、この先で',
+    imageUrl: VISUAL_PRESETS.night.imageUrl,
+    fallbackColor: '#E0E7FF',
+    emoji: '🌙',
+    bannerTarget: { kind: 'openForm', mode: 'night', routeLabel: 'openForm:night' },
+    chips: [
+      {
+        id: 'night-night',
+        label: '夜遊び',
+        bg: '#E0E7FF',
+        text: '#4338CA',
+        border: '#A5B4FC',
+        target: { kind: 'openForm', mode: 'night', routeLabel: 'openForm:night' },
+      },
+      {
+        id: 'night-date',
+        label: 'デート',
+        bg: '#FFE4E6',
+        text: '#E11D48',
+        border: '#FDA4AF',
+        target: { kind: 'openForm', mode: 'now', planType: 'デートプラン', routeLabel: 'openForm:date' },
+      },
+    ],
   },
 ];
 
@@ -359,6 +441,137 @@ function AllStoryCircle() {
   );
 }
 
+function HeroBannerCarousel({
+  cardWidth,
+  heroTextW,
+  heroImageW,
+  onBannerPress,
+  onChipPress,
+}: {
+  cardWidth: number;
+  heroTextW: number;
+  heroImageW: number;
+  onBannerPress: (slide: HeroBannerSlide) => void;
+  onChipPress: (chip: HeroChip) => void;
+}) {
+  const listRef = useRef<FlatList<HeroBannerSlide>>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const updateActiveIndex = useCallback(
+    (offsetX: number) => {
+      const next = Math.round(offsetX / cardWidth);
+      setActiveIndex(Math.min(Math.max(next, 0), HERO_BANNERS.length - 1));
+    },
+    [cardWidth],
+  );
+
+  const onMomentumScrollEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      updateActiveIndex(event.nativeEvent.contentOffset.x);
+    },
+    [updateActiveIndex],
+  );
+
+  const scrollToBanner = useCallback(
+    (index: number) => {
+      listRef.current?.scrollToIndex({ index, animated: true });
+      setActiveIndex(index);
+    },
+    [],
+  );
+
+  const renderBanner = useCallback(
+    ({ item }: { item: HeroBannerSlide }) => (
+      <View style={{ width: cardWidth }}>
+        <Pressable
+          style={[styles.heroCard, { width: cardWidth, height: HERO_H }, softShadow]}
+          onPress={() => onBannerPress(item)}>
+          <View style={[styles.heroImagePane, { width: heroImageW }]}>
+            <CoverFill
+              uri={item.imageUrl}
+              width={heroImageW}
+              height={HERO_H}
+              fallbackColor={item.fallbackColor}
+              emoji={item.emoji}
+            />
+          </View>
+          <View style={[styles.heroGradSolid, { width: heroTextW + 18 }]} />
+          <View style={[styles.heroGradMid, { left: heroTextW - 14, width: 28 }]} />
+          <View style={[styles.heroGradSoft, { left: heroTextW + 10, width: 18 }]} />
+          <View style={[styles.heroTextPane, { width: heroTextW }]}>
+            <Text style={styles.heroTitle} numberOfLines={2}>
+              {item.title}
+            </Text>
+            <Text style={styles.heroSub} numberOfLines={2}>
+              {item.subtitle}
+            </Text>
+            <View style={styles.heroChips}>
+              {item.chips.map((chip) => (
+                <Pressable
+                  key={chip.id}
+                  style={[styles.heroChip, { backgroundColor: chip.bg, borderColor: chip.border }]}
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    onChipPress(chip);
+                  }}>
+                  <Text style={[styles.heroChipText, { color: chip.text }]}>{chip.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </Pressable>
+      </View>
+    ),
+    [cardWidth, heroImageW, heroTextW, onBannerPress, onChipPress],
+  );
+
+  return (
+    <View style={[styles.heroWrap, { width: cardWidth }]}>
+      <FlatList
+        ref={listRef}
+        data={HERO_BANNERS}
+        keyExtractor={(item) => item.id}
+        renderItem={renderBanner}
+        horizontal
+        pagingEnabled={Platform.OS !== 'web'}
+        showsHorizontalScrollIndicator={false}
+        decelerationRate="fast"
+        snapToInterval={cardWidth}
+        snapToAlignment="start"
+        disableIntervalMomentum
+        nestedScrollEnabled
+        directionalLockEnabled
+        bounces={false}
+        scrollEventThrottle={16}
+        onScroll={(event) => updateActiveIndex(event.nativeEvent.contentOffset.x)}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        getItemLayout={(_, index) => ({
+          length: cardWidth,
+          offset: cardWidth * index,
+          index,
+        })}
+        onScrollToIndexFailed={(info) => {
+          listRef.current?.scrollToOffset({
+            offset: info.index * cardWidth,
+            animated: true,
+          });
+        }}
+      />
+      <View style={styles.heroDots}>
+        {HERO_BANNERS.map((banner, index) => (
+          <Pressable
+            key={banner.id}
+            onPress={() => scrollToBanner(index)}
+            hitSlop={8}
+            accessibilityLabel={`バナー ${index + 1}`}>
+            <View style={[styles.heroDot, index === activeIndex && styles.heroDotActive]} />
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function PlanFormSheet({
   visible,
   mode,
@@ -574,50 +787,19 @@ export function ReferenceHomeScreen({
 
         <Text style={styles.sectionLabel}>✨ 今日のおすすめ</Text>
 
-        <View style={styles.heroWrap}>
-          <Pressable
-            style={[styles.heroCard, { width: contentW, height: HERO_H }, softShadow]}
-            onPress={() => openPlanForm('now', 'ヒーローバナー')}>
-            <View style={[styles.heroImagePane, { width: heroImageW }]}>
-              <CoverFill
-                uri={HERO_IMAGE}
-                width={heroImageW}
-                height={HERO_H}
-                fallbackColor="#FFE8D6"
-                emoji="🏖"
-              />
-            </View>
-            <View style={[styles.heroGradSolid, { width: heroTextW + 18 }]} />
-            <View style={[styles.heroGradMid, { left: heroTextW - 14, width: 28 }]} />
-            <View style={[styles.heroGradSoft, { left: heroTextW + 10, width: 18 }]} />
-            <View style={[styles.heroTextPane, { width: heroTextW }]}>
-              <Text style={styles.heroTitle} numberOfLines={2}>
-                週末、なにする？♡
-              </Text>
-              <Text style={styles.heroSub} numberOfLines={2}>
-                気分にぴったりの過ごし方を見つけよう
-              </Text>
-              <View style={styles.heroChips}>
-                {HERO_CHIPS.map((c) => (
-                  <Pressable
-                    key={c.label}
-                    style={[styles.heroChip, { backgroundColor: c.bg, borderColor: c.border }]}
-                    onPress={(event) => {
-                      event.stopPropagation();
-                      runTarget(c.label, c.target);
-                    }}>
-                    <Text style={[styles.heroChipText, { color: c.text }]}>{c.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          </Pressable>
-          <View style={styles.heroDots}>
-            <View style={[styles.heroDot, styles.heroDotActive]} />
-            <View style={styles.heroDot} />
-            <View style={styles.heroDot} />
-          </View>
-        </View>
+        <HeroBannerCarousel
+          cardWidth={contentW}
+          heroTextW={heroTextW}
+          heroImageW={heroImageW}
+          onBannerPress={(slide) => {
+            if (slide.bannerTarget.kind === 'openForm') {
+              openPlanForm(slide.bannerTarget.mode, slide.title, slide.bannerTarget.planType);
+              return;
+            }
+            runTarget(slide.title, slide.bannerTarget);
+          }}
+          onChipPress={(chip) => runTarget(chip.label, chip.target)}
+        />
 
         <ScrollView
           horizontal
@@ -925,7 +1107,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
   },
 
-  heroWrap: { alignSelf: 'center', gap: 0 },
+  heroWrap: { alignSelf: 'center', gap: 0, overflow: 'hidden' },
   heroCard: {
     position: 'relative',
     borderRadius: HERO_RADIUS,
@@ -1008,12 +1190,14 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
     backgroundColor: '#CBD5E1',
+    opacity: 0.55,
   },
   heroDotActive: {
-    width: 8,
+    width: 18,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#FB923C',
+    opacity: 1,
   },
 
   storyRow: { marginHorizontal: -PAD },

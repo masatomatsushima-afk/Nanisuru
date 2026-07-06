@@ -1947,6 +1947,7 @@ export default function HomeScreen() {
           },
         ]}
         keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
         showsVerticalScrollIndicator={false}>
         <ReferenceHomeScreen
           renderPlanForm={renderPlanCreationForm}
