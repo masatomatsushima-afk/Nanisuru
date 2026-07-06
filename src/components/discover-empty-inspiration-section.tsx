@@ -268,7 +268,7 @@ export function DiscoverEmptyInspirationSection({
           最初の本気プランを投稿して、みんなに旅・デートのアイデアを届けましょう。
         </Text>
         <View style={styles.buttonWrap}>
-          <PrimaryButton label="プランを作る" onPress={() => router.push('/')} />
+          <PrimaryButton label="プランを作る" onPress={() => router.push('/(tabs)')} />
         </View>
       </PremiumCard>
 
@@ -297,7 +297,7 @@ export function DiscoverEmptyInspirationSection({
           プランを作って公開すれば、発見タブのこの場所にあなたの行程が表示されます。
         </Text>
         <View style={styles.buttonWrap}>
-          <PrimaryButton label="プランを作る" onPress={() => router.push('/')} />
+          <PrimaryButton label="プランを作る" onPress={() => router.push('/(tabs)')} />
         </View>
       </PremiumCard>
 

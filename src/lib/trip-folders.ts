@@ -91,6 +91,7 @@ async function getCurrentUserId(): Promise<string | null> {
 }
 
 export async function fetchUserTripFolders(): Promise<TripFolder[]> {
+  if (!isSupabaseConfigured()) return [];
   assertConfigured();
   const userId = await getCurrentUserId();
   if (!userId) throw new Error('ログインが必要です');
@@ -107,6 +108,7 @@ export async function fetchUserTripFolders(): Promise<TripFolder[]> {
 }
 
 export async function getTripFolderById(folderId: string): Promise<TripFolder | null> {
+  if (!isSupabaseConfigured()) return null;
   assertConfigured();
   if (!folderId.trim()) return null;
 
@@ -122,6 +124,7 @@ export async function getTripFolderById(folderId: string): Promise<TripFolder | 
 }
 
 export async function getTripFolderBySavedTripId(tripId: string): Promise<TripFolder | null> {
+  if (!isSupabaseConfigured()) return null;
   assertConfigured();
   if (!tripId.trim()) return null;
 
@@ -302,6 +305,7 @@ export async function createTripFolderFromPayload(
 export async function fetchTripAssistantMessages(
   folderId: string,
 ): Promise<TripAssistantMessage[]> {
+  if (!isSupabaseConfigured()) return [];
   assertConfigured();
   const supabase = getSupabase();
   const { data, error } = await supabase

@@ -111,7 +111,7 @@ export default function SharedTripScreen() {
         <Text style={styles.errorText}>
           リンクが無効か、削除された可能性があります。
         </Text>
-        <Pressable style={styles.homeButton} onPress={() => router.replace('/')}>
+        <Pressable style={styles.homeButton} onPress={() => router.replace('/(tabs)')}>
           <Text style={styles.homeButtonText}>ホームへ戻る</Text>
         </Pressable>
       </View>
@@ -299,7 +299,7 @@ export default function SharedTripScreen() {
             day: 'numeric',
           })}
         </Text>
-        <Pressable style={styles.ctaButton} onPress={() => router.replace('/')}>
+        <Pressable style={styles.ctaButton} onPress={() => router.replace('/(tabs)')}>
           <Text style={styles.ctaButtonText}>Nanisuruで自分のプランを作る</Text>
         </Pressable>
       </FadeInView>

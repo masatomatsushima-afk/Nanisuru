@@ -194,7 +194,7 @@ export default function TripFolderDetailScreen() {
                 }
                 variant="secondary"
               />
-              <PrimaryButton label="新しいプランを追加" onPress={() => router.push('/')} variant="secondary" />
+              <PrimaryButton label="新しいプランを追加" onPress={() => router.push('/(tabs)')} variant="secondary" />
             </View>
 
             <Text style={styles.sectionTitle}>このフォルダのプラン</Text>

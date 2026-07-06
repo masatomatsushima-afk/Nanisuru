@@ -160,7 +160,7 @@ export default function ProfileScreen() {
             title="まだ公開プランがありません"
             description="プランを作って公開すると、ここに表示されます。"
             buttonLabel="プランを作る"
-            onAction={() => router.push('/')}
+            onAction={() => router.push('/(tabs)')}
           />
         ) : (
           <View style={styles.grid}>

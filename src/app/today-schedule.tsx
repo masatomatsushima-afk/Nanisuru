@@ -104,7 +104,7 @@ export default function TodayScheduleScreen() {
         },
       ]}
       showsVerticalScrollIndicator={false}>
-      <Pressable style={styles.backButton} onPress={() => router.replace('/')}>
+      <Pressable style={styles.backButton} onPress={() => router.replace('/(tabs)')}>
         <Text style={styles.backButtonText}>← ホーム</Text>
       </Pressable>
 

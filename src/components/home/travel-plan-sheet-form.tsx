@@ -190,20 +190,9 @@ export function TravelPlanSheetForm({
   ]);
 
   const handleGeneratePress = () => {
-    console.log('[GenerateButton] clicked');
-    console.log('[GenerateButton] disabled state', {
-      disabled: isButtonDisabled,
-      isGeneratingPlan: isLoading,
-      validationErrors,
-      formState: {
-        destination: location,
-        departureDate: tripSchedule.departureDate,
-        returnDate: tripSchedule.returnDate,
-        budget,
-        peopleCount: people,
-        companionType: companion,
-      },
-    });
+    if (__DEV__) {
+      console.log('[GenerateButton] clicked');
+    }
     onGenerate();
   };
 

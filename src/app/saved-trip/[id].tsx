@@ -133,7 +133,7 @@ export default function SavedTripDetailScreen() {
             message={error ?? 'プランが見つかりませんでした'}
             onRetry={() => void loadTrip()}
           />
-          <Pressable onPress={() => router.replace('/favorites')}>
+          <Pressable onPress={() => router.replace('/(tabs)/favorites')}>
             <Text style={styles.linkText}>保存済みプラン一覧へ</Text>
           </Pressable>
         </View>

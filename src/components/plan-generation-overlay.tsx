@@ -141,7 +141,9 @@ export function PlanGenerationOverlay({
   const resolvedStepIndex = currentStepIndex ?? stepIndex ?? 0;
 
   useEffect(() => {
-    console.log('[PlanGenerationOverlay] visible', visible, { embedded, stepIndex: resolvedStepIndex });
+    if (__DEV__) {
+      console.log('[PlanGenerationOverlay] visible', visible, { embedded, stepIndex: resolvedStepIndex });
+    }
   }, [embedded, resolvedStepIndex, visible]);
 
   if (!visible) {
@@ -167,7 +169,9 @@ export function PlanGenerationOverlay({
       animationType="fade"
       statusBarTranslucent
       presentationStyle="overFullScreen"
-      onShow={() => console.log('[PlanGenerationOverlay] modal shown')}>
+      onShow={() => {
+        if (__DEV__) console.log('[PlanGenerationOverlay] modal shown');
+      }}>
       <View style={styles.backdrop}>
         <PlanGenerationOverlayCard
           stepIndex={resolvedStepIndex}
@@ -182,12 +186,17 @@ export function PlanGenerationOverlay({
 const styles = StyleSheet.create({
   embeddedRoot: {
     ...StyleSheet.absoluteFill,
-    zIndex: 999,
+    zIndex: 99999,
     elevation: 999,
     backgroundColor: 'rgba(15, 23, 42, 0.48)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
+    ...(Platform.OS === 'web'
+      ? ({
+          position: 'fixed',
+        } as object)
+      : null),
   },
   backdrop: {
     flex: 1,

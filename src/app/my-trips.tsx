@@ -217,7 +217,7 @@ export default function MyTripsScreen() {
             <Text style={styles.emptyText}>
               旅行プランを作成して保存すると、ここに表示されます
             </Text>
-            <PrimaryButton label="旅行プランを作る" onPress={() => router.push('/')} variant="primary" />
+            <PrimaryButton label="旅行プランを作る" onPress={() => router.push('/(tabs)')} variant="primary" />
           </View>
         ) : (
           <View style={styles.sections}>

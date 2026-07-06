@@ -94,7 +94,7 @@ function EmptyState() {
       title="保存したプランはまだありません"
       description="ホームでプランを作って、「プランを保存」でここに追加できます。次のお出かけの準備、始めましょう！"
       actionLabel="プランを作る"
-      onAction={() => router.push('/')}
+      onAction={() => router.push('/(tabs)')}
     />
   );
 }

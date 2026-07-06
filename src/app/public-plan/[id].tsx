@@ -119,7 +119,7 @@ export default function PublicPlanDetailScreen() {
         <Text style={styles.notFoundIcon}>🔍</Text>
         <Text style={styles.errorTitle}>公開プランが見つかりません</Text>
         <Text style={styles.errorText}>削除されたか、非公開に変更された可能性があります。</Text>
-        <Pressable style={styles.homeButton} onPress={() => router.replace('/explore')}>
+        <Pressable style={styles.homeButton} onPress={() => router.replace('/(tabs)/explore')}>
           <Text style={styles.homeButtonText}>発見タブへ戻る</Text>
         </Pressable>
       </View>
@@ -385,8 +385,8 @@ export default function PublicPlanDetailScreen() {
         isLoggedIn={Boolean(session)}
         onRequireLogin={() => router.push('/login')}
         onPlanUpdated={setPlan}
-        onPlanRemoved={() => router.replace('/explore')}
-        onUserBlocked={() => router.replace('/explore')}
+        onPlanRemoved={() => router.replace('/(tabs)/explore')}
+        onUserBlocked={() => router.replace('/(tabs)/explore')}
       />
 
       <View style={styles.readOnlyNote}>

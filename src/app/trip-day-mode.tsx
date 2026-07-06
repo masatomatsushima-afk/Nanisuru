@@ -188,13 +188,17 @@ export default function TripDayModeScreen() {
 
   useEffect(() => {
     if (!folderId && savedTripId && session) {
-      void getTripFolderBySavedTripId(savedTripId).then((folder) => {
-        if (folder) {
-          setFolderId(folder.id);
-          setFolderDepartureDate(folder.departureDate);
-          if (!tripTitle) setTripTitle(folder.title);
-        }
-      });
+      void getTripFolderBySavedTripId(savedTripId)
+        .then((folder) => {
+          if (folder) {
+            setFolderId(folder.id);
+            setFolderDepartureDate(folder.departureDate);
+            if (!tripTitle) setTripTitle(folder.title);
+          }
+        })
+        .catch(() => {
+          // Optional folder link — ignore when Supabase is unavailable.
+        });
     }
   }, [folderId, savedTripId, session, tripTitle]);
 

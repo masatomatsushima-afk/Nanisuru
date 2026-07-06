@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { DevMvpAuditProbe } from '@/components/dev-mvp-audit-probe';
 import { DevSupabaseSetupProbe } from '@/components/dev-supabase-setup-probe';
 import { AuthProvider } from '@/contexts/auth-context';
 import { UserLocationProvider } from '@/contexts/user-location-context';
@@ -29,7 +30,12 @@ export default function RootLayout() {
         <ThemeProvider value={NanisuruTheme}>
         <StatusBar style="dark" />
         <AnimatedSplashOverlay />
-        {__DEV__ ? <DevSupabaseSetupProbe /> : null}
+        {__DEV__ ? (
+          <>
+            <DevSupabaseSetupProbe />
+            <DevMvpAuditProbe />
+          </>
+        ) : null}
         <Stack
           screenOptions={{
             headerShown: false,
@@ -168,6 +174,30 @@ export default function RootLayout() {
           />
           <Stack.Screen
             name="trip-day-mode"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="preference-onboarding"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="local-gems"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="local-spot/submit"
+            options={{
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="local-spot/[id]"
             options={{
               animation: 'slide_from_right',
             }}

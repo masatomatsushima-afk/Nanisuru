@@ -168,7 +168,7 @@ export default function DiscoverScreen() {
             buttonLabel="投稿する"
             onAction={() => {
               if (!session) router.push('/login');
-              else router.push('/');
+              else router.push('/(tabs)');
             }}
           />
           <DiscoverLocalCompact
@@ -311,7 +311,7 @@ export default function DiscoverScreen() {
           <View style={styles.bottomCta}>
             <PrimaryButton
               label="自分だけのプランを作る"
-              onPress={() => router.push('/')}
+              onPress={() => router.push('/(tabs)')}
               variant="warm"
             />
           </View>

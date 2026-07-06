@@ -27,7 +27,7 @@ export function DiscoverHeader({
       onRequireLogin?.();
       return;
     }
-    router.push('/');
+    router.push('/(tabs)');
   };
 
   return (

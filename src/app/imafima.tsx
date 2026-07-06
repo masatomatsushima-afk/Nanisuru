@@ -591,7 +591,7 @@ export default function ImaHimaScreen() {
             setPendingRatingId(null);
             setError(null);
           }} />
-          <Pressable style={styles.homeLink} onPress={() => router.replace('/')}>
+          <Pressable style={styles.homeLink} onPress={() => router.replace('/(tabs)')}>
             <Text style={styles.homeLinkText}>ホームに戻る</Text>
           </Pressable>
         </View>

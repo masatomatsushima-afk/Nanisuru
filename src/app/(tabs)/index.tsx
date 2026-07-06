@@ -406,13 +406,15 @@ function ItineraryTimeline({
     budget,
     currency,
     people,
-    mood,
+    mood: travelPurpose?.trim() || mood,
     companion,
     personality,
     tripDuration,
     days: JSON.stringify(days),
     items: JSON.stringify(items),
     details: JSON.stringify(details),
+    ...(travelPurpose?.trim() ? { travelPurpose: travelPurpose.trim() } : {}),
+    ...(budgetIncludes?.length ? { budgetIncludes: JSON.stringify(budgetIncludes) } : {}),
   };
 
   const openDetail = () => {
@@ -1006,6 +1008,11 @@ export default function HomeScreen() {
       setTravelValidationAttempted(false);
       setSelectedTravelPurposeId(null);
       setTravelPurpose(null);
+      setTravelIntent('');
+      setCustomPreferences((prev) => ({
+        ...prev,
+        customTravelIntent: undefined,
+      }));
       const defaultIncludes = createDefaultTravelBudgetIncludes();
       setTravelBudgetIncludes(defaultIncludes);
       setBudgetScope(travelBudgetIncludesToBudgetScope(defaultIncludes));
@@ -1128,6 +1135,7 @@ export default function HomeScreen() {
       planType,
       personality,
       travelIntent,
+      travelPurpose,
     });
 
     await saveActiveTrip(
@@ -1156,6 +1164,7 @@ export default function HomeScreen() {
       planType,
       personality,
       travelIntent,
+      travelPurpose,
     });
 
     await recordPlanPreferences({

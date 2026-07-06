@@ -201,7 +201,7 @@ function AiSearchModal({
                     label="AIでプランを作る"
                     onPress={() => {
                       handleClose();
-                      router.push('/');
+                      router.push('/(tabs)');
                     }}
                   />
                 </PremiumCard>
