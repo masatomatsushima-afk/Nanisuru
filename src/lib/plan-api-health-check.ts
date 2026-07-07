@@ -18,7 +18,9 @@ export async function runPlanApiHealthCheck(): Promise<void> {
   });
 
   if (!validation.ok) {
-    console.error('[HealthCheck] invalid API config', validation.issues);
+    // Not fatal — just informational (e.g. Mac Safari on localhost can't be reached from iPhone).
+    // Never console.error here: Expo's web dev tooling turns console.error into a red LogBox screen.
+    console.warn('[HealthCheck] invalid API config', validation.issues);
   }
 
   try {
@@ -31,29 +33,29 @@ export async function runPlanApiHealthCheck(): Promise<void> {
       requestUrl: logUrl,
     });
     if (!response.ok) {
-      console.error('[HealthCheck] response not ok', {
+      console.warn('[HealthCheck] response not ok', {
         status: response.status,
         statusText: response.statusText,
         text,
       });
     }
   } catch (error) {
-    console.error('[HealthCheck] failed raw', error);
-    console.error('[HealthCheck] failed details', {
+    console.warn('[HealthCheck] failed', {
       name: error instanceof Error ? error.name : undefined,
       message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
       requestUrl: logUrl,
       origin: getWindowOriginForLog(),
     });
   }
 }
 
-/** Dev-only: call from Safari console as `globalThis.__nanisuruHealthCheck()` */
-export function installPlanApiHealthCheckDevHook(): void {
+/** Dev-only: call from Safari console as `globalThis.__nanisuruHealthCheck()`. */
+export function installPlanApiHealthCheckDevHook(options: { autoRun?: boolean } = {}): void {
   if (!__DEV__ || typeof globalThis === 'undefined') return;
 
   (globalThis as Record<string, unknown>).__nanisuruHealthCheck = () => runPlanApiHealthCheck();
 
-  void runPlanApiHealthCheck();
+  if (options.autoRun ?? true) {
+    void runPlanApiHealthCheck();
+  }
 }

@@ -1,10 +1,22 @@
 import { APP_MESSAGES } from './app-errors';
 import { OpenAiRequestError } from './app-errors';
+import { isLightweightMvp } from './lightweight-mvp';
 
 /** Client-side timeout for a single generation attempt (dev uses 90s per requirements). */
 export const OPENAI_GENERATION_TIMEOUT_MS = __DEV__ ? 90_000 : 120_000;
 
+/** MVP lightweight mode fails fast (15-25s) and falls back instead of waiting long. */
+const LIGHTWEIGHT_GENERATION_TIMEOUT_MS = 20_000;
+
+export function getOpenAiGenerationTimeoutMs(): number {
+  return isLightweightMvp() ? LIGHTWEIGHT_GENERATION_TIMEOUT_MS : OPENAI_GENERATION_TIMEOUT_MS;
+}
+
 export const OPENAI_RETRY_DELAYS_MS = [1_500, 3_000] as const;
+
+export function getMaxGenerationAttempts(): number {
+  return isLightweightMvp() ? 2 : 3;
+}
 
 export const OPENAI_MAX_GENERATION_ATTEMPTS = 3;
 
@@ -58,6 +70,7 @@ export function isRetryableOpenAiError(error: unknown): boolean {
 }
 
 export function getOpenAiRetryDelayMs(attempt: number): number {
+  if (isLightweightMvp()) return 500;
   return OPENAI_RETRY_DELAYS_MS[Math.min(attempt - 1, OPENAI_RETRY_DELAYS_MS.length - 1)] ?? 3_000;
 }
 
@@ -72,7 +85,7 @@ export function createGenerationAbortSignal(userSignal?: AbortSignal): {
   const timeoutId = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, OPENAI_GENERATION_TIMEOUT_MS);
+  }, getOpenAiGenerationTimeoutMs());
 
   const onUserAbort = () => {
     controller.abort();

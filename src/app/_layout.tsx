@@ -81,12 +81,8 @@ export default function RootLayout() {
       <Stack screenOptions={ROOT_STACK_SCREEN_OPTIONS}>
         <Stack.Screen name="index" />
         <Stack.Screen name="(tabs)" />
-        {LOOP_TEST_RESTORE.planDetailRoute ? (
-          <>
-            <Stack.Screen name="plan-detail" />
-            <Stack.Screen name="today-schedule" />
-          </>
-        ) : null}
+        {LOOP_TEST_RESTORE.planDetailRoute ? <Stack.Screen name="plan-detail" /> : null}
+        {LOOP_TEST_RESTORE.planDetailRoute ? <Stack.Screen name="today-schedule" /> : null}
       </Stack>
     </>
   );

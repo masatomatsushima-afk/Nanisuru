@@ -179,6 +179,7 @@ import {
   logTravelPlanPayloadSafety,
 } from '@/lib/travel-plan-submit-debug';
 import { installPlanApiHealthCheckDevHook } from '@/lib/plan-api-health-check';
+import { isLightweightMvp, lightweightMvpLog } from '@/lib/lightweight-mvp';
 
 const TRAVEL_PLAN_USER_ERROR = 'AIプラン生成に失敗しました。入力内容を確認してもう一度お試しください。';
 
@@ -896,6 +897,10 @@ export default function HomeScreen() {
   };
 
   const refreshTravelMemories = useCallback(async () => {
+    if (isLightweightMvp()) {
+      lightweightMvpLog('home:travelMemories', 'skipping travel memories fetch (Supabase)');
+      return;
+    }
     setIsMemoryLoading((prev) => (prev ? prev : true));
     try {
       const memories = await getTravelMemories();
@@ -930,6 +935,12 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (__DEV__ && Platform.OS === 'web') {
+      if (isLightweightMvp()) {
+        // Lightweight MVP: keep the manual `globalThis.__nanisuruHealthCheck()` hook available,
+        // but skip the automatic run so a localhost/LAN mismatch never logs on every boot.
+        installPlanApiHealthCheckDevHook({ autoRun: false });
+        return;
+      }
       installPlanApiHealthCheckDevHook();
     }
   }, []);
@@ -1332,15 +1343,17 @@ export default function HomeScreen() {
         }
       }
 
-      try {
-        await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
-      } catch (saveErr) {
-        logPlanGenerationError('post_generation_save', saveErr);
-        setSaveWarning(
-          isSupabaseError(saveErr)
-            ? APP_MESSAGES.supabaseFailed
-            : APP_MESSAGES.planSaveWarning,
-        );
+      if (!isLightweightMvp()) {
+        try {
+          await Promise.all([learnFromPlan(plan), syncActiveTrip(plan)]);
+        } catch (saveErr) {
+          logPlanGenerationError('post_generation_save', saveErr);
+          setSaveWarning(
+            isSupabaseError(saveErr)
+              ? APP_MESSAGES.supabaseFailed
+              : APP_MESSAGES.planSaveWarning,
+          );
+        }
       }
     } catch (err) {
       if (isAbortError(err)) {

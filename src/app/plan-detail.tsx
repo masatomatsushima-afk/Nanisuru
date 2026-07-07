@@ -34,6 +34,7 @@ import { updateTrip } from '@/lib/saved-trips';
 import { buildItineraryItemId } from '@/types/itinerary-edit';
 import { deserializeRouteParamJson, readRouteParam } from '@/lib/safe-json';
 import { parseItineraryDays, isTripDurationOption } from '@/lib/trip-duration';
+import { PLAN_DETAIL_FALLBACK_NOTICE } from '@/lib/travel-plan-dev-fallback';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
 import { COMPANION_OPTIONS, isDateRelatedCompanion, PERSONALITY_OPTIONS } from '@/types/plan';
@@ -43,6 +44,24 @@ import type { SavedTrip, SavedTripPayload } from '@/types/trip';
 import type { WeatherReplanPreviewSuccess } from '@/types/weather-replan';
 
 const accent = NS.colors.accent;
+
+/** Shown instead of a hard error when a plan arrives with no days/items (e.g. malformed navigation params). */
+function buildPlaceholderItineraryDays(): import('@/types/plan').ItineraryDay[] {
+  return [
+    {
+      dayNumber: 1,
+      label: '1日目',
+      theme: 'プラン準備中',
+      items: [
+        {
+          time: '—',
+          activity: 'プラン情報を準備中です',
+          reason: 'もう一度「プランを生成」をお試しください。',
+        },
+      ],
+    },
+  ];
+}
 
 function DetailCard({
   icon,
@@ -111,7 +130,7 @@ export default function PlanDetailScreen() {
 
   const companion = COMPANION_OPTIONS.includes(params.companion as CompanionOption)
     ? (params.companion as CompanionOption)
-    : null;
+    : '一人';
 
   const personality = PERSONALITY_OPTIONS.includes(params.personality as PersonalityOption)
     ? (params.personality as PersonalityOption)
@@ -136,7 +155,9 @@ export default function PlanDetailScreen() {
   }
 
   const parsedDays = parseItineraryDays(params.days, items);
-  const [days, setDays] = useState(parsedDays);
+  const [days, setDays] = useState(
+    parsedDays.length > 0 ? parsedDays : buildPlaceholderItineraryDays(),
+  );
   const [localItems, setLocalItems] = useState(items);
   const [editTarget, setEditTarget] = useState<ItineraryEditTarget | null>(null);
   const [showEditSheet, setShowEditSheet] = useState(false);
@@ -302,17 +323,6 @@ export default function PlanDetailScreen() {
     }
   };
 
-  if (!companion || days.length === 0) {
-    return (
-      <View style={[styles.container, { paddingTop: insets.top + Spacing.four }]}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>← 戻る</Text>
-        </Pressable>
-        <Text style={styles.errorText}>プラン情報を読み込めませんでした</Text>
-      </View>
-    );
-  }
-
   const handleTripSaved = (trip: SavedTrip) => {
     setSavedTripId(trip.id);
     setPreserveSavedAt(trip.payload.savedAt);
@@ -335,7 +345,8 @@ export default function PlanDetailScreen() {
 
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>{getItineraryEyebrow(companion, location)}</Text>
-        <Text style={styles.title}>プラン詳細</Text>
+        <Text style={styles.title}>{planDetails.planTitle || 'プラン詳細'}</Text>
+        {location ? <Text style={styles.destinationText}>{location}</Text> : null}
         {personality ? (
           <View style={styles.personalityBadge}>
             <Text style={styles.personalityBadgeText}>{personality}</Text>
@@ -349,6 +360,10 @@ export default function PlanDetailScreen() {
         </Text>
         <Text style={styles.companionNote}>{COMPANION_SUBTITLES[companion]}</Text>
         {mood ? <Text style={styles.moodText}>気分：{mood}</Text> : null}
+        {planDetails.summary ? <Text style={styles.summaryText}>{planDetails.summary}</Text> : null}
+        {planDetails.isFallback ? (
+          <Text style={styles.fallbackNotice}>{PLAN_DETAIL_FALLBACK_NOTICE}</Text>
+        ) : null}
       </View>
 
       <View style={styles.statsRow}>
@@ -597,6 +612,24 @@ const styles = StyleSheet.create({
     color: NS.colors.textSecondary,
     fontSize: 15,
     lineHeight: 24,
+    marginTop: Spacing.two,
+  },
+  destinationText: {
+    color: NS.colors.textSecondary,
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  summaryText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+    marginTop: Spacing.two,
+  },
+  fallbackNotice: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
     marginTop: Spacing.two,
   },
   personalityBadge: {

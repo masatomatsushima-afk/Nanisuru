@@ -93,6 +93,8 @@ export function ItineraryTimelineCard({
 
           <Text style={styles.activityName}>{item.activity}</Text>
 
+          {item.placeAddress ? <Text style={styles.areaText}>📍 {item.placeAddress}</Text> : null}
+
           {item.activityCategory ? (
             <View
               style={[
@@ -119,6 +121,13 @@ export function ItineraryTimelineCard({
             <View style={styles.metaRow}>
               <Text style={styles.metaIcon}>💰</Text>
               <Text style={styles.metaText}>概算 {item.estimatedCost}</Text>
+            </View>
+          ) : null}
+
+          {item.note ? (
+            <View style={styles.metaRow}>
+              <Text style={styles.metaIcon}>📝</Text>
+              <Text style={styles.metaText}>{item.note}</Text>
             </View>
           ) : null}
 
@@ -263,6 +272,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.3,
     lineHeight: 28,
+  },
+  areaText: {
+    color: NS.colors.textMuted,
+    fontSize: 13,
+    marginTop: 2,
   },
   categoryBadge: {
     alignSelf: 'flex-start',

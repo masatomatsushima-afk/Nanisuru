@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppErrorBanner } from '@/components/app-error-banner';
 import { useUserLocation } from '@/contexts/user-location-context';
+import { isLightweightMvp } from '@/lib/lightweight-mvp';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 
@@ -40,7 +41,7 @@ export function CurrentLocationButton({ compact = false }: CurrentLocationButton
       {errorMessage ? (
         <AppErrorBanner
           message={errorMessage}
-          variant="error"
+          variant={isLightweightMvp() ? 'warning' : 'error'}
           onRetry={() => void fetchLocation()}
         />
       ) : null}

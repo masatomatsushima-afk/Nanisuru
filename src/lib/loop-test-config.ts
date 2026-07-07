@@ -36,8 +36,8 @@ export const LOOP_TEST_RESTORE = {
   travelFormRestoreLevel: 'full' as string,
   /** Travel plan submit + generation flow (overlay → AI → result screen) */
   travelPlanGeneration: true,
-  /** Explicit Stack.Screen for plan-detail caused Symbol errors — keep false */
-  planDetailRoute: false,
+  /** Plan Detail screen with the real day-by-day itinerary (was disabled during Symbol-error bisection). */
+  planDetailRoute: true,
 
   /** Home UI sections — disable one at a time to bisect Symbol errors */
   homeSectionHeader: true,

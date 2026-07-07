@@ -43,6 +43,7 @@ export function ItineraryDaysView({
               <View style={styles.dayHeader}>
                 <Text style={styles.dayLabel}>{day.label}</Text>
                 {day.theme ? <Text style={styles.dayTheme}>{day.theme}</Text> : null}
+                {day.timeWindow ? <Text style={styles.dayTimeWindow}>🕐 {day.timeWindow}</Text> : null}
                 {routeNote ? (
                   <View style={styles.routeNoteBox}>
                     <Text style={styles.routeNoteLabel}>{routeNote.label}</Text>
@@ -122,6 +123,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     marginTop: 4,
+  },
+  dayTimeWindow: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 2,
   },
   routeNoteBox: {
     marginTop: Spacing.two,

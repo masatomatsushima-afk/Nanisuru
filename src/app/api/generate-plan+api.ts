@@ -16,9 +16,10 @@ import {
 
 const PLACEHOLDER_KEYS = new Set(['', 'sk-your-key-here', 'your-api-key-here']);
 
-const OPENAI_PROXY_TIMEOUT_MS = isDevelopmentRuntime() ? 45_000 : 90_000;
-const OPENAI_PROXY_RETRY_DELAYS_MS = [1_500, 3_000];
-const OPENAI_PROXY_MAX_ATTEMPTS = 3;
+/** MVP: fail fast (15-25s) and let the dev fallback plan take over instead of hanging. */
+const OPENAI_PROXY_TIMEOUT_MS = isDevelopmentRuntime() ? 20_000 : 60_000;
+const OPENAI_PROXY_RETRY_DELAYS_MS = [800];
+const OPENAI_PROXY_MAX_ATTEMPTS = 2;
 
 function getServerOpenAiApiKey(): string | undefined {
   const key = (process.env.OPENAI_API_KEY ?? process.env.EXPO_PUBLIC_OPENAI_API_KEY)?.trim();
@@ -60,7 +61,7 @@ async function forwardToOpenAi(
       error && typeof error === 'object' && 'code' in error
         ? String((error as { code?: unknown }).code ?? '')
         : undefined;
-    console.error('[api/generate-plan] OpenAI fetch failed', { attempt, error, code });
+    console.error('[api/generate-plan] OpenAI fetch failed', { attempt, code, message });
     return { kind: 'network_error', message, code };
   } finally {
     clearTimeout(timeoutId);
@@ -103,47 +104,32 @@ export async function POST(request: Request): Promise<Response> {
 
   const devMeta = body.devMeta;
   const promptLength = getPromptLengthFromRequestPayload(requestPayload);
-  console.log('[api/generate-plan] prompt length', promptLength);
-  console.log('[api/generate-plan] payload summary', {
+  console.log('[api/generate-plan] request', {
     destination: devMeta?.destination ?? 'unknown',
     durationLabel: devMeta?.durationLabel ?? 'unknown',
-    companion: devMeta?.companion ?? 'unknown',
-    travelPurpose: devMeta?.travelPurpose ?? 'unknown',
-    budget: devMeta?.budget ?? 'unknown',
-    currency: devMeta?.currency ?? 'unknown',
+    promptLength,
   });
 
-  console.log('[api/generate-plan] forwarding to OpenAI');
-
   let lastFailureMessage = 'OpenAI request failed';
+  let lastFailureStatus = 502;
 
   for (let attempt = 1; attempt <= OPENAI_PROXY_MAX_ATTEMPTS; attempt++) {
     const result = await forwardToOpenAi(apiKey, requestPayload, attempt);
 
     if (result.kind === 'network_error') {
       lastFailureMessage = [result.code, result.message].filter(Boolean).join(' | ');
-      if (
-        attempt >= OPENAI_PROXY_MAX_ATTEMPTS ||
-        !isRetryableOpenAiProxyFailure(502, lastFailureMessage)
-      ) {
-        if (isDevelopmentRuntime() && isRetryableOpenAiProxyFailure(502, lastFailureMessage)) {
-          return buildDevFallbackApiResponse();
-        }
-        return Response.json({ error: { message: lastFailureMessage, code: result.code } }, { status: 502 });
+      lastFailureStatus = 502;
+
+      if (attempt >= OPENAI_PROXY_MAX_ATTEMPTS || !isRetryableOpenAiProxyFailure(502, lastFailureMessage)) {
+        break;
       }
 
-      console.warn('[api/generate-plan] retrying OpenAI', {
-        attempt,
-        error: lastFailureMessage,
-      });
-      await sleep(OPENAI_PROXY_RETRY_DELAYS_MS[attempt - 1] ?? 3_000);
+      console.warn('[api/generate-plan] retrying OpenAI', { attempt, error: lastFailureMessage });
+      await sleep(OPENAI_PROXY_RETRY_DELAYS_MS[attempt - 1] ?? 800);
       continue;
     }
 
     const { response: openAiResponse, body: responseText } = result;
-    lastFailureMessage = responseText;
-
-    console.log('[api/generate-plan] OpenAI status', openAiResponse.status, { attempt });
 
     if (openAiResponse.ok) {
       return new Response(responseText, {
@@ -152,31 +138,29 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
 
+    lastFailureMessage = responseText;
+    lastFailureStatus = openAiResponse.status;
+
     if (
       attempt >= OPENAI_PROXY_MAX_ATTEMPTS ||
       !isRetryableOpenAiProxyFailure(openAiResponse.status, responseText)
     ) {
-      if (isDevelopmentRuntime() && isRetryableOpenAiProxyFailure(openAiResponse.status, responseText)) {
-        return buildDevFallbackApiResponse();
-      }
-      return new Response(responseText, {
-        status: openAiResponse.status,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      break;
     }
 
     console.warn('[api/generate-plan] retrying OpenAI', {
       attempt,
-      error: `${openAiResponse.status} ${responseText.slice(0, 200)}`,
+      status: openAiResponse.status,
     });
-    await sleep(OPENAI_PROXY_RETRY_DELAYS_MS[attempt - 1] ?? 3_000);
+    await sleep(OPENAI_PROXY_RETRY_DELAYS_MS[attempt - 1] ?? 800);
   }
 
-  if (isDevelopmentRuntime() && isRetryableOpenAiProxyFailure(502, lastFailureMessage)) {
+  // MVP: never let the request hang or 500 in dev — always hand back a usable fallback plan.
+  if (isDevelopmentRuntime()) {
     return buildDevFallbackApiResponse();
   }
 
-  return Response.json({ error: { message: lastFailureMessage } }, { status: 502 });
+  return Response.json({ error: { message: lastFailureMessage } }, { status: lastFailureStatus });
 }
 
 export function OPTIONS(): Response {
