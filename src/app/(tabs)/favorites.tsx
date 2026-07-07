@@ -1,5 +1,5 @@
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { router } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -7,17 +7,20 @@ import { LoginPromptCard } from '@/components/login-prompt-card';
 import { ScreenBackground } from '@/components/ui/screen-background';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { ErrorStateCard, LoadingState, EmptyStateCard } from '@/components/ui/state-cards';
-import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
+import { PremiumCard } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
-import {
-  deleteTrip,
-  formatSavedTripDate,
-  getUserTrips,
-} from '@/lib/saved-trips';
+import { loopTestLogOnce } from '@/lib/loop-test-config';
+import { formatSavedTripDate, deleteTrip } from '@/lib/saved-trips';
+import { loadSavedTravelPlans } from '@/lib/supabase-persistence';
+import { safeKey, safeText } from '@/lib/safe-text';
 import { getDurationDisplayLabel } from '@/lib/trip-duration';
 import type { SavedTrip } from '@/types/trip';
+
+function sameTrips(left: SavedTrip[], right: SavedTrip[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
 
 function TripCard({
   trip,
@@ -37,11 +40,11 @@ function TripCard({
           style={({ pressed }) => [styles.tripHeaderText, pressed && styles.cardPressed]}
           onPress={onOpen}>
           <Text style={styles.tripTitle} numberOfLines={2}>
-            {trip.title}
+            {safeText(trip.title)}
           </Text>
           <View style={styles.metaRow}>
             <Text style={styles.metaIcon}>📍</Text>
-            <Text style={styles.metaText}>{payload.location || '未指定'}</Text>
+            <Text style={styles.metaText}>{safeText(payload.location) || '未指定'}</Text>
           </View>
           <View style={styles.metaRow}>
             <Text style={styles.metaIcon}>📅</Text>
@@ -59,10 +62,10 @@ function TripCard({
         style={({ pressed }) => [styles.tripFooter, pressed && styles.cardPressed]}
         onPress={onOpen}>
         <View style={styles.tag}>
-          <Text style={styles.tagText}>{payload.personality}</Text>
+          <Text style={styles.tagText}>{safeText(payload.personality)}</Text>
         </View>
         <View style={styles.tag}>
-          <Text style={styles.tagText}>{payload.companion}</Text>
+          <Text style={styles.tagText}>{safeText(payload.companion)}</Text>
         </View>
         {payload.tripDuration ? (
           <View style={styles.tagMuted}>
@@ -100,44 +103,58 @@ function EmptyState() {
 }
 
 export default function SavedTripsScreen() {
+  loopTestLogOnce('restore:Favorites', 'restoring My Trips / saved plans');
+
   const insets = useSafeAreaInsets();
   const { session, isConfigured } = useAuth();
+  const userId = session?.user?.id ?? null;
+  const loadInFlightRef = useRef(false);
+
   const [trips, setTrips] = useState<SavedTrip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadTrips = useCallback(async () => {
-    if (!session) {
-      setTrips([]);
-      setIsLoading(false);
+    if (!userId) {
+      setTrips((prev) => (prev.length === 0 ? prev : []));
+      setError((prev) => (prev ? null : prev));
+      setIsLoading((prev) => (prev ? false : prev));
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+
+    setIsLoading((prev) => (prev ? prev : true));
+    setError((prev) => (prev ? null : prev));
+
     try {
-      setTrips(await getUserTrips());
+      const loaded = await loadSavedTravelPlans();
+      setTrips((prev) => (sameTrips(prev, loaded) ? prev : loaded));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'プランの読み込みに失敗しました';
-      setError(message);
-      setTrips([]);
+      console.warn('[MyTrips] load failed', message);
+      setError((prev) => (prev === message ? prev : message));
+      setTrips((prev) => (prev.length === 0 ? prev : []));
     } finally {
-      setIsLoading(false);
+      loadInFlightRef.current = false;
+      setIsLoading((prev) => (prev ? false : prev));
     }
-  }, [session]);
+  }, [userId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadTrips();
-    }, [loadTrips]),
-  );
+  useEffect(() => {
+    void loadTrips();
+  }, [loadTrips]);
 
   const handleOpen = (trip: SavedTrip) => {
-    router.push(`/saved-trip/${trip.id}`);
+    const tripId = safeText(trip.id);
+    if (!tripId) return;
+    router.push(`/saved-trip/${tripId}`);
   };
 
   const handleDelete = (trip: SavedTrip) => {
-    Alert.alert('プランを削除', `「${trip.title}」を削除しますか？`, [
+    const title = safeText(trip.title) || 'このプラン';
+    Alert.alert('プランを削除', `「${title}」を削除しますか？`, [
       { text: 'キャンセル', style: 'cancel' },
       {
         text: '削除',
@@ -148,6 +165,7 @@ export default function SavedTripsScreen() {
             await loadTrips();
           } catch (err) {
             const message = err instanceof Error ? err.message : '削除に失敗しました';
+            console.warn('[MyTrips] delete failed', message);
             Alert.alert('エラー', message);
           }
         },
@@ -157,58 +175,63 @@ export default function SavedTripsScreen() {
 
   return (
     <ScreenBackground>
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[
-        styles.content,
-        {
-          paddingTop: insets.top + Spacing.four,
-          paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
-        },
-      ]}
-      showsVerticalScrollIndicator={false}>
-      <FadeInView>
-        <Text style={styles.eyebrow}>📌 MY TRIPS</Text>
-        <Text style={styles.title}>保存したプラン</Text>
-        <Text style={styles.subtitle}>いつでも見返せる、あなただけの旅のリスト</Text>
-        {session ? (
-          <Pressable style={styles.memoriesLink} onPress={() => router.push('/memories')}>
-            <Text style={styles.memoriesLinkText}>📔 思い出アルバムを見る</Text>
-          </Pressable>
-        ) : null}
-        {session ? (
-          <Pressable style={styles.memoriesLink} onPress={() => router.push('/my-trips')}>
-            <Text style={styles.memoriesLinkText}>🧳 マイトリップを見る</Text>
-          </Pressable>
-        ) : null}
-      </FadeInView>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: insets.top + Spacing.four,
+            paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}>
+        <FadeInView>
+          <Text style={styles.eyebrow}>📌 MY TRIPS</Text>
+          <Text style={styles.title}>保存したプラン</Text>
+          <Text style={styles.subtitle}>いつでも見返せる、あなただけの旅のリスト</Text>
+          {session ? (
+            <Pressable style={styles.memoriesLink} onPress={() => router.push('/memories')}>
+              <Text style={styles.memoriesLinkText}>📔 思い出アルバムを見る</Text>
+            </Pressable>
+          ) : null}
+          {session ? (
+            <Pressable style={styles.memoriesLink} onPress={() => router.push('/my-trips')}>
+              <Text style={styles.memoriesLinkText}>🧳 マイトリップを見る</Text>
+            </Pressable>
+          ) : null}
+        </FadeInView>
 
-      {!session ? (
-        <LoginPrompt />
-      ) : !isConfigured ? (
-        <Text style={styles.errorText}>
-          保存したプランを読み込めません。しばらくしてからもう一度お試しください。
-        </Text>
-      ) : isLoading ? (
-        <LoadingState message="保存済みプランを読み込み中..." />
-      ) : error ? (
-        <ErrorStateCard message={error} onRetry={() => void loadTrips()} />
-      ) : trips.length === 0 ? (
-        <EmptyState />
-      ) : (
-        <View style={styles.list}>
-          {trips.map((trip, index) => (
-            <FadeInView key={trip.id} delay={index * 60} direction="down">
-              <TripCard
-                trip={trip}
-                onOpen={() => handleOpen(trip)}
-                onDelete={() => handleDelete(trip)}
-              />
-            </FadeInView>
-          ))}
-        </View>
-      )}
-    </ScrollView>
+        {!session ? (
+          <LoginPrompt />
+        ) : !isConfigured ? (
+          <Text style={styles.fallbackText}>
+            クラウド保存は未設定です。ローカル表示のみ利用できます。
+          </Text>
+        ) : null}
+
+        {!session ? null : isLoading ? (
+          <LoadingState message="保存済みプランを読み込み中..." />
+        ) : error ? (
+          <ErrorStateCard message={error} onRetry={() => void loadTrips()} />
+        ) : trips.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <View style={styles.list}>
+            {trips.map((trip, index) => (
+              <FadeInView
+                key={`${safeKey(trip.id, `trip-${index}`)}-${index}`}
+                delay={index * 60}
+                direction="down">
+                <TripCard
+                  trip={trip}
+                  onOpen={() => handleOpen(trip)}
+                  onDelete={() => handleDelete(trip)}
+                />
+              </FadeInView>
+            ))}
+          </View>
+        )}
+      </ScrollView>
     </ScreenBackground>
   );
 }
@@ -247,17 +270,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  loadingText: {
+  fallbackText: {
     color: NS.colors.textSecondary,
     ...NS.typography.bodySm,
     textAlign: 'center',
-    marginTop: Spacing.five,
-  },
-  errorText: {
-    color: NS.colors.danger,
-    ...NS.typography.bodySm,
-    textAlign: 'center',
-    marginTop: Spacing.five,
+    marginTop: Spacing.two,
+    marginBottom: Spacing.three,
     lineHeight: 22,
   },
   list: {
@@ -357,54 +375,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     marginLeft: 'auto',
-  },
-  loginCard: {
-    padding: Spacing.five,
-    alignItems: 'center',
-    gap: Spacing.three,
-  },
-  loginIcon: {
-    fontSize: 48,
-  },
-  loginTitle: {
-    color: NS.colors.text,
-    ...NS.typography.headline,
-  },
-  loginText: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: Spacing.two,
-  },
-  signUpLink: {
-    paddingVertical: Spacing.two,
-  },
-  signUpLinkText: {
-    color: NS.colors.accent,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: Spacing.six,
-    paddingHorizontal: Spacing.three,
-    gap: Spacing.three,
-  },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: Spacing.two,
-  },
-  emptyTitle: {
-    color: NS.colors.text,
-    ...NS.typography.headline,
-    textAlign: 'center',
-  },
-  emptyText: {
-    color: NS.colors.textSecondary,
-    ...NS.typography.bodySm,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: Spacing.two,
   },
 });

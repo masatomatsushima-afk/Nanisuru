@@ -241,7 +241,16 @@ export const DISCOVER_SAMPLE_PLANS: DiscoverSamplePlan[] = [
 ];
 
 export function getDiscoverSamplePlanById(id: string): DiscoverSamplePlan | undefined {
-  return DISCOVER_SAMPLE_PLANS.find((plan) => plan.id === id);
+  const normalized = id.startsWith('sample:') ? id.slice('sample:'.length) : id;
+  const legacyIdMap: Record<string, string> = {
+    'osaka-night-date': 'discover-sample-1',
+    'melbourne-cafe': 'discover-sample-2',
+    'tokyo-rainy-date': 'discover-sample-3',
+    'seoul-gourmet': 'discover-sample-4',
+    'kyoto-slow-walk': 'discover-sample-5',
+  };
+  const resolvedId = legacyIdMap[normalized] ?? normalized;
+  return DISCOVER_SAMPLE_PLANS.find((plan) => plan.id === resolvedId);
 }
 
 export function isDiscoverSamplePlanId(id: string): boolean {

@@ -282,7 +282,7 @@ export function DiscoverEmptyInspirationSection({
 
       {DISCOVER_SAMPLE_PLANS.map((sample, index) => (
         <DiscoverSamplePlanCard
-          key={sample.id}
+          key={`inspiration-${sample.id}-${index}`}
           sample={sample}
           index={index}
           isCopying={copyingSampleId === sample.id}

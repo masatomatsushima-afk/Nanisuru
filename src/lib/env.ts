@@ -13,6 +13,8 @@
  * For production, proxy OpenAI calls through your own backend.
  */
 
+import { Platform } from 'react-native';
+
 const PLACEHOLDER_KEYS = new Set(['', 'sk-your-key-here', 'your-api-key-here']);
 
 export function getOpenAiApiKey(): string | undefined {
@@ -22,6 +24,8 @@ export function getOpenAiApiKey(): string | undefined {
 }
 
 export function isOpenAiConfigured(): boolean {
+  // Web uses same-origin /api/generate-plan proxy; server holds the key.
+  if (Platform.OS === 'web') return true;
   return Boolean(getOpenAiApiKey());
 }
 

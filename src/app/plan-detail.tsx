@@ -32,6 +32,7 @@ import { applyPartialEditResult } from '@/lib/itinerary-partial-edit';
 import { saveItineraryEdit } from '@/lib/itinerary-edits';
 import { updateTrip } from '@/lib/saved-trips';
 import { buildItineraryItemId } from '@/types/itinerary-edit';
+import { deserializeRouteParamJson, readRouteParam } from '@/lib/safe-json';
 import { parseItineraryDays, isTripDurationOption } from '@/lib/trip-duration';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import type { CompanionOption, ItineraryItem, PersonalityOption, PlanDetails, TripDurationOption } from '@/types/plan';
@@ -99,6 +100,15 @@ export default function PlanDetailScreen() {
     budgetIncludes?: string;
   }>();
 
+  if (__DEV__) {
+    console.log('[PlanDetail] received params keys', Object.keys(params));
+    console.log('[PlanDetail] decoded planJson lengths', {
+      days: readRouteParam(params.days).length,
+      items: readRouteParam(params.items).length,
+      details: readRouteParam(params.details).length,
+    });
+  }
+
   const companion = COMPANION_OPTIONS.includes(params.companion as CompanionOption)
     ? (params.companion as CompanionOption)
     : null;
@@ -107,12 +117,7 @@ export default function PlanDetailScreen() {
     ? (params.personality as PersonalityOption)
     : null;
 
-  let items: ItineraryItem[] = [];
-  try {
-    items = params.items ? JSON.parse(params.items) : [];
-  } catch {
-    items = [];
-  }
+  const items = deserializeRouteParamJson<ItineraryItem[]>(params.items, []);
 
   const location = params.location ?? '';
   const budget = params.budget ?? '';
@@ -120,11 +125,14 @@ export default function PlanDetailScreen() {
   const people = params.people ?? '';
   const mood = params.mood ?? '';
 
-  let details = null;
-  try {
-    details = params.details ? JSON.parse(params.details) : null;
-  } catch {
-    details = null;
+  const details = deserializeRouteParamJson<PlanDetails | null>(params.details, null);
+
+  if (__DEV__) {
+    console.log('[PlanDetail] parsed plan', {
+      itemCount: items.length,
+      dayCount: deserializeRouteParamJson(params.days, []).length,
+      hasDetails: Boolean(details),
+    });
   }
 
   const parsedDays = parseItineraryDays(params.days, items);
@@ -136,12 +144,9 @@ export default function PlanDetailScreen() {
   const [savedTripId, setSavedTripId] = useState<string | null>(params.savedTripId?.trim() || null);
   const [preserveSavedAt, setPreserveSavedAt] = useState<string | undefined>(undefined);
   const travelPurpose = params.travelPurpose?.trim() || undefined;
-  let budgetIncludes: import('@/lib/travel-budget-includes').TravelBudgetIncludeOption[] | undefined;
-  try {
-    budgetIncludes = params.budgetIncludes ? JSON.parse(params.budgetIncludes) : undefined;
-  } catch {
-    budgetIncludes = undefined;
-  }
+  const budgetIncludes = deserializeRouteParamJson<
+    import('@/lib/travel-budget-includes').TravelBudgetIncludeOption[] | undefined
+  >(params.budgetIncludes, undefined);
   const tripDuration = isTripDurationOption(params.tripDuration ?? '')
     ? (params.tripDuration as TripDurationOption)
     : details?.tripDuration ?? '1日';

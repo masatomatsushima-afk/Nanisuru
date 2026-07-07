@@ -8,9 +8,15 @@ export const APP_MESSAGES = {
   openAiFailed: 'プラン作成に失敗しました。少し時間をおいてもう一度お試しください。',
   inputIncomplete: '入力が不足しています。必須項目を確認してください。',
   openAiApiFailed: 'プラン作成に失敗しました。しばらくしてからもう一度お試しください。',
+  aiGenerationTimeout: 'AIの応答に時間がかかっています。もう一度お試しください。',
   placesFetchWarning: '実在スポットの取得に失敗しました。代替データでプランを作成します。',
   planSaveWarning: '保存に失敗しました',
   networkError: '通信に失敗しました。もう一度お試しください',
+  networkErrorMobileSafari:
+    '通信に失敗しました。MacとiPhoneが同じWi-Fiに接続されているか確認してください。',
+  planApiBadOrigin: '通信先の設定に問題があります',
+  planApiUnreachable: 'プラン生成サーバーに接続できませんでした',
+  openAiBusy: 'AIが混み合っています。少し待ってもう一度お試しください',
   locationFetchFailed: '現在地を取得できませんでした',
   mapsOpenFailed: 'マップを開けませんでした',
   openAiNotConfigured: 'プラン作成に失敗しました。しばらくしてからもう一度お試しください。',
@@ -59,14 +65,37 @@ export class OpenAiRequestError extends Error {
   readonly status: number;
   readonly statusText: string;
   readonly body: string;
+  readonly requestUrl?: string;
 
-  constructor(status: number, statusText: string, body: string) {
+  constructor(status: number, statusText: string, body: string, requestUrl?: string) {
     super(formatOpenAiHttpErrorMessage(status, statusText, body));
     this.name = 'OpenAiRequestError';
     this.status = status;
     this.statusText = statusText;
     this.body = body;
+    this.requestUrl = requestUrl;
   }
+}
+
+export class PlanGenerationRequestError extends AppError {
+  readonly requestUrl: string;
+  readonly causeError?: unknown;
+
+  constructor(message: string, code: AppErrorCode, requestUrl: string, causeError?: unknown) {
+    super(message, code);
+    this.name = 'PlanGenerationRequestError';
+    this.requestUrl = requestUrl;
+    this.causeError = causeError;
+  }
+}
+
+export function getPlanGenerationRequestUrl(error: unknown): string | undefined {
+  if (error instanceof PlanGenerationRequestError) return error.requestUrl;
+  if (error instanceof OpenAiRequestError && error.requestUrl) return error.requestUrl;
+  if (error && typeof error === 'object' && typeof (error as { requestUrl?: unknown }).requestUrl === 'string') {
+    return (error as { requestUrl: string }).requestUrl;
+  }
+  return undefined;
 }
 
 export function formatOpenAiHttpErrorMessage(
@@ -137,6 +166,7 @@ export function extractPlanGenerationErrorDetail(error: unknown): string {
 const NETWORK_PATTERNS = [
   /network request failed/i,
   /failed to fetch/i,
+  /load failed/i,
   /network error/i,
   /internet connection/i,
   /offline/i,
@@ -159,8 +189,24 @@ export function classifyError(error: unknown): AppError {
 
   const message = error instanceof Error ? error.message : String(error);
 
+  if (error instanceof Error && error.name === 'AiGenerationTimeoutError') {
+    return new AppError(APP_MESSAGES.aiGenerationTimeout, 'OPENAI_FAILED');
+  }
+
   if (message === APP_MESSAGES.locationRequired) {
     return new AppError(message, 'NO_PLACES_FOUND');
+  }
+  if (
+    /Could not find the table|schema cache|PGRST\d+|local_hidden_spots|local_gems/i.test(message)
+  ) {
+    return new AppError(APP_MESSAGES.genericActionFailed, 'UNKNOWN');
+  }
+  if (
+    /JSON Parse error|Unexpected token|is not valid JSON|Unexpected end of JSON input/i.test(
+      message,
+    )
+  ) {
+    return new AppError('プランの表示に失敗しました。もう一度お試しください。', 'UNKNOWN');
   }
   if (message === APP_MESSAGES.inputIncomplete || /入力が不足|選んでから|記入してください/.test(message)) {
     return new AppError(message, 'INPUT_INCOMPLETE');
@@ -189,7 +235,16 @@ export function classifyError(error: unknown): AppError {
   if (SUPABASE_PATTERNS.some((pattern) => pattern.test(message))) {
     return new AppError(APP_MESSAGES.supabaseFailed, 'SUPABASE_FAILED');
   }
+  if (message.includes('EXPO_PUBLIC_OPENAI_API_KEY') || message.includes('missing or invalid')) {
+    return new AppError(APP_MESSAGES.openAiNotConfigured, 'OPENAI_FAILED');
+  }
   if (error instanceof OpenAiRequestError || OPENAI_PATTERNS.some((pattern) => pattern.test(message))) {
+    if (isOpenAiTimeoutMessage(message, error instanceof OpenAiRequestError ? error.status : undefined)) {
+      return new AppError(APP_MESSAGES.aiGenerationTimeout, 'OPENAI_FAILED');
+    }
+    if (isOpenAiGatewayBusyMessage(message, error instanceof OpenAiRequestError ? error.status : undefined)) {
+      return new AppError(APP_MESSAGES.openAiBusy, 'OPENAI_FAILED');
+    }
     return new AppError(message, 'OPENAI_FAILED');
   }
 
@@ -199,12 +254,104 @@ export function classifyError(error: unknown): AppError {
 export function formatPlanGenerationDevError(userMessage: string, error: unknown): string {
   if (!__DEV__) return userMessage;
   const detail = extractPlanGenerationErrorDetail(error);
-  console.warn('[PlanGeneration]', detail);
-  return userMessage;
+  const requestUrl = getPlanGenerationRequestUrl(error);
+  console.warn('[PlanGeneration]', detail, requestUrl ? { requestUrl } : undefined);
+  const shortMessage =
+    error instanceof PlanGenerationRequestError && error.causeError instanceof Error
+      ? error.causeError.message
+      : error instanceof OpenAiRequestError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : detail;
+  const urlLine = requestUrl ? `\nURL: ${requestUrl}` : '';
+  return `${userMessage}\n開発用エラー: ${shortMessage}${urlLine}`;
 }
 
 export function getErrorMessage(error: unknown): string {
   return getPlanGenerationErrorMessage(error);
+}
+
+function isOpenAiTimeoutMessage(message: string, status?: number): boolean {
+  if (status === 504 && /timed out|timeout/i.test(message)) return true;
+  return /request timed out|timed out|timeout|network timeout/i.test(message);
+}
+
+function isOpenAiGatewayBusyMessage(message: string, status?: number): boolean {
+  if (status === 504 && /timed out|timeout/i.test(message)) return false;
+  if (status != null && [502, 503, 504].includes(status)) return true;
+  return /502|503|504|bad gateway|service unavailable|gateway timeout/i.test(message);
+}
+
+function isOpenAiTimeoutOrGatewayMessage(message: string, status?: number): boolean {
+  return isOpenAiTimeoutMessage(message, status) || isOpenAiGatewayBusyMessage(message, status);
+}
+
+export function isOpenAiTimeoutOrGatewayError(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'AiGenerationTimeoutError') return true;
+  if (error instanceof OpenAiRequestError) {
+    return isOpenAiTimeoutOrGatewayMessage(error.message, error.status);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return isOpenAiTimeoutOrGatewayMessage(message);
+}
+
+export function resolvePlanGenerationFetchFailure(
+  error: unknown,
+  requestUrl: string,
+  useProxy: boolean,
+): PlanGenerationRequestError {
+  const logUrl = requestUrl.startsWith('http') ? requestUrl : requestUrl;
+
+  if (/localhost|127\.0\.0\.1|exp:\/\//i.test(logUrl)) {
+    return new PlanGenerationRequestError(
+      APP_MESSAGES.planApiBadOrigin,
+      'NETWORK_ERROR',
+      logUrl,
+      error,
+    );
+  }
+
+  if (error instanceof Error && error.name === 'AiGenerationTimeoutError') {
+    return new PlanGenerationRequestError(
+      APP_MESSAGES.aiGenerationTimeout,
+      'OPENAI_FAILED',
+      logUrl,
+      error,
+    );
+  }
+
+  if (error instanceof OpenAiRequestError) {
+    if (isOpenAiTimeoutMessage(error.message, error.status)) {
+      return new PlanGenerationRequestError(
+        APP_MESSAGES.aiGenerationTimeout,
+        'OPENAI_FAILED',
+        logUrl,
+        error,
+      );
+    }
+    if (isOpenAiGatewayBusyMessage(error.message, error.status)) {
+      return new PlanGenerationRequestError(APP_MESSAGES.openAiBusy, 'OPENAI_FAILED', logUrl, error);
+    }
+  }
+
+  if (useProxy && isNetworkError(error)) {
+    return new PlanGenerationRequestError(
+      APP_MESSAGES.planApiUnreachable,
+      'NETWORK_ERROR',
+      logUrl,
+      error,
+    );
+  }
+
+  if (isNetworkError(error)) {
+    return new PlanGenerationRequestError(APP_MESSAGES.networkError, 'NETWORK_ERROR', logUrl, error);
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return new PlanGenerationRequestError(message || APP_MESSAGES.genericActionFailed, 'UNKNOWN', logUrl, error);
 }
 
 export function getPlanGenerationErrorMessage(error: unknown): string {
@@ -214,6 +361,12 @@ export function getPlanGenerationErrorMessage(error: unknown): string {
     case 'INPUT_INCOMPLETE':
       return classified.message || APP_MESSAGES.inputIncomplete;
     case 'OPENAI_FAILED':
+      if (classified.message === APP_MESSAGES.aiGenerationTimeout) {
+        return APP_MESSAGES.aiGenerationTimeout;
+      }
+      if (classified.message === APP_MESSAGES.openAiBusy) {
+        return APP_MESSAGES.openAiBusy;
+      }
       return APP_MESSAGES.openAiApiFailed;
     case 'PLACES_API_FAILED':
       return APP_MESSAGES.placesApiFailed;
@@ -222,7 +375,7 @@ export function getPlanGenerationErrorMessage(error: unknown): string {
     case 'SUPABASE_FAILED':
       return APP_MESSAGES.supabaseFailed;
     case 'NETWORK_ERROR':
-      return APP_MESSAGES.networkError;
+      return classified.message || APP_MESSAGES.networkError;
     default:
       return classified.message || APP_MESSAGES.genericActionFailed;
   }
@@ -256,7 +409,7 @@ export function getActionErrorMessage(
 }
 
 const TECHNICAL_USER_MESSAGE_PATTERN =
-  /supabase|openai|\.env|EXPO_PUBLIC|APIキー|テーブル|row level|gotrue|anon key|service role/i;
+  /supabase|openai|\.env|EXPO_PUBLIC|APIキー|テーブル|row level|gotrue|anon key|service role|schema cache|PGRST|Could not find the table|local_hidden_spots|local_gems/i;
 
 /** Strip developer-facing details before showing errors to testers. */
 export function sanitizeUserFacingMessage(message: string): string {

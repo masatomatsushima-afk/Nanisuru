@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, useMemo, type ReactNode, type RefObject } from 'react';
 import {
   Alert,
   FlatList,
@@ -31,8 +31,11 @@ import {
   type HomePlanMode,
 } from '@/components/home/home-action-config';
 import { VISUAL_PRESETS } from '@/lib/visual-placeholders';
-import { getSheetScrollPaddingBottom } from '@/constants/mobile-layout';
+import { getFormSheetScrollPaddingBottom } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
+import { LOOP_TEST_RESTORE } from '@/lib/loop-test-config';
+import { shouldShowTravelFormOverlay } from '@/lib/travel-form-restore';
+import { safeKey, safeText } from '@/lib/safe-text';
 import type { PlanCreationType } from '@/types/plan-creation';
 import {
   getTravelUserPreferenceChips,
@@ -300,7 +303,7 @@ const PREF_CHIPS = [
 ] as const;
 
 export type ReferenceHomeScreenProps = {
-  renderPlanForm?: () => ReactNode;
+  renderPlanForm?: (sheetScrollRef: RefObject<ScrollView | null>) => ReactNode;
   onPlanFormOpen: (mode: HomePlanMode, planType: PlanCreationType) => void;
   onPlanFormClose?: () => void;
   afterPlanLocation?: string;
@@ -459,13 +462,17 @@ function HeroBannerCarousel({
 
   const updateActiveIndex = useCallback(
     (offsetX: number) => {
-      const next = Math.round(offsetX / cardWidth);
-      setActiveIndex(Math.min(Math.max(next, 0), HERO_BANNERS.length - 1));
+      if (cardWidth <= 0) return;
+      const next = Math.min(
+        Math.max(Math.round(offsetX / cardWidth), 0),
+        HERO_BANNERS.length - 1,
+      );
+      setActiveIndex((prev) => (prev === next ? prev : next));
     },
     [cardWidth],
   );
 
-  const onMomentumScrollEnd = useCallback(
+  const onScrollSettled = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       updateActiveIndex(event.nativeEvent.contentOffset.x);
     },
@@ -474,8 +481,8 @@ function HeroBannerCarousel({
 
   const scrollToBanner = useCallback(
     (index: number) => {
+      setActiveIndex((prev) => (prev === index ? prev : index));
       listRef.current?.scrollToIndex({ index, animated: true });
-      setActiveIndex(index);
     },
     [],
   );
@@ -506,15 +513,15 @@ function HeroBannerCarousel({
               {item.subtitle}
             </Text>
             <View style={styles.heroChips}>
-              {item.chips.map((chip) => (
+              {item.chips.map((chip, chipIndex) => (
                 <Pressable
-                  key={chip.id}
+                  key={safeKey(chip.id, `hero-chip-${chipIndex}`)}
                   style={[styles.heroChip, { backgroundColor: chip.bg, borderColor: chip.border }]}
                   onPress={(event) => {
                     event.stopPropagation();
                     onChipPress(chip);
                   }}>
-                  <Text style={[styles.heroChipText, { color: chip.text }]}>{chip.label}</Text>
+                  <Text style={[styles.heroChipText, { color: chip.text }]}>{safeText(chip.label)}</Text>
                 </Pressable>
               ))}
             </View>
@@ -530,7 +537,7 @@ function HeroBannerCarousel({
       <FlatList
         ref={listRef}
         data={HERO_BANNERS}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item, index) => safeKey(item.id, `hero-banner-${index}`)}
         renderItem={renderBanner}
         horizontal
         pagingEnabled={Platform.OS !== 'web'}
@@ -542,9 +549,8 @@ function HeroBannerCarousel({
         nestedScrollEnabled
         directionalLockEnabled
         bounces={false}
-        scrollEventThrottle={16}
-        onScroll={(event) => updateActiveIndex(event.nativeEvent.contentOffset.x)}
-        onMomentumScrollEnd={onMomentumScrollEnd}
+        onMomentumScrollEnd={onScrollSettled}
+        onScrollEndDrag={onScrollSettled}
         getItemLayout={(_, index) => ({
           length: cardWidth,
           offset: cardWidth * index,
@@ -560,7 +566,7 @@ function HeroBannerCarousel({
       <View style={styles.heroDots}>
         {HERO_BANNERS.map((banner, index) => (
           <Pressable
-            key={banner.id}
+            key={safeKey(banner.id, `hero-dot-${index}`)}
             onPress={() => scrollToBanner(index)}
             hitSlop={8}
             accessibilityLabel={`バナー ${index + 1}`}>
@@ -580,7 +586,7 @@ function PlanFormSheet({
   onAbortGeneration,
   isPlanGenerating,
   generationStepIndex = 0,
-  children,
+  renderForm,
 }: {
   visible: boolean;
   mode: HomePlanMode | null;
@@ -589,7 +595,7 @@ function PlanFormSheet({
   onAbortGeneration?: () => void;
   isPlanGenerating?: boolean;
   generationStepIndex?: number;
-  children?: ReactNode;
+  renderForm?: (sheetScrollRef: RefObject<ScrollView | null>) => ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   const formScrollRef = useRef<ScrollView>(null);
@@ -623,14 +629,11 @@ function PlanFormSheet({
           onPress={handleCloseRequest}
           accessibilityLabel="閉じる"
         />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
-          style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <View style={[styles.modalSheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHeader}>
             <View style={styles.sheetHeaderText}>
-              <Text style={styles.sheetTitle}>{PLAN_MODE_LABELS[mode]}</Text>
+              <Text style={styles.sheetTitle}>{safeText(PLAN_MODE_LABELS[mode])}</Text>
               <Text style={styles.sheetSubtitle}>プランを作成</Text>
             </View>
             <Pressable
@@ -642,26 +645,34 @@ function PlanFormSheet({
               </Text>
             </Pressable>
           </View>
-          <ScrollView
-            ref={formScrollRef}
-            style={styles.sheetScroll}
-            contentContainerStyle={[
-              styles.sheetScrollContent,
-              { paddingBottom: getSheetScrollPaddingBottom(insets.bottom) },
-            ]}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled>
-            {children}
-          </ScrollView>
-        </KeyboardAvoidingView>
+          <KeyboardAvoidingView
+            style={styles.sheetKeyboardAvoid}
+            behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : 'padding'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 4 : 0}>
+            <ScrollView
+              ref={formScrollRef}
+              style={styles.sheetScroll}
+              contentContainerStyle={[
+                styles.sheetScrollContent,
+                { paddingBottom: getFormSheetScrollPaddingBottom(insets.bottom) },
+              ]}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+              automaticallyAdjustKeyboardInsets>
+              {renderForm?.(formScrollRef)}
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </View>
 
+        {shouldShowTravelFormOverlay() ? (
         <PlanGenerationOverlay
           embedded
           visible={Boolean(isPlanGenerating)}
           currentStepIndex={generationStepIndex}
         />
+        ) : null}
       </View>
     </Modal>
   );
@@ -678,10 +689,14 @@ export function ReferenceHomeScreen({
 }: ReferenceHomeScreenProps) {
   const insets = useSafeAreaInsets();
   const { width: windowW } = useWindowDimensions();
-  const shellW = Math.min(windowW, MAX_W);
-  const contentW = shellW - PAD * 2;
-  const heroTextW = Math.round(contentW * HERO_TEXT_RATIO);
-  const heroImageW = contentW - heroTextW;
+  const contentW = useMemo(() => {
+    const quantizedW = Platform.OS === 'web' ? Math.round(windowW / 4) * 4 : windowW;
+    const shellW = Math.min(Math.floor(quantizedW), MAX_W);
+    return shellW - PAD * 2;
+  }, [windowW]);
+  const shellW = contentW + PAD * 2;
+  const heroTextW = useMemo(() => Math.round(contentW * HERO_TEXT_RATIO), [contentW]);
+  const heroImageW = useMemo(() => contentW - heroTextW, [contentW, heroTextW]);
   const prefChips = travelUserPreferences && hasTravelUserPreferences(travelUserPreferences)
     ? getTravelUserPreferenceChips(travelUserPreferences)
     : PREF_CHIPS.map((c) => c.label);
@@ -715,8 +730,11 @@ export function ReferenceHomeScreen({
         openPlanForm(target.mode, label, target.planType);
         return;
       }
-      console.log(`[HomeAction] tapped: ${label} -> route: ${target.routeLabel}`);
-      router.push(target.href);
+      console.log(`[HomeAction] tapped: ${safeText(label)} -> route: ${safeText(target.routeLabel)}`);
+      const href = safeText(target.routeLabel);
+      if (href.startsWith('/')) {
+        router.push(href as never);
+      }
     },
     [openPlanForm],
   );
@@ -738,13 +756,15 @@ export function ReferenceHomeScreen({
             paddingBottom: BOTTOM_NAV_PAD,
           },
         ]}>
+        {LOOP_TEST_RESTORE.homeSectionHeader ? (
+        <>
         <View style={styles.header}>
           <Text style={styles.logo}>Nanisuru</Text>
           <View style={styles.headerRight}>
             <Pressable
               style={styles.searchBtn}
               onPress={() =>
-                runTarget('検索', { kind: 'href', href: HOME_ROUTES.explore, routeLabel: '/(tabs)/explore' })
+                runTarget('検索', { kind: 'href', href: HOME_ROUTES.explore, routeLabel: HOME_ROUTES.explore })
               }>
               <Text style={styles.searchIcon}>🔍</Text>
             </Pressable>
@@ -754,7 +774,7 @@ export function ReferenceHomeScreen({
                 runTarget('プロフィール', {
                   kind: 'href',
                   href: HOME_ROUTES.profile,
-                  routeLabel: '/(tabs)/profile',
+                  routeLabel: HOME_ROUTES.profile,
                 })
               }>
               <CircleFill
@@ -774,7 +794,7 @@ export function ReferenceHomeScreen({
             runTarget('マイトリップ', {
               kind: 'href',
               href: HOME_ROUTES.myTrips,
-              routeLabel: '/my-trips',
+              routeLabel: HOME_ROUTES.myTrips,
             })
           }>
           <Text style={styles.myTripsEmoji}>🧳</Text>
@@ -784,7 +804,11 @@ export function ReferenceHomeScreen({
           </View>
           <Text style={styles.myTripsChevron}>›</Text>
         </Pressable>
+        </>
+        ) : null}
 
+        {LOOP_TEST_RESTORE.homeSectionHero ? (
+        <>
         <Text style={styles.sectionLabel}>✨ 今日のおすすめ</Text>
 
         <HeroBannerCarousel
@@ -800,34 +824,42 @@ export function ReferenceHomeScreen({
           }}
           onChipPress={(chip) => runTarget(chip.label, chip.target)}
         />
+        </>
+        ) : null}
 
+        {LOOP_TEST_RESTORE.homeSectionCategories ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.storyScroll}
           style={styles.storyRow}>
-          {CATEGORIES.map((item) => (
-            <Pressable key={item.id} style={styles.storyItem} onPress={() => runTarget(item.label, item.target)}>
+          {CATEGORIES.map((item, index) => (
+            <Pressable
+              key={safeKey(item.id, `category-${index}`)}
+              style={styles.storyItem}
+              onPress={() => runTarget(item.label, item.target)}>
               <StoryCircle item={item} />
-              <Text style={styles.storyLabel}>{item.label}</Text>
+              <Text style={styles.storyLabel}>{safeText(item.label)}</Text>
             </Pressable>
           ))}
           <Pressable
             style={styles.storyItem}
             onPress={() =>
-              runTarget('すべて', { kind: 'href', href: HOME_ROUTES.explore, routeLabel: '/(tabs)/explore' })
+              runTarget('すべて', { kind: 'href', href: HOME_ROUTES.explore, routeLabel: HOME_ROUTES.explore })
             }>
             <AllStoryCircle />
             <Text style={styles.storyLabel}>すべて</Text>
           </Pressable>
         </ScrollView>
+        ) : null}
 
+        {LOOP_TEST_RESTORE.homeSectionActionCards ? (
         <View style={[styles.grid, { width: contentW }]}>
           {Array.from({ length: 3 }).map((_, row) => (
-            <View key={row} style={[styles.gridRow, { gap: GRID_GAP }]}>
-              {HOME_FEATURE_ACTIONS.slice(row * 2, row * 2 + 2).map((action) => (
+            <View key={`action-row-${row}`} style={[styles.gridRow, { gap: GRID_GAP }]}>
+              {HOME_FEATURE_ACTIONS.slice(row * 2, row * 2 + 2).map((action, index) => (
                 <Pressable
-                  key={action.id}
+                  key={safeKey(action.id, `action-${row}-${index}`)}
                   style={[
                     styles.featureCard,
                     softShadow,
@@ -858,21 +890,23 @@ export function ReferenceHomeScreen({
             </View>
           ))}
         </View>
+        ) : null}
 
+        {LOOP_TEST_RESTORE.homeSectionDiscoverPreview ? (
         <View style={[styles.discoverSection, { width: contentW }]}>
           <View style={styles.discoverHead}>
             <Text style={styles.discoverTitle}>✨ みんなのプランから発見</Text>
             <Pressable
               onPress={() =>
-                runTarget('すべて見る', { kind: 'href', href: HOME_ROUTES.explore, routeLabel: '/(tabs)/explore' })
+                runTarget('すべて見る', { kind: 'href', href: HOME_ROUTES.explore, routeLabel: HOME_ROUTES.explore })
               }>
               <Text style={styles.discoverLink}>すべて見る 〉</Text>
             </Pressable>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: GRID_GAP }}>
-            {DISCOVER.map((d) => (
+            {DISCOVER.map((d, index) => (
               <Pressable
-                key={d.id}
+                key={safeKey(d.id, `discover-${index}`)}
                 style={[styles.discoverCard, softShadow, { width: discoverW }]}
                 onPress={() =>
                   runTarget(d.title, { kind: 'href', href: HOME_ROUTES.explore, routeLabel: '/(tabs)/explore' })
@@ -902,10 +936,10 @@ export function ReferenceHomeScreen({
                         uri={d.creatorAvatar}
                         size={20}
                         fallbackColor="#FECDD3"
-                        emoji={d.creator[0] ?? '?'}
+                        emoji={safeText(d.creator[0]) || '?'}
                         emojiSize={10}
                       />
-                      <Text style={styles.discoverCreatorName}>{d.creator}</Text>
+                      <Text style={styles.discoverCreatorName}>{safeText(d.creator)}</Text>
                     </View>
                     <Text style={styles.discoverStats}>
                       ♥ {d.likes}   📌 {d.saves}
@@ -916,7 +950,10 @@ export function ReferenceHomeScreen({
             ))}
           </ScrollView>
         </View>
+        ) : null}
 
+        {LOOP_TEST_RESTORE.homeSectionPreferenceCard ? (
+        <>
         {travelUserPreferences ? (
           <View style={{ width: contentW, marginTop: 2 }}>
             <PreferenceHomePromptCard preferences={travelUserPreferences} />
@@ -936,10 +973,11 @@ export function ReferenceHomeScreen({
             </Text>
             <View style={styles.prefChips}>
               {prefChips.map((label, chipIndex) => {
-                const preset = PREF_CHIPS.find((c) => c.label === label);
+                const chipLabel = safeText(label);
+                const preset = PREF_CHIPS.find((c) => c.label === chipLabel);
                 return (
                 <View
-                  key={`pref-${label}-${chipIndex}`}
+                  key={`pref-${safeKey(chipLabel, 'chip')}-${chipIndex}`}
                   style={[
                     styles.prefChip,
                     {
@@ -948,7 +986,7 @@ export function ReferenceHomeScreen({
                     },
                   ]}>
                   <Text style={[styles.prefChipText, { color: preset?.text ?? '#4338CA' }]}>
-                    {preset ? `${preset.emoji} ${label}` : label}
+                    {preset ? `${preset.emoji} ${chipLabel}` : chipLabel}
                   </Text>
                 </View>
               )})}
@@ -961,6 +999,8 @@ export function ReferenceHomeScreen({
             <Text style={styles.prefEditText}>編集</Text>
           </Pressable>
         </View>
+        </>
+        ) : null}
       </View>
 
       <PlanFormSheet
@@ -970,9 +1010,9 @@ export function ReferenceHomeScreen({
         preventClose={isPlanGenerating}
         onAbortGeneration={onAbortPlanGeneration}
         isPlanGenerating={isPlanGenerating}
-        generationStepIndex={generationStepIndex}>
-        {renderPlanForm?.()}
-      </PlanFormSheet>
+        generationStepIndex={generationStepIndex}
+        renderForm={renderPlanForm}
+      />
     </>
   );
 }
@@ -988,7 +1028,7 @@ const styles = StyleSheet.create({
   },
   coverFallbackEmoji: { fontSize: 28, opacity: 0.85 },
 
-  modalRoot: { flex: 1, justifyContent: 'flex-end' },
+  modalRoot: { flex: 1, justifyContent: 'flex-end', position: 'relative' },
   modalBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15,23,42,0.45)' },
   modalSheet: {
     maxHeight: '92%',
@@ -997,6 +1037,10 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     overflow: 'hidden',
+  },
+  sheetKeyboardAvoid: {
+    flex: 1,
+    minHeight: 0,
   },
   sheetHandle: {
     alignSelf: 'center',

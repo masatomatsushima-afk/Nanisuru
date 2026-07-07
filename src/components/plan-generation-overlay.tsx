@@ -11,6 +11,7 @@ import {
 
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
+import { safeKey, safeText } from '@/lib/safe-text';
 import { PLAN_LOADING_STAGES } from '@/lib/plan-generation-progress';
 
 type StepStatus = 'pending' | 'active' | 'done';
@@ -37,7 +38,7 @@ function StepRow({
         ) : status === 'active' ? (
           <ActivityIndicator size="small" color={NS.colors.orange} />
         ) : (
-          <Text style={styles.stepIcon}>{icon}</Text>
+          <Text style={styles.stepIcon}>{safeText(icon)}</Text>
         )}
       </View>
       <Text
@@ -108,7 +109,12 @@ function PlanGenerationOverlayCard({
           else if (index === safeStep) status = 'active';
 
           return (
-            <StepRow key={step.label} icon={step.icon} label={step.label} status={status} />
+            <StepRow
+              key={safeKey(step.label, `plan-step-${index}`)}
+              icon={step.icon}
+              label={step.label}
+              status={status}
+            />
           );
         })}
       </View>

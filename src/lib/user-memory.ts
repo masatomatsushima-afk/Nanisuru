@@ -1,9 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { formatAmount, type CurrencyCode } from '@/constants/currency';
+import { PREFERENCES_TEMPORARILY_DISABLED } from '@/lib/preferences-disabled';
 import type { PersonalityOption, TripDurationOption } from '@/types/plan';
 import { PERSONALITY_OPTIONS, TRIP_DURATION_OPTIONS } from '@/types/plan';
 import type { StoredUserMemory, UserPreferences } from '@/types/user-memory';
+
+export const EMPTY_USER_PREFERENCES: UserPreferences = {
+  favoriteTravelStyle: null,
+  budgetPreference: null,
+  favoriteActivities: [],
+  preferredTripDuration: null,
+  hasData: false,
+};
 
 const STORAGE_KEY = 'nanisuru_user_memory';
 const MAX_BUDGET_SAMPLES = 12;
@@ -83,6 +92,10 @@ function getTopActivities(counts: Record<string, number>, limit = TOP_ACTIVITIES
 }
 
 export async function getUserPreferences(): Promise<UserPreferences> {
+  if (PREFERENCES_TEMPORARILY_DISABLED) {
+    return EMPTY_USER_PREFERENCES;
+  }
+
   const memory = await readMemory();
   const favoriteTravelStyle = getTopKey<PersonalityOption>(memory.travelStyleCounts);
   const preferredTripDuration = getTopKey<TripDurationOption>(memory.tripDurationCounts);
@@ -109,6 +122,10 @@ export async function getAverageBudgetAmount(): Promise<{
   amount: number;
   currency: CurrencyCode;
 } | null> {
+  if (PREFERENCES_TEMPORARILY_DISABLED) {
+    return null;
+  }
+
   const memory = await readMemory();
   const budget = computeBudgetPreference(memory.budgetSamples);
   if (!budget) return null;
@@ -122,6 +139,10 @@ export async function recordPlanPreferences(input: {
   currency: CurrencyCode;
   activities: string[];
 }): Promise<void> {
+  if (PREFERENCES_TEMPORARILY_DISABLED) {
+    return;
+  }
+
   const memory = await readMemory();
 
   memory.travelStyleCounts[input.personality] =

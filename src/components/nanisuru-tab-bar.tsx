@@ -1,4 +1,5 @@
 import { SymbolView, type SymbolViewProps } from 'expo-symbols';
+import { memo, useCallback, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -9,51 +10,46 @@ import { Spacing } from '@/constants/theme';
 
 type TabMeta = {
   label: string;
-  ios: string;
-  android: string;
-  web: string;
+  symbolName: SymbolViewProps['name'];
   fallback: string;
   activeColor: string;
+};
+
+const DEFAULT_TAB_META: TabMeta = {
+  label: 'タブ',
+  symbolName: { ios: 'circle', android: 'circle', web: 'circle' },
+  fallback: '•',
+  activeColor: NS.colors.orange,
 };
 
 const TAB_ITEMS: Record<string, TabMeta> = {
   index: {
     label: 'ホーム',
-    ios: 'house.fill',
-    android: 'home',
-    web: 'home',
+    symbolName: { ios: 'house.fill', android: 'home', web: 'home' },
     fallback: '🏠',
     activeColor: '#FB923C',
   },
   favorites: {
     label: '保存',
-    ios: 'bookmark',
-    android: 'bookmark_border',
-    web: 'bookmark_border',
+    symbolName: { ios: 'bookmark', android: 'bookmark_border', web: 'bookmark_border' },
     fallback: '📌',
     activeColor: '#64748B',
   },
   explore: {
     label: '発見',
-    ios: 'safari',
-    android: 'explore',
-    web: 'explore',
+    symbolName: { ios: 'safari', android: 'explore', web: 'explore' },
     fallback: '🧭',
     activeColor: '#64748B',
   },
   ai: {
     label: '旅行秘書',
-    ios: 'suitcase.fill',
-    android: 'luggage',
-    web: 'luggage',
+    symbolName: { ios: 'suitcase.fill', android: 'luggage', web: 'luggage' },
     fallback: '🧳',
     activeColor: '#64748B',
   },
   profile: {
     label: 'マイページ',
-    ios: 'person',
-    android: 'person',
-    web: 'person',
+    symbolName: { ios: 'person', android: 'person', web: 'person' },
     fallback: '👤',
     activeColor: '#64748B',
   },
@@ -64,7 +60,7 @@ function TabIcon({ meta, focused }: { meta: TabMeta; focused: boolean }) {
 
   return (
     <SymbolView
-      name={{ ios: meta.ios, android: meta.android, web: meta.web } as SymbolViewProps['name']}
+      name={meta.symbolName}
       size={focused ? 20 : 19}
       tintColor={tint}
       fallback={<Text style={[styles.fallbackIcon, { color: tint }]}>{meta.fallback}</Text>}
@@ -72,71 +68,100 @@ function TabIcon({ meta, focused }: { meta: TabMeta; focused: boolean }) {
   );
 }
 
-export function NanisuruTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
-  const insets = useSafeAreaInsets();
+type TabBarButtonProps = {
+  route: BottomTabBarProps['state']['routes'][number];
+  isFocused: boolean;
+  meta: TabMeta;
+  accessibilityLabel: string;
+  navigation: BottomTabBarProps['navigation'];
+};
+
+const TabBarButton = memo(function TabBarButton({
+  route,
+  isFocused,
+  meta,
+  accessibilityLabel,
+  navigation,
+}: TabBarButtonProps) {
+  const activeColor =
+    route.name === 'index' && isFocused ? '#FB923C' : isFocused ? '#475569' : '#94A3B8';
+
+  const onPress = useCallback(() => {
+    if (isFocused) return;
+
+    const event = navigation.emit({
+      type: 'tabPress',
+      target: route.key,
+      canPreventDefault: true,
+    });
+
+    if (event.defaultPrevented) return;
+    navigation.navigate(route.name, route.params);
+  }, [isFocused, navigation, route.key, route.name, route.params]);
+
+  const onLongPress = useCallback(() => {
+    navigation.emit({
+      type: 'tabLongPress',
+      target: route.key,
+    });
+  }, [navigation, route.key]);
 
   return (
-    <View style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, Spacing.two) }]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={isFocused ? { selected: true } : {}}
+      accessibilityLabel={accessibilityLabel}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
+      <TabIcon meta={meta} focused={isFocused} />
+      <Text
+        style={[styles.label, isFocused && { color: activeColor, fontWeight: '800' }]}
+        numberOfLines={1}>
+        {meta.label}
+      </Text>
+      {isFocused ? <View style={[styles.activeDot, { backgroundColor: activeColor }]} /> : null}
+    </Pressable>
+  );
+});
+
+export const NanisuruTabBar = memo(function NanisuruTabBar({
+  state,
+  descriptors,
+  navigation,
+}: BottomTabBarProps) {
+  const insets = useSafeAreaInsets();
+  const bottomPadding = useMemo(
+    () => Math.max(insets.bottom, Spacing.two),
+    [insets.bottom],
+  );
+
+  return (
+    <View style={[styles.wrap, { paddingBottom: bottomPadding }]}>
       <View style={styles.bar}>
         {state.routes.map((route, index) => {
           const isFocused = state.index === index;
-          const meta = TAB_ITEMS[route.name] ?? {
-            label: route.name,
-            ios: 'circle',
-            android: 'circle',
-            web: 'circle',
-            fallback: '•',
-            activeColor: NS.colors.orange,
-          };
-
-          const onPress = () => {
-            const event = navigation.emit({
-              type: 'tabPress',
-              target: route.key,
-              canPreventDefault: true,
-            });
-
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name, route.params);
-            }
-          };
-
-          const onLongPress = () => {
-            navigation.emit({
-              type: 'tabLongPress',
-              target: route.key,
-            });
-          };
-
-          const activeColor = route.name === 'index' && isFocused ? '#FB923C' : isFocused ? '#475569' : '#94A3B8';
+          const meta = TAB_ITEMS[route.name] ?? DEFAULT_TAB_META;
 
           return (
-            <Pressable
+            <TabBarButton
               key={route.key}
-              accessibilityRole="button"
-              accessibilityState={isFocused ? { selected: true } : {}}
+              route={route}
+              isFocused={isFocused}
+              meta={meta}
               accessibilityLabel={descriptors[route.key]?.options.title ?? meta.label}
-              onPress={onPress}
-              onLongPress={onLongPress}
-              style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
-              <TabIcon meta={meta} focused={isFocused} />
-              <Text
-                style={[
-                  styles.label,
-                  isFocused && { color: activeColor, fontWeight: '800' },
-                ]}
-                numberOfLines={1}>
-                {meta.label}
-              </Text>
-              {isFocused ? (
-                <View style={[styles.activeDot, { backgroundColor: activeColor }]} />
-              ) : null}
-            </Pressable>
+              navigation={navigation}
+            />
           );
         })}
       </View>
     </View>
   );
+});
+
+/** Stable tabBar render prop — do not inline in Tabs layout (causes BottomTabView update loops). */
+export function renderNanisuruTabBar(props: BottomTabBarProps) {
+  return <NanisuruTabBar {...props} />;
 }
 
 const styles = StyleSheet.create({

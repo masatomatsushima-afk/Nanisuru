@@ -45,7 +45,7 @@ function sampleToPublicPlan(sample: DiscoverSamplePlan): PublicPlan {
 
 function getMockDiscoverPlans(): PublicPlan[] {
   console.warn('[Discover] using local sample fallback');
-  return DISCOVER_SAMPLE_PLANS.map(sampleToPublicPlan);
+  return uniquePlansById(DISCOVER_SAMPLE_PLANS.map(sampleToPublicPlan));
 }
 
 function matchesWeekend(plan: PublicPlan): boolean {
@@ -76,22 +76,22 @@ export function buildDiscoverFeedSections(plans: PublicPlan[], trending: RankedP
     {
       id: 'popular',
       title: '人気の旅行プラン',
-      plans: popular.length ? popular : plans.slice(0, 4),
+      plans: uniquePlansById(popular.length ? popular : plans.slice(0, 4)),
     },
     {
       id: 'weekend',
       title: '週末のおでかけ',
-      plans: remaining.filter(matchesWeekend).slice(0, 4),
+      plans: uniquePlansById(remaining.filter(matchesWeekend).slice(0, 4)),
     },
     {
       id: 'gourmet',
       title: 'グルメ旅',
-      plans: plans.filter(matchesGourmet).slice(0, 4),
+      plans: uniquePlansById(plans.filter(matchesGourmet).slice(0, 4)),
     },
     {
       id: 'date',
       title: 'デートプラン',
-      plans: plans.filter(matchesDate).slice(0, 4),
+      plans: uniquePlansById(plans.filter(matchesDate).slice(0, 4)),
     },
   ];
 
@@ -163,7 +163,7 @@ export async function loadDiscoverFeed(
       preferences ?? null,
     );
     console.log('[Discover] feed items', { planCount: plans.length, fromMock: true, sections });
-    return { plans, trending, sections, fromMock: true };
+    return { plans: uniquePlansById(plans), trending, sections, fromMock: true };
   }
 
   try {
@@ -176,7 +176,7 @@ export async function loadDiscoverFeed(
         preferences ?? null,
       );
       console.log('[Discover] feed items', { planCount: mockPlans.length, fromMock: true, sections });
-      return { plans: mockPlans, trending, sections, fromMock: true };
+      return { plans: uniquePlansById(mockPlans), trending, sections, fromMock: true };
     }
 
     const trending = await buildTrendingPlans(plans);
@@ -185,7 +185,7 @@ export async function loadDiscoverFeed(
       preferences ?? null,
     );
     console.log('[Discover] feed items', { planCount: plans.length, fromMock: false, sections });
-    return { plans, trending, sections, fromMock: false };
+    return { plans: uniquePlansById(plans), trending, sections, fromMock: false };
   } catch (error) {
     console.warn('[Discover] feed load failed, using fallback', error);
     const plans = getMockDiscoverPlans();
@@ -195,6 +195,6 @@ export async function loadDiscoverFeed(
       preferences ?? null,
     );
     console.log('[Discover] feed items', { planCount: plans.length, fromMock: true, sections });
-    return { plans, trending, sections, fromMock: true };
+    return { plans: uniquePlansById(plans), trending, sections, fromMock: true };
   }
 }

@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native'
 import { NS, getChipPalette, gradientStyle } from '@/constants/nanisuru-ui';
 import { MIN_TOUCH_TARGET } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
+import { safeText } from '@/lib/safe-text';
 
 type PremiumCardProps = {
   children: ReactNode;
@@ -269,6 +270,7 @@ export function SelectChip({
   colorIndex = 0,
 }: SelectChipProps) {
   const palette = getChipPalette(colorIndex);
+  const chipLabel = safeText(label);
 
   return (
     <Pressable
@@ -279,6 +281,8 @@ export function SelectChip({
           backgroundColor: palette.bg,
           borderColor: palette.border,
           borderWidth: 2.5,
+          ...NS.shadow.card,
+          shadowOpacity: 0.14,
         },
         pressed && chipStyles.chipPressed,
       ]}
@@ -288,7 +292,7 @@ export function SelectChip({
           chipStyles.label,
           selected && { color: palette.text, fontWeight: '800' },
         ]}>
-        {label}
+        {chipLabel}
       </Text>
       {selected ? <View style={[chipStyles.dot, { backgroundColor: palette.dot }]} /> : null}
     </Pressable>

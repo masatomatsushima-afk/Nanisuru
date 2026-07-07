@@ -30,12 +30,13 @@ import { useAuth } from '@/contexts/auth-context';
 import { useUserLocation } from '@/contexts/user-location-context';
 import { applyDiscoverFilters, countActiveDiscoverFilters } from '@/lib/discover-filters';
 import { loadDiscoverFeed, type DiscoverFeedSection } from '@/lib/discover-feed';
-import { getTravelUserPreferences } from '@/lib/travel-user-preferences';
+import { loopTestLogOnce } from '@/lib/loop-test-config';
 import {
   filtersForDiscoverCategory,
   isMemoryCategory,
 } from '@/lib/discover-top-category';
 import { notifyRankingEntries } from '@/lib/notifications';
+import { safeKey, safeText } from '@/lib/safe-text';
 import {
   DEFAULT_DISCOVER_FILTERS,
   type DiscoverFilterState,
@@ -43,13 +44,28 @@ import {
 import type { RankedPublicPlan } from '@/types/discover-ranking';
 import type { PublicPlan } from '@/types/public-plan';
 
+function samePublicPlans(left: PublicPlan[], right: PublicPlan[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameFeedSections(left: DiscoverFeedSection[], right: DiscoverFeedSection[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameTrending(left: RankedPublicPlan[], right: RankedPublicPlan[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export default function DiscoverScreen() {
+  loopTestLogOnce('restore:Discover', 'restoring Discover');
+
   const insets = useSafeAreaInsets();
   const { isConfigured, session } = useAuth();
   const { location, fetchLocation } = useUserLocation();
   const currentUserId = session?.user.id ?? null;
   const scrollRef = useRef<ScrollView>(null);
   const memoriesAnchorY = useRef(0);
+  const didFetchLocationRef = useRef(false);
 
   const [allPlans, setAllPlans] = useState<PublicPlan[]>([]);
   const [feedSections, setFeedSections] = useState<DiscoverFeedSection[]>([]);
@@ -63,6 +79,8 @@ export default function DiscoverScreen() {
   const [showSearch, setShowSearch] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
+  const areaHint = safeText(location?.city ?? location?.label);
+
   const displayedPlans = useMemo(
     () => applyDiscoverFilters(allPlans, filters),
     [allPlans, filters],
@@ -71,18 +89,6 @@ export default function DiscoverScreen() {
   const hasActiveFilters = countActiveDiscoverFilters(filters) > 0;
   const showMemoriesSection = isMemoryCategory(topCategory);
 
-  const loadRankingMeta = useCallback(async (plans: PublicPlan[]) => {
-    const { buildTrendingPlans } = await import('@/lib/discover-ranking');
-    const trendingPlans = await buildTrendingPlans(plans);
-    setTrending(trendingPlans);
-
-    if (currentUserId) {
-      void notifyRankingEntries(
-        trendingPlans.map((item) => ({ plan: item.plan, rank: item.rank })),
-      );
-    }
-  }, [currentUserId]);
-
   const loadInFlightRef = useRef(false);
 
   const loadPlans = useCallback(
@@ -90,30 +96,34 @@ export default function DiscoverScreen() {
       if (loadInFlightRef.current && !refresh) return;
       loadInFlightRef.current = true;
 
-      if (refresh) setIsRefreshing(true);
-      else setIsLoading(true);
-      setError(null);
+      if (refresh) setIsRefreshing((prev) => (prev ? prev : true));
+      else setIsLoading((prev) => (prev ? prev : true));
+      setError((prev) => (prev ? null : prev));
 
       try {
-        const feed = await loadDiscoverFeed(undefined, await getTravelUserPreferences());
-        setAllPlans(feed.plans);
-        setFeedSections(feed.sections);
-        setFromMock(feed.fromMock);
-        setTrending(feed.trending);
+        const feed = await loadDiscoverFeed(undefined, null);
+        setAllPlans((prev) => (samePublicPlans(prev, feed.plans) ? prev : feed.plans));
+        setFeedSections((prev) =>
+          sameFeedSections(prev, feed.sections) ? prev : feed.sections,
+        );
+        setFromMock((prev) => (prev === feed.fromMock ? prev : feed.fromMock));
+        setTrending((prev) => (sameTrending(prev, feed.trending) ? prev : feed.trending));
         if (currentUserId) {
           void notifyRankingEntries(
             feed.trending.map((item) => ({ plan: item.plan, rank: item.rank })),
           );
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : '公開プランの取得に失敗しました');
-        setAllPlans([]);
-        setFeedSections([]);
-        setTrending([]);
+        const message =
+          err instanceof Error ? err.message : '公開プランの取得に失敗しました';
+        setError((prev) => (prev === message ? prev : message));
+        setAllPlans((prev) => (prev.length === 0 ? prev : []));
+        setFeedSections((prev) => (prev.length === 0 ? prev : []));
+        setTrending((prev) => (prev.length === 0 ? prev : []));
       } finally {
         loadInFlightRef.current = false;
-        setIsLoading(false);
-        setIsRefreshing(false);
+        setIsLoading((prev) => (prev ? false : prev));
+        setIsRefreshing((prev) => (prev ? false : prev));
       }
     },
     [currentUserId],
@@ -121,7 +131,10 @@ export default function DiscoverScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void fetchLocation();
+      if (!didFetchLocationRef.current) {
+        didFetchLocationRef.current = true;
+        void fetchLocation();
+      }
       void loadPlans();
     }, [fetchLocation, loadPlans]),
   );
@@ -176,7 +189,7 @@ export default function DiscoverScreen() {
           <DiscoverLocalCompact
             isConfigured={isConfigured}
             isLoggedIn={Boolean(session)}
-            areaHint={location?.city ?? location?.label}
+            areaHint={areaHint || undefined}
             onRequireLogin={() => router.push('/login')}
           />
         </>
@@ -197,18 +210,22 @@ export default function DiscoverScreen() {
           <>
             <DiscoverFeaturedRow trending={trending} />
 
-            {feedSections.map((section) => (
-              <View key={section.id} style={styles.section}>
-                <LifestyleSectionHeader title={section.title} />
+            {feedSections.map((section, sectionIndex) => (
+              <View
+                key={safeKey(section.id, `discover-section-${sectionIndex}`)}
+                style={styles.section}>
+                <LifestyleSectionHeader title={safeText(section.title)} />
                 <View style={styles.feedGrid}>
                   {section.plans.map((plan, index) => (
                     <DiscoverCompactPlanCard
-                      key={`${section.id}-${plan.id}-${index}`}
+                      key={`${safeKey(section.id, 'section')}-${safeKey(plan.id, `plan-${index}`)}-${index}`}
                       plan={plan}
                       variant="grid"
                       colorIndex={index}
-                      onPress={() => router.push(`/public-plan/${plan.id}`)}
-                      onCreatorPress={() => router.push(`/creator/${plan.userId}`)}
+                      onPress={() => router.push(`/public-plan/${safeText(plan.id)}`)}
+                      onCreatorPress={() =>
+                        router.push(`/creator/${safeText(plan.userId)}`)
+                      }
                     />
                   ))}
                 </View>
@@ -233,12 +250,14 @@ export default function DiscoverScreen() {
                   <View style={styles.feedGrid}>
                     {displayedPlans.map((plan, index) => (
                       <DiscoverCompactPlanCard
-                        key={`search-${plan.id}-${index}`}
+                        key={`search-${safeKey(plan.id, `plan-${index}`)}-${index}`}
                         plan={plan}
                         variant="grid"
                         colorIndex={index}
-                        onPress={() => router.push(`/public-plan/${plan.id}`)}
-                        onCreatorPress={() => router.push(`/creator/${plan.userId}`)}
+                        onPress={() => router.push(`/public-plan/${safeText(plan.id)}`)}
+                        onCreatorPress={() =>
+                          router.push(`/creator/${safeText(plan.userId)}`)
+                        }
                       />
                     ))}
                   </View>
@@ -258,7 +277,7 @@ export default function DiscoverScreen() {
         <DiscoverLocalCompact
           isConfigured={isConfigured}
           isLoggedIn={Boolean(session)}
-          areaHint={location?.city ?? location?.label}
+          areaHint={areaHint || undefined}
           onRequireLogin={() => router.push('/login')}
         />
       </>

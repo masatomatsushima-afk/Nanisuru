@@ -1,13 +1,14 @@
-import { DefaultTheme, ThemeProvider } from 'expo-router';
-import { Stack } from 'expo-router';
+import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect, type ReactNode } from 'react';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { DevMvpAuditProbe } from '@/components/dev-mvp-audit-probe';
 import { DevSupabaseSetupProbe } from '@/components/dev-supabase-setup-probe';
+import { NS } from '@/constants/nanisuru-ui';
 import { AuthProvider } from '@/contexts/auth-context';
 import { UserLocationProvider } from '@/contexts/user-location-context';
-import { NS } from '@/constants/nanisuru-ui';
+import { LOOP_TEST_RESTORE, loopTestLogOnce } from '@/lib/loop-test-config';
 
 const NanisuruTheme = {
   ...DefaultTheme,
@@ -23,206 +24,86 @@ const NanisuruTheme = {
   },
 };
 
-export default function RootLayout() {
+const ROOT_STACK_SCREEN_OPTIONS = {
+  headerShown: false,
+  contentStyle: { backgroundColor: NS.colors.bg },
+} as const;
+
+function LoopTestMountLog({ name }: { name: string }) {
+  useEffect(() => {
+    loopTestLogOnce(`mount:${name}`, `mounted ${name}`);
+  }, [name]);
+  return null;
+}
+
+function MaybeAuthProvider({ children }: { children: ReactNode }) {
+  if (!LOOP_TEST_RESTORE.authProvider) return <>{children}</>;
+  loopTestLogOnce('restore:AuthProvider', 'restoring AuthProvider');
   return (
-    <AuthProvider>
-      <UserLocationProvider>
-        <ThemeProvider value={NanisuruTheme}>
-        <StatusBar style="dark" />
-        <AnimatedSplashOverlay />
-        {__DEV__ ? (
+    <>
+      <LoopTestMountLog name="AuthProvider" />
+      <AuthProvider>{children}</AuthProvider>
+    </>
+  );
+}
+
+function MaybeUserLocationProvider({ children }: { children: ReactNode }) {
+  if (!LOOP_TEST_RESTORE.userLocationProvider) return <>{children}</>;
+  loopTestLogOnce('restore:UserLocationProvider', 'restoring UserLocationProvider');
+  return (
+    <>
+      <LoopTestMountLog name="UserLocationProvider" />
+      <UserLocationProvider>{children}</UserLocationProvider>
+    </>
+  );
+}
+
+function MaybeThemeProvider({ children }: { children: ReactNode }) {
+  if (!LOOP_TEST_RESTORE.themeProvider) return <>{children}</>;
+  loopTestLogOnce('restore:ThemeProvider', 'restoring ThemeProvider');
+  return <ThemeProvider value={NanisuruTheme}>{children}</ThemeProvider>;
+}
+
+export default function RootLayout() {
+  loopTestLogOnce('boot', 'minimal root layout boot');
+
+  let tree: ReactNode = (
+    <>
+      <LoopTestMountLog name="RootLayout" />
+      <StatusBar style="dark" />
+      {LOOP_TEST_RESTORE.animatedSplash ? <AnimatedSplashOverlay /> : null}
+      {LOOP_TEST_RESTORE.devProbes && __DEV__ ? (
+        <>
+          <DevSupabaseSetupProbe />
+          <DevMvpAuditProbe />
+        </>
+      ) : null}
+      <Stack screenOptions={ROOT_STACK_SCREEN_OPTIONS}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
+        {LOOP_TEST_RESTORE.planDetailRoute ? (
           <>
-            <DevSupabaseSetupProbe />
-            <DevMvpAuditProbe />
+            <Stack.Screen name="plan-detail" />
+            <Stack.Screen name="today-schedule" />
           </>
         ) : null}
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: NS.colors.bg },
-          }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen
-            name="onboarding"
-            options={{
-              animation: 'fade',
-              gestureEnabled: false,
-            }}
-          />
-          <Stack.Screen
-            name="login"
-            options={{
-              animation: 'fade',
-              gestureEnabled: false,
-            }}
-          />
-          <Stack.Screen
-            name="sign-up"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="profile-edit"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen name="auth/callback" options={{ animation: 'none' }} />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen
-            name="plan-detail"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="imafima"
-            options={{
-              animation: 'slide_from_bottom',
-            }}
-          />
-          <Stack.Screen
-            name="best-day"
-            options={{
-              animation: 'slide_from_bottom',
-            }}
-          />
-          <Stack.Screen
-            name="after-plan"
-            options={{
-              animation: 'slide_from_bottom',
-            }}
-          />
-          <Stack.Screen
-            name="today-schedule"
-            options={{
-              animation: 'fade_from_bottom',
-            }}
-          />
-          <Stack.Screen
-            name="saved-trip/[id]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="share/[id]"
-            options={{
-              animation: 'fade',
-            }}
-          />
-          <Stack.Screen
-            name="public-plan/[id]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="plan-copy/[id]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="plan-version-draft/[id]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="creator/[id]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="notifications"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="beta-test"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="feedback"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="memories/index"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="my-trips"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="trip-folder/[id]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="trip-assistant/[folderId]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="trip-day-mode"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="preference-onboarding"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="local-gems"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="local-spot/submit"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="local-spot/[id]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="trip-memories"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-          <Stack.Screen
-            name="memory/[id]"
-            options={{
-              animation: 'slide_from_right',
-            }}
-          />
-        </Stack>
-      </ThemeProvider>
-      </UserLocationProvider>
-    </AuthProvider>
+      </Stack>
+    </>
   );
+
+  if (LOOP_TEST_RESTORE.animatedSplash) {
+    loopTestLogOnce('restore:AnimatedSplash', 'restoring AnimatedSplash');
+  }
+  if (LOOP_TEST_RESTORE.devProbes) {
+    loopTestLogOnce('restore:DevProbes', 'restoring DevProbes');
+  }
+  if (LOOP_TEST_RESTORE.planDetailRoute) {
+    loopTestLogOnce('restore:planDetailRoute', 'restoring plan-detail + today-schedule routes');
+  }
+
+  tree = <MaybeThemeProvider>{tree}</MaybeThemeProvider>;
+  tree = <MaybeUserLocationProvider>{tree}</MaybeUserLocationProvider>;
+  tree = <MaybeAuthProvider>{tree}</MaybeAuthProvider>;
+
+  return tree;
 }

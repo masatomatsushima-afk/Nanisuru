@@ -36,31 +36,45 @@ export function UserLocationProvider({ children }: { children: ReactNode }) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fetchLocation = useCallback(async (): Promise<FetchLocationOutcome> => {
-    setIsLoading(true);
-    setErrorMessage(null);
-    setPermissionDenied(false);
+    setIsLoading((prev) => (prev ? prev : true));
+    setErrorMessage((prev) => (prev ? null : prev));
+    setPermissionDenied((prev) => (prev ? false : prev));
 
     try {
       const result = await fetchCurrentLocation();
 
       if (result.status === 'success') {
-        setLocation(result.data);
-        setPermissionDenied(false);
-        setErrorMessage(null);
+        setLocation((prev) => {
+          const next = result.data;
+          if (
+            prev &&
+            prev.latitude === next.latitude &&
+            prev.longitude === next.longitude &&
+            prev.label === next.label &&
+            prev.city === next.city
+          ) {
+            return prev;
+          }
+          return next;
+        });
+        setPermissionDenied((prev) => (prev ? false : prev));
+        setErrorMessage((prev) => (prev ? null : prev));
         return { location: result.data, errorMessage: null };
       }
 
       if (result.status === 'denied') {
-        setPermissionDenied(true);
-        setErrorMessage(LOCATION_PERMISSION_DENIED_MESSAGE);
+        setPermissionDenied((prev) => (prev ? prev : true));
+        setErrorMessage((prev) =>
+          prev === LOCATION_PERMISSION_DENIED_MESSAGE ? prev : LOCATION_PERMISSION_DENIED_MESSAGE,
+        );
         return { location: null, errorMessage: LOCATION_PERMISSION_DENIED_MESSAGE };
       }
 
       const message = APP_MESSAGES.locationFetchFailed;
-      setErrorMessage(message);
+      setErrorMessage((prev) => (prev === message ? prev : message));
       return { location: null, errorMessage: message };
     } finally {
-      setIsLoading(false);
+      setIsLoading((prev) => (prev ? false : prev));
     }
   }, []);
 

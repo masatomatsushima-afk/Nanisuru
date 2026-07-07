@@ -1,5 +1,5 @@
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState, type MutableRefObject } from 'react';
+import { router } from 'expo-router';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -40,23 +40,41 @@ import { fetchLocalHiddenSpotsByUserId } from '@/lib/local-hidden-spots';
 import { fetchUserSavedPortfolioItems } from '@/lib/profile-saves';
 import { fetchPublicPlansByUserId } from '@/lib/public-plans';
 import { fetchProfilePublicMemoriesByUserId } from '@/lib/trip-memories';
-import { getUserPreferences } from '@/lib/user-memory';
-import { getTravelUserPreferences } from '@/lib/travel-user-preferences';
 import { ensureUserProfile } from '@/lib/user-profiles';
+import { loopTestLogOnce } from '@/lib/loop-test-config';
+import { safeKey, safeText } from '@/lib/safe-text';
+import { EMPTY_USER_PREFERENCES } from '@/lib/user-memory';
 import type { ProfileSavedItem, ProfileTabId } from '@/types/profile-portfolio';
 import type { LocalHiddenSpot } from '@/types/local-hidden-spot';
 import type { PublicPlan } from '@/types/public-plan';
 import type { TripMemory } from '@/types/trip-memory';
 import type { UserProfile } from '@/types/user-profile';
-import type { UserPreferences } from '@/types/user-memory';
 import {
   EMPTY_TRAVEL_USER_PREFERENCES,
   type TravelUserPreferences,
 } from '@/types/travel-user-preferences';
 
+function sameJson<T>(left: T, right: T): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function savedItemKey(item: ProfileSavedItem, index: number): string {
+  if (item.type === 'plan') {
+    return `saved-plan-${safeKey(item.plan.id, `item-${index}`)}-${index}`;
+  }
+  if (item.type === 'memory') {
+    return `saved-memory-${safeKey(item.memory.id, `item-${index}`)}-${index}`;
+  }
+  return `saved-spot-${safeKey(item.spot.id, `item-${index}`)}-${index}`;
+}
+
 export default function ProfileScreen() {
+  loopTestLogOnce('restore:Profile', 'restoring Profile / マイページ');
+
   const insets = useSafeAreaInsets();
   const { user, isConfigured, isLoggedIn, signOut } = useAuth();
+  const userId = user?.id ?? null;
+  const loadInFlightRef = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const profileEditorY = useRef(0);
   const preferencesEditorY = useRef(0);
@@ -70,10 +88,8 @@ export default function ProfileScreen() {
   const [activeTab, setActiveTab] = useState<ProfileTabId>('plans');
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
-  const [travelUserPreferences, setTravelUserPreferences] = useState<TravelUserPreferences | null>(
-    null,
-  );
+  const userPreferences = EMPTY_USER_PREFERENCES;
+  const [travelUserPreferences] = useState<TravelUserPreferences>(EMPTY_TRAVEL_USER_PREFERENCES);
 
   const scrollTo = (yRef: MutableRefObject<number>) => {
     scrollRef.current?.scrollTo({
@@ -82,67 +98,57 @@ export default function ProfileScreen() {
     });
   };
 
-  const loadPreferences = useCallback(async () => {
-    const [learned, travelPrefs] = await Promise.all([
-      getUserPreferences(),
-      getTravelUserPreferences(),
-    ]);
-    setUserPreferences(learned);
-    setTravelUserPreferences(travelPrefs);
-  }, []);
-
   const loadPortfolio = useCallback(async () => {
-    if (!user || !isConfigured) {
-      setProfile(null);
-      setPlans([]);
-      setMemories([]);
-      setSpots([]);
-      setSavedItems([]);
-      setIsLoading(false);
+    if (!userId || !isConfigured) {
+      setProfile((prev) => (prev === null ? prev : null));
+      setPlans((prev) => (prev.length === 0 ? prev : []));
+      setMemories((prev) => (prev.length === 0 ? prev : []));
+      setSpots((prev) => (prev.length === 0 ? prev : []));
+      setSavedItems((prev) => (prev.length === 0 ? prev : []));
+      setIsLoading((prev) => (prev ? false : prev));
       return;
     }
 
-    setIsLoading(true);
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+
+    setIsLoading((prev) => (prev ? prev : true));
+
     try {
-      if (__DEV__) console.log('[Profile] loading user profile');
       const [loadedProfile, loadedPlans, loadedMemories, loadedSpots, loadedSaved] =
         await Promise.all([
           ensureUserProfile(),
-          fetchPublicPlansByUserId(user.id),
-          fetchProfilePublicMemoriesByUserId(user.id),
-          fetchLocalHiddenSpotsByUserId(user.id),
-          fetchUserSavedPortfolioItems().catch(() => [] as ProfileSavedItem[]),
+          fetchPublicPlansByUserId(userId),
+          fetchProfilePublicMemoriesByUserId(userId),
+          fetchLocalHiddenSpotsByUserId(userId),
+          fetchUserSavedPortfolioItems().catch((err) => {
+            console.warn('[Profile] saved items load failed', err);
+            return [] as ProfileSavedItem[];
+          }),
         ]);
 
-      if (__DEV__) {
-        console.log('[Profile] loaded', {
-          plans: loadedPlans.length,
-          memories: loadedMemories.length,
-        });
-      }
-
-      setProfile({ ...loadedProfile, isSelf: true });
-      setPlans(loadedPlans);
-      setMemories(loadedMemories);
-      setSpots(loadedSpots);
-      setSavedItems(loadedSaved);
-    } catch {
-      setProfile(null);
-      setPlans([]);
-      setMemories([]);
-      setSpots([]);
-      setSavedItems([]);
+      const nextProfile: UserProfile = { ...loadedProfile, isSelf: true };
+      setProfile((prev) => (sameJson(prev, nextProfile) ? prev : nextProfile));
+      setPlans((prev) => (sameJson(prev, loadedPlans) ? prev : loadedPlans));
+      setMemories((prev) => (sameJson(prev, loadedMemories) ? prev : loadedMemories));
+      setSpots((prev) => (sameJson(prev, loadedSpots) ? prev : loadedSpots));
+      setSavedItems((prev) => (sameJson(prev, loadedSaved) ? prev : loadedSaved));
+    } catch (err) {
+      console.warn('[Profile] portfolio load failed', err);
+      setProfile((prev) => (prev === null ? prev : null));
+      setPlans((prev) => (prev.length === 0 ? prev : []));
+      setMemories((prev) => (prev.length === 0 ? prev : []));
+      setSpots((prev) => (prev.length === 0 ? prev : []));
+      setSavedItems((prev) => (prev.length === 0 ? prev : []));
     } finally {
-      setIsLoading(false);
+      loadInFlightRef.current = false;
+      setIsLoading((prev) => (prev ? false : prev));
     }
-  }, [isConfigured, user]);
+  }, [isConfigured, userId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadPreferences();
-      void loadPortfolio();
-    }, [loadPortfolio, loadPreferences]),
-  );
+  useEffect(() => {
+    void loadPortfolio();
+  }, [loadPortfolio]);
 
   const handleSignOut = () => {
     confirmSignOut(async () => {
@@ -173,9 +179,9 @@ export default function ProfileScreen() {
           <View style={styles.grid}>
             {plans.map((plan, index) => (
               <ProfilePlanGridCard
-                key={plan.id ?? `profile-plan-${index}`}
+                key={`profile-plan-${safeKey(plan.id, `plan-${index}`)}-${index}`}
                 plan={plan}
-                onPress={() => router.push(`/public-plan/${plan.id}`)}
+                onPress={() => router.push(`/public-plan/${safeText(plan.id)}`)}
               />
             ))}
           </View>
@@ -193,9 +199,9 @@ export default function ProfileScreen() {
           <View style={styles.grid}>
             {memories.map((memory, index) => (
               <ProfileMemoryGridCard
-                key={memory.id ?? `profile-memory-${index}`}
+                key={`profile-memory-${safeKey(memory.id, `memory-${index}`)}-${index}`}
                 memory={memory}
-                onPress={() => router.push(`/memory/${memory.id}`)}
+                onPress={() => router.push(`/memory/${safeText(memory.id)}`)}
               />
             ))}
           </View>
@@ -213,10 +219,10 @@ export default function ProfileScreen() {
           <View style={styles.grid}>
             {spots.map((spot, index) => (
               <ProfileSpotGridCard
-                key={spot.id}
+                key={`profile-spot-${safeKey(spot.id, `spot-${index}`)}-${index}`}
                 spot={spot}
                 index={index}
-                onPress={() => router.push(`/local-spot/${spot.id}`)}
+                onPress={() => router.push(`/local-spot/${safeText(spot.id)}`)}
               />
             ))}
           </View>
@@ -232,14 +238,18 @@ export default function ProfileScreen() {
           />
         ) : (
           <View style={styles.grid}>
-            {savedItems.map((item) => (
+            {savedItems.map((item, index) => (
               <ProfileSavedGridCard
-                key={`${item.type}-${item.type === 'plan' ? item.plan.id : item.type === 'memory' ? item.memory.id : item.spot.id}`}
+                key={savedItemKey(item, index)}
                 item={item}
                 onPress={() => {
-                  if (item.type === 'plan') router.push(`/public-plan/${item.plan.id}`);
-                  else if (item.type === 'memory') router.push(`/memory/${item.memory.id}`);
-                  else router.push(`/local-spot/${item.spot.id}`);
+                  if (item.type === 'plan') {
+                    router.push(`/public-plan/${safeText(item.plan.id)}`);
+                  } else if (item.type === 'memory') {
+                    router.push(`/memory/${safeText(item.memory.id)}`);
+                  } else {
+                    router.push(`/local-spot/${safeText(item.spot.id)}`);
+                  }
                 }}
               />
             ))}
@@ -287,7 +297,7 @@ export default function ProfileScreen() {
 
           {userPreferences ? <UserPreferencesSection preferences={userPreferences} /> : null}
 
-          <PreferenceSettingsCard preferences={travelUserPreferences ?? EMPTY_TRAVEL_USER_PREFERENCES} />
+          <PreferenceSettingsCard preferences={travelUserPreferences} />
 
           <RatingTendencySection isLoggedIn={false} isConfigured={isConfigured} />
 
@@ -408,7 +418,7 @@ export default function ProfileScreen() {
             />
 
             <PreferenceSettingsCard
-              preferences={travelUserPreferences ?? EMPTY_TRAVEL_USER_PREFERENCES}
+              preferences={travelUserPreferences}
             />
 
             <ProfileTabBar activeTab={activeTab} isSelf onChange={setActiveTab} />
@@ -430,7 +440,7 @@ export default function ProfileScreen() {
             </Text>
             <PrimaryButton
               label="公開プロフィールを見る"
-              onPress={() => router.push(`/creator/${user.id}`)}
+              onPress={() => router.push(`/creator/${safeText(user.id)}`)}
               variant="warm"
             />
           </PremiumCard>

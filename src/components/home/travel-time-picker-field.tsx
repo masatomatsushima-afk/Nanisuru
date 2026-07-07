@@ -14,6 +14,7 @@ import {
   buildHalfHourTimeSlots,
   formatTimeDisplay,
 } from '@/lib/normalize-user-input';
+import { safeChipKey, safeKey, safeText } from '@/lib/safe-text';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 
@@ -72,15 +73,15 @@ export function TravelTimePickerField({
 
             <Text style={styles.sectionLabel}>クイック選択</Text>
             <View style={styles.presetRow}>
-              {TIME_PERIOD_PRESETS.map((preset) => {
+              {TIME_PERIOD_PRESETS.map((preset, index) => {
                 const selected = (value ?? '') === preset.value;
                 return (
                   <Pressable
-                    key={preset.id}
+                    key={safeChipKey('time-preset', preset, index)}
                     style={[styles.presetChip, selected && styles.presetChipSelected]}
                     onPress={() => selectTime(preset.value)}>
                     <Text style={[styles.presetText, selected && styles.presetTextSelected]}>
-                      {preset.label}
+                      {safeText(preset.label)}
                     </Text>
                   </Pressable>
                 );
@@ -89,14 +90,16 @@ export function TravelTimePickerField({
 
             <Text style={styles.sectionLabel}>時刻（30分刻み）</Text>
             <ScrollView style={styles.slotScroll} contentContainerStyle={styles.slotGrid}>
-              {slots.map((slot) => {
+              {slots.map((slot, index) => {
                 const selected = value === slot;
                 return (
                   <Pressable
-                    key={slot}
+                    key={safeKey(slot, `time-slot-${index}`)}
                     style={[styles.slotChip, selected && styles.slotChipSelected]}
                     onPress={() => selectTime(slot)}>
-                    <Text style={[styles.slotText, selected && styles.slotTextSelected]}>{slot}</Text>
+                    <Text style={[styles.slotText, selected && styles.slotTextSelected]}>
+                      {safeText(slot)}
+                    </Text>
                   </Pressable>
                 );
               })}

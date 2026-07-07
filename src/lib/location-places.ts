@@ -109,6 +109,38 @@ export async function fetchRealPlacesForLocation(location: string): Promise<Near
   }
 }
 
+export function buildCompactRealPlacesPromptSection(
+  context: NearbyPlacesContext,
+  maxPlaces = 12,
+): string {
+  if (!context.places.length) {
+    return buildRealPlacesPromptSection(context);
+  }
+
+  const limited = context.places.slice(0, maxPlaces);
+  const placeNames = limited.map((place) => place.name).join('、');
+  const lines = limited
+    .map(
+      (place, index) =>
+        `${index + 1}. **${place.name}**（${place.categoryLabel}${place.rating != null ? ` · ★${place.rating.toFixed(1)}` : ''}）`,
+    )
+    .join('\n');
+
+  const omitted =
+    context.places.length > limited.length
+      ? `\n※他 ${context.places.length - limited.length} 件は省略（リスト内の名称のみ使用可）`
+      : '';
+
+  return `
+## 実在スポットリスト（${context.locationLabel} · 必須遵守 · コンパクト）
+**以下の名称のみ** activity に使用すること（架空名禁止）。
+
+使用可能: ${placeNames}${omitted}
+
+${lines}
+`.trim();
+}
+
 export function buildRealPlacesPromptSection(context: NearbyPlacesContext): string {
   if (!context.places.length) {
     return `

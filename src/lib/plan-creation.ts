@@ -106,6 +106,7 @@ export function canGeneratePlan(input: {
   mood: string;
   travelIntent: TravelIntentOption | '';
   customPreferences: PlanCustomPreferences;
+  travelPurpose?: string | null;
 }): boolean {
   if (!input.companion) return false;
 
@@ -118,6 +119,10 @@ export function canGeneratePlan(input: {
   }
 
   if (showsTravelIntentQuestion(input.planType)) {
+    if (input.travelPurpose?.trim()) {
+      return true;
+    }
+
     return Boolean(
       formatCombinedTravelIntent(input.travelIntent, input.customPreferences.customTravelIntent),
     );

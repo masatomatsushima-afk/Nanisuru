@@ -1,6 +1,7 @@
 import type { TripDurationOption } from '@/types/plan';
 import { TRIP_DURATION_OPTIONS } from '@/types/plan';
 import type { CustomTripDuration } from '@/types/trip-schedule';
+import { deserializeRouteParamJson } from '@/lib/safe-json';
 
 export type TripDurationConfig = {
   dayCount: number;
@@ -119,18 +120,15 @@ export function getAllActivities(days: import('@/types/plan').ItineraryDay[]): s
 }
 
 export function parseItineraryDays(
-  daysJson?: string | null,
+  daysJson?: string | string[] | null,
   fallbackItems?: import('@/types/plan').ItineraryItem[],
 ): import('@/types/plan').ItineraryDay[] {
-  if (daysJson) {
-    try {
-      const parsed = JSON.parse(daysJson) as import('@/types/plan').ItineraryDay[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    } catch {
-      // fall through
-    }
+  const parsed = deserializeRouteParamJson<import('@/types/plan').ItineraryDay[]>(
+    daysJson ?? undefined,
+    [],
+  );
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    return parsed;
   }
 
   if (fallbackItems && fallbackItems.length > 0) {

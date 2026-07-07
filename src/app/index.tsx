@@ -1,53 +1,14 @@
 import { Redirect } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import { useAuth } from '@/contexts/auth-context';
-import { getOnboardingCompleted } from '@/lib/onboarding-storage';
-import { getPreferenceOnboardingCompleted } from '@/lib/preference-onboarding-storage';
-import { NS } from '@/constants/nanisuru-ui';
-
-const accent = NS.colors.accent;
+import { LOOP_TEST_RESTORE, loopTestLogOnce } from '@/lib/loop-test-config';
 
 export default function IndexScreen() {
-  const { isLoading: authLoading } = useAuth();
-  const [isReady, setIsReady] = useState(false);
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
-  const [hasCompletedPreferenceOnboarding, setHasCompletedPreferenceOnboarding] = useState(false);
-
-  useEffect(() => {
-    Promise.all([getOnboardingCompleted(), getPreferenceOnboardingCompleted()])
-      .then(([onboarding, preferences]) => {
-        setHasCompletedOnboarding(onboarding);
-        setHasCompletedPreferenceOnboarding(preferences);
-      })
-      .finally(() => setIsReady(true));
-  }, []);
-
-  if (!isReady || authLoading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color={accent} />
-      </View>
-    );
+  if (LOOP_TEST_RESTORE.rootIndexGate) {
+    loopTestLogOnce('restore:rootIndexGate', 'restoring root index gate');
+    const FullIndexScreen = require('@/archive/loop-test/index.full').default;
+    return <FullIndexScreen />;
   }
 
-  if (!hasCompletedOnboarding) {
-    return <Redirect href="/onboarding" />;
-  }
-
-  if (!hasCompletedPreferenceOnboarding) {
-    return <Redirect href="/preference-onboarding" />;
-  }
-
+  loopTestLogOnce('index', 'root index -> (tabs) direct redirect');
   return <Redirect href="/(tabs)" />;
 }
-
-const styles = StyleSheet.create({
-  loading: {
-    flex: 1,
-    backgroundColor: NS.colors.bg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

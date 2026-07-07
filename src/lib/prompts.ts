@@ -27,7 +27,11 @@ import type { PlanCreationType } from '@/types/plan-creation';
 import { buildCustomPreferencesPromptSection, formatCombinedMood } from './custom-preferences';
 import { buildPlanCreationPromptSection, formatCombinedTravelIntent } from './plan-creation';
 import { buildVagueLocationPromptSection } from './location-input-copy';
-import { buildLocalHiddenSpotsPromptSection } from './local-hidden-spots-prompt';
+import {
+  buildCompactLocalHiddenSpotsPromptSection,
+  buildLocalHiddenSpotsPromptSection,
+  buildLocalGemsUnavailablePromptSection,
+} from './local-hidden-spots-prompt';
 import { resolveEffectiveMoodForPrompt } from './plan-generation-log';
 import {
   buildFoodHeavyRebalanceInstruction,
@@ -63,6 +67,8 @@ export type PlanInput = {
   travelUserPreferences?: TravelUserPreferences;
   travelMemories?: TravelMemory[];
   localHiddenSpots?: LocalHiddenSpot[];
+  /** True when user wanted local gems but none could be loaded (optional context). */
+  prioritizeLocalGems?: boolean;
   realPlaces?: NearbyPlacesContext;
   avoidActivities?: string[];
   spontaneous?: SpontaneousContext;
@@ -102,6 +108,8 @@ export type PlanInput = {
   budgetScope?: BudgetScopeSettings;
   abortSignal?: AbortSignal;
   outfitStyleMode?: OutfitStyleMode;
+  /** Lighter prompt for initial travel plan generation (smaller/faster OpenAI request). */
+  compactPrompt?: boolean;
 };
 
 const PERSONALITY_GUIDE: Record<PersonalityOption, string> = {
@@ -324,28 +332,32 @@ ${input.planAdjustment.notes?.trim() ? `### ユーザーメモ\n${input.planAdju
     : '';
 
   const diversitySection =
-    isMultiDay && isTravelPlan
-      ? `\n\n${buildItineraryDiversityPromptSection(durationConfig.dayCount)}`
-      : isMultiDay
+    input.compactPrompt
+      ? ''
+      : isMultiDay && isTravelPlan
         ? `\n\n${buildItineraryDiversityPromptSection(durationConfig.dayCount)}`
-        : '';
+        : isMultiDay
+          ? `\n\n${buildItineraryDiversityPromptSection(durationConfig.dayCount)}`
+          : '';
 
   const travelTimingSection =
-    isTravelPlan && durationConfig.dayCount >= 2
-      ? `\n\n${buildTravelTimingPromptSection(input.travelTiming, durationConfig.dayCount)}`
-      : '';
+    input.compactPrompt || !(isTravelPlan && durationConfig.dayCount >= 2)
+      ? ''
+      : `\n\n${buildTravelTimingPromptSection(input.travelTiming, durationConfig.dayCount)}`;
 
   const tourSuggestionSection =
-    isTravelPlan && durationConfig.dayCount >= 3
-      ? `\n\n${buildTourSuggestionPromptSection(durationConfig.dayCount, location)}`
-      : '';
+    input.compactPrompt || !(isTravelPlan && durationConfig.dayCount >= 3)
+      ? ''
+      : `\n\n${buildTourSuggestionPromptSection(durationConfig.dayCount, location)}`;
 
-  const humanRhythmSection = buildHumanRhythmPromptSection({
-    personality: input.personality,
-    companion: input.companion,
-    mood: input.mood,
-    customPreferences: input.customPreferences,
-  });
+  const humanRhythmSection = input.compactPrompt
+    ? ''
+    : buildHumanRhythmPromptSection({
+        personality: input.personality,
+        companion: input.companion,
+        mood: input.mood,
+        customPreferences: input.customPreferences,
+      });
 
   const activityCategoryGuide = ITINERARY_ACTIVITY_CATEGORIES.join(' / ');
 
@@ -455,6 +467,26 @@ ${accommodationRule}
   const weatherSection = (() => {
     if (!input.weather) return '';
 
+    if (input.compactPrompt) {
+      const summary = input.weather.summary?.trim();
+      const seasonal = input.weather.seasonalContext;
+      if (seasonal) {
+        return `
+
+## 天候・季節（要約）
+- 目的地: ${seasonal.destination} · ${seasonal.monthLabel}
+- 傾向: ${seasonal.guidance}
+- 服装目安: ${seasonal.outfitAdvice}`;
+      }
+      if (summary) {
+        return `
+
+## 天候（要約）
+${summary}`;
+      }
+      return '';
+    }
+
     const mode =
       input.weather.planningMode ??
       (input.weather.seasonalContext
@@ -556,28 +588,50 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
 - plannerMessage に天候への一言（例：「晴れの予報なので屋外も楽しめます」等）を含めること`;
   })();
 
-  const userMemorySection = input.userPreferences
-    ? buildUserMemoryPromptSection(input.userPreferences)
-    : '';
+  const userMemorySection =
+    input.compactPrompt && input.userPreferences?.hasData
+      ? `
 
-  const travelMemorySection = input.travelMemories?.length
-    ? buildTravelMemoryPromptSection(input.travelMemories)
-    : '';
+## ユーザーの好み（要約）
+- 旅行タイプ: ${input.userPreferences.favoriteTravelStyle ?? '未設定'}
+- 予算感: ${input.userPreferences.budgetPreference ?? '未設定'}
+- よく選ぶアクティビティ: ${input.userPreferences.favoriteActivities.slice(0, 4).join('、') || '未設定'}`
+      : input.userPreferences
+        ? buildUserMemoryPromptSection(input.userPreferences)
+        : '';
 
-  const travelUserPreferencesSection = input.travelUserPreferences
-    ? buildTravelUserPreferencesPromptSection(input.travelUserPreferences)
-    : '';
+  const travelMemorySection =
+    input.compactPrompt || !input.travelMemories?.length
+      ? ''
+      : buildTravelMemoryPromptSection(input.travelMemories);
+
+  const travelUserPreferencesSection =
+    input.compactPrompt && input.travelUserPreferences
+      ? `
+
+## 好み診断（要約）
+- ジャンル: ${input.travelUserPreferences.favoriteCategories.slice(0, 4).join('、') || '未設定'}
+- ペース: ${input.travelUserPreferences.travelPace ?? '未設定'}`
+      : input.travelUserPreferences
+        ? buildTravelUserPreferencesPromptSection(input.travelUserPreferences)
+        : '';
 
   const localHiddenSpotsSection = input.localHiddenSpots?.length
-    ? buildLocalHiddenSpotsPromptSection(input.localHiddenSpots)
-    : '';
+    ? input.compactPrompt
+      ? buildCompactLocalHiddenSpotsPromptSection(input.localHiddenSpots)
+      : buildLocalHiddenSpotsPromptSection(input.localHiddenSpots)
+    : input.prioritizeLocalGems
+      ? buildLocalGemsUnavailablePromptSection()
+      : '';
 
   const realPlacesSection =
-    input.realPlaces && input.realPlaces.places.length > 0
-      ? `\n\n${buildRealPlacesPromptSection(input.realPlaces)}`
-      : input.realPlaces?.notice
+    input.compactPrompt
+      ? ''
+      : input.realPlaces && input.realPlaces.places.length > 0
         ? `\n\n${buildRealPlacesPromptSection(input.realPlaces)}`
-        : '';
+        : input.realPlaces?.notice
+          ? `\n\n${buildRealPlacesPromptSection(input.realPlaces)}`
+          : '';
 
   const spontaneousSection = input.spontaneous
     ? buildImaHimaPromptSection(
@@ -588,12 +642,34 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
 
   const bestDaySection = input.bestDay ? buildBestDayPromptSection(input.bestDay) : '';
 
-  const customPreferencesSection = buildCustomPreferencesPromptSection(
-    input.customPreferences,
-    isTravelPlan ? normalized.travelPurpose : input.mood,
-  );
+  const customPreferencesSection = input.compactPrompt
+    ? input.customPreferences?.desiredPlaces?.trim() ||
+      input.customPreferences?.avoidPreferences?.trim() ||
+      input.customPreferences?.customTravelIntent?.trim()
+      ? `\n\n## 追加リクエスト\n${
+          [
+            input.customPreferences.desiredPlaces?.trim()
+              ? `- 行きたい場所: ${input.customPreferences.desiredPlaces.trim()}`
+              : null,
+            input.customPreferences.avoidPreferences?.trim()
+              ? `- 避けたいこと: ${input.customPreferences.avoidPreferences.trim()}`
+              : null,
+            input.customPreferences.customTravelIntent?.trim()
+              ? `- 目的メモ: ${input.customPreferences.customTravelIntent.trim()}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        }`
+      : ''
+    : buildCustomPreferencesPromptSection(
+        input.customPreferences,
+        isTravelPlan ? normalized.travelPurpose : input.mood,
+      );
 
-  const conciergeSection = `
+  const conciergeSection = input.compactPrompt
+    ? ''
+    : `
 
 ## コンシェルジュモード（必須・各 items に設定）
 各スポットの items に、予約・アクセス情報を必ず含めてください。
@@ -604,26 +680,27 @@ ${isMultiDay ? '- **複数日の場合、日ごとの天気予報に合わせて
 - transportation には移動手段の説明、travelTimeToNext には時間の目安を記載（両方セットで使う）
 - URLは https:// で始まる有効な形式のみ。確信がない場合は空文字にすること`;
 
-  const preAnalysisSection = buildPreAnalysisBriefing(input);
+  const preAnalysisSection = input.compactPrompt ? '' : buildPreAnalysisBriefing(input);
 
-  const planCreationSection = normalized.planType
-    ? buildPlanCreationPromptSection({
-        planType: normalized.planType,
-        mood: input.mood,
-        travelIntent: normalized.travelPurpose,
-        customPreferences: input.customPreferences,
-      })
-    : '';
+  const planCreationSection =
+    input.compactPrompt || !normalized.planType
+      ? ''
+      : buildPlanCreationPromptSection({
+          planType: normalized.planType,
+          mood: input.mood,
+          travelIntent: normalized.travelPurpose,
+          customPreferences: input.customPreferences,
+        });
 
   const vagueLocationSection =
-    normalized.planType && location.trim()
-      ? buildVagueLocationPromptSection({
+    input.compactPrompt || !(normalized.planType && location.trim())
+      ? ''
+      : buildVagueLocationPromptSection({
           location,
-          planType: normalized.planType,
+          planType: normalized.planType!,
           companion: input.companion,
           spotInterests: normalized.mustVisitPlaces,
-        })
-      : '';
+        });
 
   const intentConditionLine = isTravelPlan
     ? `- 旅行の目的: ${travelIntent}`

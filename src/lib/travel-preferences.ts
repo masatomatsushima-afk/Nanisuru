@@ -3,6 +3,7 @@ import {
   deleteTravelMemory,
   getTravelMemories,
 } from '@/lib/travel-memory';
+import { PREFERENCES_TEMPORARILY_DISABLED } from '@/lib/preferences-disabled';
 import type { TravelMemory, TravelMemoryCategory } from '@/types/travel-memory';
 import {
   categoryHasSelection,
@@ -51,6 +52,10 @@ function mergeCategoryMemories(memories: TravelMemory[]): CategoryPreferenceStat
 }
 
 export async function loadTravelPreferencesState(): Promise<TravelPreferencesState> {
+  if (PREFERENCES_TEMPORARILY_DISABLED) {
+    return createEmptyTravelPreferencesState();
+  }
+
   const memories = await getTravelMemories();
   const state = createEmptyTravelPreferencesState();
 
@@ -67,6 +72,10 @@ export async function loadTravelPreferencesState(): Promise<TravelPreferencesSta
 export async function saveTravelPreferencesState(
   state: TravelPreferencesState,
 ): Promise<void> {
+  if (PREFERENCES_TEMPORARILY_DISABLED) {
+    return;
+  }
+
   const existing = await getTravelMemories();
 
   for (const category of MANAGED_CATEGORIES) {

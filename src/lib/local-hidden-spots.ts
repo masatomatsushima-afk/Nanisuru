@@ -17,6 +17,148 @@ const SPOT_SELECT =
 const SPOT_SELECT_LEGACY =
   'id, user_id, name, area, category, description, best_time, estimated_budget, crowd_tip, caution, google_maps_url, image_url, tags, moderation_status, creator_display_name, like_count, save_count, want_count, comment_count, created_at, updated_at';
 
+/** Preferred Supabase table; legacy name kept as fallback. */
+export const LOCAL_GEMS_TABLE = 'local_gems';
+const LOCAL_GEMS_TABLE_LEGACY = 'local_hidden_spots';
+
+const LOCAL_GEMS_SELECT =
+  'id, user_id, name, area, category, description, tags, budget_level, crowd_level, recommended_for, caution_notes, image_url, google_maps_url, instagram_url, tiktok_url, visibility, saves_count, created_at, updated_at';
+
+type LocalGemsRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  area: string;
+  category: string;
+  description: string;
+  tags: string[] | null;
+  budget_level?: string;
+  crowd_level?: string;
+  recommended_for?: string[] | null;
+  caution_notes?: string;
+  image_url?: string;
+  google_maps_url?: string;
+  instagram_url?: string;
+  tiktok_url?: string;
+  visibility?: string;
+  saves_count?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+function parseTagsField(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  return [];
+}
+
+function normalizeGemVisibility(value?: string): LocalHiddenSpotVisibility {
+  if (value === 'private' || value === 'unlisted') return value;
+  if (value === '非公開') return 'private';
+  if (value === '限定公開') return 'unlisted';
+  return 'public';
+}
+
+export function isMissingLocalGemsTableError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' && error && 'message' in error
+        ? String((error as { message?: unknown }).message ?? error)
+        : String(error ?? '');
+
+  return (
+    /Could not find the table/i.test(message) ||
+    /schema cache/i.test(message) ||
+    /PGRST\d+/i.test(message) ||
+    /local_hidden_spots/i.test(message) ||
+    /local_gems/i.test(message) ||
+    /relation .* does not exist/i.test(message)
+  );
+}
+
+function localGemsRowToSpot(row: LocalGemsRow): LocalHiddenSpot {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    area: row.area,
+    category: row.category as LocalHiddenSpotCategory,
+    description: row.description,
+    bestTime: '',
+    estimatedBudget: row.budget_level?.trim() ?? '',
+    crowdTip: row.crowd_level?.trim() ?? '',
+    caution: row.caution_notes?.trim() ?? '',
+    recommendedFor: parseTagsField(row.recommended_for).join('、'),
+    googleMapsUrl: row.google_maps_url?.trim() ?? '',
+    instagramUrl: row.instagram_url?.trim() ?? '',
+    tiktokUrl: row.tiktok_url?.trim() ?? '',
+    imageUrl: row.image_url?.trim() ?? '',
+    tags: parseTagsField(row.tags),
+    visibility: normalizeGemVisibility(row.visibility),
+    moderationStatus: 'active',
+    creatorDisplayName: '',
+    likeCount: 0,
+    saveCount: row.saves_count ?? 0,
+    wantCount: 0,
+    commentCount: 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function queryLocalGemsTable(options: {
+  area?: string;
+  limit: number;
+  userId?: string;
+  includePrivate?: boolean;
+  spotId?: string;
+}): Promise<LocalHiddenSpot[] | null> {
+  if (!isSupabaseConfigured()) return [];
+
+  const supabase = getSupabase();
+  const area = options.area?.trim();
+  const limit = options.limit;
+
+  let query = supabase.from(LOCAL_GEMS_TABLE).select(LOCAL_GEMS_SELECT);
+
+  if (options.spotId) {
+    query = query.eq('id', options.spotId).limit(1);
+  } else if (options.userId) {
+    query = query
+      .eq('user_id', options.userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (!options.includePrivate) {
+      query = query.in('visibility', ['public', '公開する']);
+    }
+  } else {
+    query = query
+      .in('visibility', ['public', '公開する'])
+      .order('saves_count', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (area) {
+      query = query.ilike('area', `%${area}%`);
+    }
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    if (isMissingLocalGemsTableError(error)) {
+      console.warn(`[LocalGems] table "${LOCAL_GEMS_TABLE}" unavailable`, error);
+      return null;
+    }
+    console.warn('[LocalGems] failed to load from local_gems, continuing without local gems', error);
+    return [];
+  }
+
+  const rows = (data as LocalGemsRow[]) ?? [];
+  return rows.map(localGemsRowToSpot);
+}
+
 type SpotRow = {
   id: string;
   user_id: string;
@@ -89,19 +231,36 @@ function rowToSpot(row: SpotRow, extras?: Partial<LocalHiddenSpot>): LocalHidden
 }
 
 async function querySpots(
-  build: (select: string) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+  build: (select: string, table: string) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
 ): Promise<SpotRow[]> {
-  const extended = await build(SPOT_SELECT);
-  if (!extended.error && extended.data) {
-    return extended.data as SpotRow[];
+  for (const table of [LOCAL_GEMS_TABLE_LEGACY]) {
+    const extended = await build(SPOT_SELECT, table);
+    if (!extended.error && extended.data) {
+      return extended.data as SpotRow[];
+    }
+
+    if (extended.error && isMissingLocalGemsTableError(extended.error)) {
+      console.warn(`[LocalGems] table "${table}" unavailable`, extended.error);
+      return [];
+    }
+
+    console.warn('[LocalGems] extended columns unavailable, using legacy select');
+    const legacy = await build(SPOT_SELECT_LEGACY, table);
+    if (!legacy.error && legacy.data) {
+      return legacy.data as SpotRow[];
+    }
+    if (legacy.error) {
+      if (isMissingLocalGemsTableError(legacy.error)) {
+        console.warn(`[LocalGems] table "${table}" unavailable`, legacy.error);
+        return [];
+      }
+      console.warn('[LocalGems] failed to load, continuing without local gems', legacy.error);
+      return [];
+    }
+    return (legacy.data as SpotRow[]) ?? [];
   }
 
-  console.warn('[LocalGems] extended columns unavailable, using legacy select');
-  const legacy = await build(SPOT_SELECT_LEGACY);
-  if (legacy.error) {
-    throw new Error(legacy.error.message ?? '穴場スポットの取得に失敗しました');
-  }
-  return (legacy.data as SpotRow[]) ?? [];
+  return [];
 }
 
 async function getCurrentUserId(): Promise<string | null> {
@@ -193,40 +352,52 @@ export async function fetchLocalHiddenSpots(options?: {
 }): Promise<LocalHiddenSpot[]> {
   if (!isSupabaseConfigured()) return [];
 
-  const supabase = getSupabase();
   const area = options?.area?.trim();
   const limit = options?.limit ?? 24;
 
-  const runQuery = (includeVisibility: boolean) =>
-    querySpots((select) => {
-      let query = supabase
-        .from('local_hidden_spots')
-        .select(select)
-        .eq('moderation_status', 'active')
-        .order('save_count', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(limit);
-
-      if (includeVisibility) {
-        query = query.eq('visibility', 'public');
-      }
-      if (area) {
-        query = query.ilike('area', `%${area}%`);
-      }
-      return query;
-    });
-
-  let rows: SpotRow[];
   try {
-    rows = await runQuery(true);
-  } catch {
-    rows = await runQuery(false);
-  }
+    const gemsResult = await queryLocalGemsTable({ area, limit });
+    if (gemsResult !== null) {
+      let spots = gemsResult;
+      spots = await attachCreatorMeta(spots).catch(() => spots);
+      spots = await attachUserInteractions(spots).catch(() => spots);
+      return spots.filter(isDiscoverableLocalHiddenSpot);
+    }
 
-  let spots = rows.map((row) => rowToSpot(row));
-  spots = await attachCreatorMeta(spots);
-  spots = await attachUserInteractions(spots);
-  return spots.filter(isDiscoverableLocalHiddenSpot);
+    const supabase = getSupabase();
+
+    const runQuery = (includeVisibility: boolean) =>
+      querySpots((select, table) => {
+        let query = supabase
+          .from(table)
+          .select(select)
+          .eq('moderation_status', 'active')
+          .order('save_count', { ascending: false })
+          .order('created_at', { ascending: false })
+          .limit(limit);
+
+        if (includeVisibility) {
+          query = query.eq('visibility', 'public');
+        }
+        if (area) {
+          query = query.ilike('area', `%${area}%`);
+        }
+        return query;
+      });
+
+    let rows: SpotRow[] = await runQuery(true);
+    if (rows.length === 0) {
+      rows = await runQuery(false);
+    }
+
+    let spots = rows.map((row) => rowToSpot(row));
+    spots = await attachCreatorMeta(spots).catch(() => spots);
+    spots = await attachUserInteractions(spots).catch(() => spots);
+    return spots.filter(isDiscoverableLocalHiddenSpot);
+  } catch (error) {
+    console.warn('[LocalGems] optional local gems unavailable, continuing', error);
+    return [];
+  }
 }
 
 export async function fetchLocalHiddenSpotsByUserId(
@@ -239,9 +410,9 @@ export async function fetchLocalHiddenSpotsByUserId(
   const currentUserId = await getCurrentUserId();
   const isSelf = currentUserId === userId;
 
-  const rows = await querySpots((select) => {
+  const rows = await querySpots((select, table) => {
     let query = supabase
-      .from('local_hidden_spots')
+      .from(table)
       .select(select)
       .eq('user_id', userId)
       .eq('moderation_status', 'active')
@@ -253,9 +424,9 @@ export async function fetchLocalHiddenSpotsByUserId(
 
     return query;
   }).catch(() =>
-    querySpots((select) =>
+    querySpots((select, table) =>
       supabase
-        .from('local_hidden_spots')
+        .from(table)
         .select(select)
         .eq('user_id', userId)
         .eq('moderation_status', 'active')
@@ -475,21 +646,40 @@ export async function fetchLocalHiddenSpotsForPlan(input: {
   location: string;
   limit?: number;
 }): Promise<LocalHiddenSpot[]> {
+  return loadRelevantLocalGemsForPlan(input);
+}
+
+/** Plan-generation safe loader — never throws; missing table returns []. */
+export async function loadRelevantLocalGemsForPlan(input: {
+  location: string;
+  limit?: number;
+}): Promise<LocalHiddenSpot[]> {
   const location = input.location.trim();
   if (!location) return [];
 
-  const spots = await fetchLocalHiddenSpots({ limit: input.limit ?? 12 });
-  if (spots.length === 0) return [];
+  try {
+    const spots = await fetchLocalHiddenSpots({ limit: input.limit ?? 12 });
+    if (spots.length === 0) {
+      console.log('[TravelPlanSubmit] local gems count', 0);
+      return [];
+    }
 
-  const normalized = location.toLowerCase();
-  const matched = spots.filter(
-    (spot) =>
-      spot.area.toLowerCase().includes(normalized) ||
-      normalized.includes(spot.area.toLowerCase()) ||
-      spot.name.toLowerCase().includes(normalized),
-  );
+    const normalized = location.toLowerCase();
+    const matched = spots.filter(
+      (spot) =>
+        spot.area.toLowerCase().includes(normalized) ||
+        normalized.includes(spot.area.toLowerCase()) ||
+        spot.name.toLowerCase().includes(normalized),
+    );
 
-  return (matched.length > 0 ? matched : spots).slice(0, input.limit ?? 8);
+    const result = (matched.length > 0 ? matched : spots).slice(0, input.limit ?? 8);
+    console.log('[TravelPlanSubmit] local gems count', result.length);
+    return result;
+  } catch (error) {
+    console.warn('[LocalGems] optional local gems unavailable, continuing', error);
+    console.log('[TravelPlanSubmit] local gems count', 0);
+    return [];
+  }
 }
 
 export function shouldPrioritizeLocalHiddenSpots(input: {

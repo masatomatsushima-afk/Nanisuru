@@ -195,9 +195,9 @@ export default function CreatorProfileScreen() {
           <ProfileEmptyState emoji="🗺️" title="まだ公開プランはありません" />
         ) : (
           <View style={styles.grid}>
-            {plans.map((plan) => (
+            {plans.map((plan, index) => (
               <ProfilePlanGridCard
-                key={plan.id}
+                key={`creator-plan-${plan.id}-${index}`}
                 plan={plan}
                 onPress={() => router.push(`/public-plan/${plan.id}`)}
               />

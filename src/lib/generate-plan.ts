@@ -11,6 +11,7 @@ import { isDateRelatedCompanion } from '@/types/plan';
 import type { ImaHimaMoodOption, ImaHimaTimeOption } from '@/types/imafima';
 import type { BestDayMoodOption, BestDayTimeOption } from '@/types/best-day';
 
+
 import { getOpenAiApiKey, isOpenAiConfigured } from './env';
 import {
   buildSpontaneousContext,
@@ -23,6 +24,13 @@ import {
   resolveBestDayPreferences,
 } from './best-day';
 import { buildConciergePrompt, type PlanInput } from './prompts';
+import {
+  getGeneratePlanApiUrlForLog,
+  getWindowOriginForLog,
+  shouldUsePlanGenerationApiProxy,
+  validatePlanApiRequestConfig,
+} from './plan-api-url';
+import { safeJsonParse, stripJsonCodeFence } from './safe-json';
 import { flattenItineraryDays, resolveDurationConfig } from './trip-duration';
 import { fetchWeatherForecast, getTodayIsoDate, resolveWeatherLocation, resolveWeatherForTrip, createUnavailableWeatherForecast, type WeatherForecast } from './weather';
 import { getUserPreferences } from './user-memory';
@@ -30,7 +38,7 @@ import { getTravelMemories } from './travel-memory';
 import { getTravelUserPreferences } from './travel-user-preferences';
 import { hasTravelUserPreferences } from '@/types/travel-user-preferences';
 import {
-  fetchLocalHiddenSpotsForPlan,
+  loadRelevantLocalGemsForPlan,
   shouldPrioritizeLocalHiddenSpots,
 } from './local-hidden-spots';
 import {
@@ -52,7 +60,31 @@ import {
 import { finalizeItineraryBeforeDisplay } from './finalize-itinerary';
 import { isAbortError } from './plan-generation-progress';
 import { inferCurrencyFromLocation } from './location-currency';
-import { APP_MESSAGES, AppError, isNetworkError, OpenAiRequestError } from './app-errors';
+import {
+  APP_MESSAGES,
+  AppError,
+  OpenAiRequestError,
+  PlanGenerationRequestError,
+  resolvePlanGenerationFetchFailure,
+} from './app-errors';
+import {
+  AiGenerationTimeoutError,
+  createGenerationAbortSignal,
+  getOpenAiRetryDelayMs,
+  isRetryableOpenAiError,
+  OPENAI_MAX_GENERATION_ATTEMPTS,
+  sleep,
+} from './openai-generation';
+import { isDevFallbackEligibleError } from './openai-dev-fallback';
+import {
+  buildCompactPromptPlanInput,
+  buildCompactSystemPrompt,
+  extractPlanGenerationDevMeta,
+} from './plan-generation-dev-meta';
+import {
+  buildDevFallbackTravelPlan,
+  parseDevFallbackTravelPlanFromApiResponse,
+} from './travel-plan-dev-fallback';
 import { learnFromCustomPreferences } from './custom-preferences';
 import {
   buildPlanGenerationLogPayload,
@@ -79,6 +111,8 @@ export type GeneratedPlan = {
   days: ItineraryDay[];
   items: ItineraryItem[];
   details: PlanDetails;
+  /** Shown in dev when OpenAI timed out and a sample plan was used instead. */
+  devFallbackNotice?: string;
 };
 
 export { isOpenAiConfigured };
@@ -544,7 +578,7 @@ export async function generateBestDayPlan(params: {
 }
 
 function parseAiResponse(
-  content: string,
+  raw: unknown,
   includeAiAdvice: boolean,
   tripDuration: TripDurationOption,
   tripDate: string,
@@ -553,9 +587,20 @@ function parseAiResponse(
   customDuration?: CustomTripDuration,
   travelTiming?: TravelTimingSettings,
 ): GeneratedPlan {
-  const parsed = JSON.parse(content) as AiPlanResponse;
+  if (__DEV__) {
+    console.log('[AI] raw result type', typeof raw);
+    console.log(
+      '[AI] raw result preview',
+      typeof raw === 'string' ? raw.slice(0, 600) : JSON.stringify(raw).slice(0, 600),
+    );
+  }
 
-  if (!parsed.days || parsed.days.length === 0) {
+  const parsed = safeJsonParse<AiPlanResponse | null>(
+    typeof raw === 'string' ? stripJsonCodeFence(raw) : raw,
+    null,
+  );
+
+  if (!parsed?.days || parsed.days.length === 0) {
     throw new Error('プランの形式が正しくありません');
   }
 
@@ -613,7 +658,7 @@ function extractResponseText(data: unknown): string {
     output_text?: string;
     output?: Array<{
       type?: string;
-      content?: Array<{ type?: string; text?: string }>;
+      content?: Array<{ type?: string; text?: string; parsed?: unknown }>;
     }>;
   };
 
@@ -624,6 +669,12 @@ function extractResponseText(data: unknown): string {
   for (const item of response.output ?? []) {
     if (item.type !== 'message') continue;
     for (const part of item.content ?? []) {
+      if (part.parsed != null && typeof part.parsed === 'object') {
+        if (__DEV__) {
+          console.log('[AI] using pre-parsed structured output object');
+        }
+        return JSON.stringify(part.parsed);
+      }
       if (part.type === 'output_text' && part.text?.trim()) {
         return part.text;
       }
@@ -631,6 +682,25 @@ function extractResponseText(data: unknown): string {
   }
 
   throw new Error('AIからの応答が空でした');
+}
+
+function extractAiPlanPayload(data: unknown): unknown {
+  const response = data as {
+    output?: Array<{
+      type?: string;
+      content?: Array<{ type?: string; text?: string; parsed?: unknown }>;
+    }>;
+  };
+
+  for (const item of response.output ?? []) {
+    for (const part of item.content ?? []) {
+      if (part.parsed != null && typeof part.parsed === 'object') {
+        return part.parsed;
+      }
+    }
+  }
+
+  return extractResponseText(data);
 }
 
 function logFetchPlanFromAiRawError(error: unknown): void {
@@ -650,19 +720,26 @@ function logFetchPlanFromAiRawError(error: unknown): void {
   });
 }
 
-function throwOpenAiHttpError(status: number, statusText: string, errorBody: string): never {
+function throwOpenAiHttpError(
+  status: number,
+  statusText: string,
+  errorBody: string,
+  requestUrl?: string,
+): never {
   console.error('[fetchPlanFromAi] OpenAI response error', {
     status,
     statusText,
     body: errorBody,
+    requestUrl,
   });
-  throw new OpenAiRequestError(status, statusText, errorBody);
+  throw new OpenAiRequestError(status, statusText, errorBody, requestUrl);
 }
 
 async function fetchPlanFromAi(params: {
   apiKey: string;
   systemPrompt: string;
   planInput: PlanInput;
+  fallbackPlanInput?: PlanInput;
   tripDuration: TripDurationOption;
   includeAiAdvice: boolean;
   schemaOverrides?: { dayCount?: number; itemsMin?: number; itemsMax?: number };
@@ -679,19 +756,98 @@ async function fetchPlanFromAi(params: {
     isTravelPlan && durationConfig.dayCount >= 3 && !params.planInput.spontaneous && !params.planInput.bestDay;
 
   const userPrompt = buildConciergePrompt(params.planInput);
+
+  console.log('[AI] generation started', {
+    destination: params.planInput.location,
+    durationLabel:
+      params.planInput.durationLabel ??
+      resolveDurationConfig(params.tripDuration, params.customDuration).label,
+    companion: params.planInput.companion,
+    travelPurpose: params.planInput.travelPurpose ?? params.planInput.travelIntent,
+    promptLength: userPrompt.length,
+  });
+
   logPlanGenerationStep('openai_request', {
     systemPromptPreview: params.systemPrompt.slice(0, 600),
     promptPreview: userPrompt.slice(0, 1200),
     promptLength: userPrompt.length,
   });
 
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= OPENAI_MAX_GENERATION_ATTEMPTS; attempt++) {
+    const { signal, cleanup, didTimeout } = createGenerationAbortSignal(params.planInput.abortSignal);
+
+    try {
+      const plan = await executePlanFromAiRequest({
+        ...params,
+        userPrompt,
+        includeTourSuggestions,
+        attemptSignal: signal,
+        fallbackPlanInput: params.fallbackPlanInput ?? params.planInput,
+      });
+      cleanup();
+      console.log('[AI] generation success');
+      return plan;
+    } catch (err) {
+      cleanup();
+      lastError = err;
+
+      if (params.planInput.abortSignal?.aborted || (isAbortError(err) && !didTimeout())) {
+        throw err;
+      }
+
+      if (didTimeout()) {
+        lastError = new AiGenerationTimeoutError();
+      } else if (err instanceof DOMException && err.name === 'AbortError') {
+        lastError = new AiGenerationTimeoutError();
+      }
+
+      const status = lastError instanceof OpenAiRequestError ? lastError.status : undefined;
+      const message = lastError instanceof Error ? lastError.message : String(lastError);
+      console.error('[AI] generation failed', { status, message, attempt });
+
+      if (attempt >= OPENAI_MAX_GENERATION_ATTEMPTS || !isRetryableOpenAiError(lastError)) {
+        if (didTimeout() || lastError instanceof AiGenerationTimeoutError) {
+          throw new AiGenerationTimeoutError();
+        }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
+      }
+
+      console.warn('[AI] retrying generation', { attempt, errorMessage: message });
+      await sleep(getOpenAiRetryDelayMs(attempt));
+    }
+  }
+
+  if (lastError instanceof AiGenerationTimeoutError) {
+    throw lastError;
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+async function executePlanFromAiRequest(params: {
+  apiKey: string;
+  systemPrompt: string;
+  planInput: PlanInput;
+  fallbackPlanInput: PlanInput;
+  tripDuration: TripDurationOption;
+  includeAiAdvice: boolean;
+  schemaOverrides?: { dayCount?: number; itemsMin?: number; itemsMax?: number };
+  customDuration?: CustomTripDuration;
+  tripDate: string;
+  tripEndDate?: string;
+  weather?: WeatherForecast;
+  userPrompt: string;
+  includeTourSuggestions: boolean;
+  attemptSignal: AbortSignal;
+}): Promise<GeneratedPlan> {
   const model = 'gpt-4o-mini';
   const schemaName = params.includeAiAdvice ? 'nanisuru_trip_plan_with_advice' : 'nanisuru_trip_plan';
   const requestPayload = {
     model,
     input: [
       { role: 'system', content: params.systemPrompt },
-      { role: 'user', content: userPrompt },
+      { role: 'user', content: params.userPrompt },
     ],
     text: {
       format: {
@@ -705,7 +861,7 @@ async function fetchPlanFromAi(params: {
           params.customDuration,
           params.planInput.budgetScope,
           {
-            includeTourSuggestions,
+            includeTourSuggestions: params.includeTourSuggestions,
             includeWeatherReplanChanges: Boolean(params.planInput.weatherReplan),
           },
         ),
@@ -714,42 +870,121 @@ async function fetchPlanFromAi(params: {
   };
 
   if (__DEV__) {
+    const useProxy = shouldUsePlanGenerationApiProxy();
     console.log('[fetchPlanFromAi] start');
+    console.log('[fetchPlanFromAi] useProxy', useProxy);
+    console.log('[fetchPlanFromAi] hasOpenAIKey', useProxy || Boolean(params.apiKey));
     console.log('[fetchPlanFromAi] model', model);
+    console.log('[fetchPlanFromAi] request payload', {
+      model: requestPayload.model,
+      schemaName,
+      systemPromptLength: params.systemPrompt.length,
+      userPromptLength: params.userPrompt.length,
+      inputMessageCount: requestPayload.input.length,
+    });
+    if (useProxy) {
+      console.log('[TravelPlanSubmit] request URL', getGeneratePlanApiUrlForLog());
+      console.log('[TravelPlanSubmit] request payload', {
+        model: requestPayload.model,
+        schemaName,
+        systemPromptLength: params.systemPrompt.length,
+        userPromptLength: params.userPrompt.length,
+      });
+    }
+  }
+
+  const useProxy = shouldUsePlanGenerationApiProxy();
+  const apiValidation = useProxy ? validatePlanApiRequestConfig() : null;
+  const requestUrl = useProxy ? apiValidation!.fetchUrl : 'https://api.openai.com/v1/responses';
+  const requestUrlForLog = useProxy ? apiValidation!.logUrl : requestUrl;
+
+  console.log('[TravelPlanSubmit] request URL', requestUrlForLog);
+  console.log(
+    '[TravelPlanSubmit] window origin',
+    typeof window !== 'undefined' ? window.location.origin : 'no-window',
+  );
+
+  if (useProxy && apiValidation && !apiValidation.ok) {
+    console.error('[TravelPlanSubmit] invalid API request config', apiValidation);
+    throw new PlanGenerationRequestError(
+      apiValidation.userMessage ?? APP_MESSAGES.planApiBadOrigin,
+      'NETWORK_ERROR',
+      requestUrlForLog,
+    );
   }
 
   let response: Response;
   try {
-    response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${params.apiKey}`,
-      },
-      signal: params.planInput.abortSignal,
-      body: JSON.stringify(requestPayload),
-    });
+    if (useProxy) {
+      response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: params.attemptSignal,
+        body: JSON.stringify({
+          requestPayload,
+          ...(__DEV__ ? { devMeta: extractPlanGenerationDevMeta(params.fallbackPlanInput) } : {}),
+        }),
+      });
+    } else {
+      response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${params.apiKey}`,
+        },
+        signal: params.attemptSignal,
+        body: JSON.stringify(requestPayload),
+      });
+    }
   } catch (err) {
+    console.error('[TravelPlanSubmit] fetch failed raw', err);
+    console.error('[TravelPlanSubmit] fetch failed details', {
+      name: err instanceof Error ? err.name : undefined,
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+      requestUrl: requestUrlForLog,
+      origin: getWindowOriginForLog(),
+    });
     logFetchPlanFromAiRawError(err);
-    logPlanGenerationError('openai_fetch', err);
-    if (params.planInput.abortSignal?.aborted || isAbortError(err)) {
+    logPlanGenerationError('openai_fetch', err, { requestUrl: requestUrlForLog });
+    if (params.planInput.abortSignal?.aborted || (isAbortError(err) && !params.attemptSignal.aborted)) {
       throw err;
     }
-    if (isNetworkError(err)) {
-      throw new AppError(APP_MESSAGES.networkError, 'NETWORK_ERROR');
+    if (params.attemptSignal.aborted) {
+      throw new PlanGenerationRequestError(
+        APP_MESSAGES.aiGenerationTimeout,
+        'OPENAI_FAILED',
+        requestUrlForLog,
+        err,
+      );
     }
-    throw err instanceof Error ? err : new Error(String(err));
+    throw resolvePlanGenerationFetchFailure(err, requestUrlForLog, useProxy);
   }
 
+  console.log('[TravelPlanSubmit] response status', response.status);
+
   if (!response.ok) {
-    const errorText = await response.text();
-    throwOpenAiHttpError(response.status, response.statusText, errorText);
+    const text = await response.text();
+    console.error('[TravelPlanSubmit] response not ok', {
+      status: response.status,
+      statusText: response.statusText,
+      text,
+      requestUrl: requestUrlForLog,
+    });
+    throwOpenAiHttpError(response.status, response.statusText, text, requestUrlForLog);
   }
 
   const data = await response.json();
+  const devFallbackPlan = parseDevFallbackTravelPlanFromApiResponse(data, params.fallbackPlanInput);
+  if (devFallbackPlan) {
+    console.warn('[AI] using dev fallback plan from API response');
+    return devFallbackPlan;
+  }
+
   try {
+    const aiPayload = extractAiPlanPayload(data);
     return parseAiResponse(
-      extractResponseText(data),
+      aiPayload,
       params.includeAiAdvice,
       params.tripDuration,
       params.tripDate,
@@ -900,14 +1135,22 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
 
   logPlanGenerationStep('input', buildPlanGenerationLogPayload(normalized));
 
-  const apiKey = getOpenAiApiKey();
-  if (!apiKey) {
+  const useProxy = shouldUsePlanGenerationApiProxy();
+  if (!useProxy && !getOpenAiApiKey()) {
     console.error('[fetchPlanFromAi] missing API key', {
       hasEnvVar: Boolean(process.env.EXPO_PUBLIC_OPENAI_API_KEY),
     });
-    throw new Error(
-      'EXPO_PUBLIC_OPENAI_API_KEY is missing or invalid. Add it to .env and restart Expo with npx expo start -c',
-    );
+    throw new AppError(APP_MESSAGES.openAiNotConfigured, 'OPENAI_FAILED');
+  }
+  const apiKey: string = useProxy ? 'proxy' : getOpenAiApiKey()!;
+
+  if (__DEV__) {
+    console.log('[AI] hasOpenAIKey', useProxy || Boolean(getOpenAiApiKey()));
+    console.log('[AI] model', 'gpt-4o-mini');
+    console.log('[AI] usePlanApiProxy', useProxy);
+    if (useProxy) {
+      console.log('[AI] planApiUrl', getGeneratePlanApiUrlForLog());
+    }
   }
 
   let weather: WeatherForecast;
@@ -995,14 +1238,60 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     (hasTravelUserPreferences(travelUserPreferences) &&
       travelUserPreferences.favoriteCategories.includes('ローカル穴場'));
 
-  const localHiddenSpots = prioritizeLocalSpots
-    ? await fetchLocalHiddenSpotsForPlan({ location: locationTrimmed, limit: 8 })
-    : [];
+  let localHiddenSpots: Awaited<ReturnType<typeof loadRelevantLocalGemsForPlan>> = [];
+  if (prioritizeLocalSpots) {
+    try {
+      localHiddenSpots = await loadRelevantLocalGemsForPlan({
+        location: locationTrimmed,
+        limit: 3,
+      });
+    } catch (error) {
+      console.warn('[LocalGems] optional local gems unavailable, continuing', error);
+      console.log('[TravelPlanSubmit] local gems count', 0);
+      localHiddenSpots = [];
+    }
+  }
+
+  if (__DEV__) {
+    console.log('[TravelPlanSubmit] continuing generation');
+  }
 
   const resolvedCurrency =
     realPlaces?.inferredCurrency ??
     inferCurrencyFromLocation(locationTrimmed) ??
     input.currency;
+
+  const includeAiAdvice = isDateRelatedCompanion(input.companion);
+  const isRegenerate = Boolean(input.avoidActivities && input.avoidActivities.length > 0);
+  const isAdjustment = Boolean(input.planAdjustment);
+  const useCompactPrompt =
+    !input.planAdjustment &&
+    !input.weatherReplan &&
+    !input.itineraryBalanceFix &&
+    !input.itineraryQualityFix &&
+    !input.spontaneous &&
+    !input.bestDay &&
+    !isRegenerate;
+
+  const compactLocalGems = localHiddenSpots.slice(0, 3);
+  const promptPlanInput = useCompactPrompt
+    ? buildCompactPromptPlanInput({
+        ...input,
+        currency: resolvedCurrency,
+        weather,
+        userPreferences: userPreferences.hasData ? userPreferences : undefined,
+        localHiddenSpots: compactLocalGems.length > 0 ? compactLocalGems : undefined,
+        prioritizeLocalGems: prioritizeLocalSpots && localHiddenSpots.length === 0,
+        planType: normalized.planType,
+        travelPurpose: normalized.travelPurpose,
+        departureDate: normalized.departureDate,
+        returnDate: normalized.returnDate,
+        durationLabel: normalized.durationLabel,
+        mustVisitPlaces: normalized.mustVisitPlaces,
+        avoidPreferences: normalized.avoidPreferences,
+        budgetScope: input.budgetScope,
+      })
+    : null;
 
   const enrichedInput: PlanInput = {
     ...input,
@@ -1013,8 +1302,10 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     travelUserPreferences: hasTravelUserPreferences(travelUserPreferences)
       ? travelUserPreferences
       : undefined,
-    travelMemories: travelMemories.length > 0 ? travelMemories : undefined,
-    localHiddenSpots: localHiddenSpots.length > 0 ? localHiddenSpots : undefined,
+    travelMemories: useCompactPrompt ? undefined : travelMemories.length > 0 ? travelMemories : undefined,
+    localHiddenSpots: compactLocalGems.length > 0 ? compactLocalGems : undefined,
+    prioritizeLocalGems: prioritizeLocalSpots && localHiddenSpots.length === 0,
+    compactPrompt: useCompactPrompt,
     planType: normalized.planType,
     travelPurpose: normalized.travelPurpose,
     departureDate: normalized.departureDate,
@@ -1024,10 +1315,6 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     avoidPreferences: normalized.avoidPreferences,
     budgetScope: input.budgetScope,
   };
-
-  const includeAiAdvice = isDateRelatedCompanion(input.companion);
-  const isRegenerate = Boolean(input.avoidActivities && input.avoidActivities.length > 0);
-  const isAdjustment = Boolean(input.planAdjustment);
   const durationConfig = resolveDurationConfig(input.tripDuration, input.customDuration);
   const isMultiDay = durationConfig.dayCount > 1 && !input.spontaneous && !input.bestDay;
   const isImaHima = Boolean(input.spontaneous);
@@ -1047,53 +1334,57 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
         }
       : undefined;
 
-  let systemPrompt = SYSTEM_PROMPT;
-  if (isAdjustment) {
-    systemPrompt = ADJUST_SYSTEM_PROMPT;
-  } else if (isBestDay) {
-    systemPrompt = BEST_DAY_SYSTEM_PROMPT;
-  } else if (isImaHima) {
-    systemPrompt = IMA_HIMA_SYSTEM_PROMPT;
-  } else if (userPreferences.hasData && weather) {
-    systemPrompt = `${MEMORY_SYSTEM_PROMPT} 天気予報にも合わせて屋内・屋外を調整してください。`;
-  } else if (userPreferences.hasData) {
-    systemPrompt = MEMORY_SYSTEM_PROMPT;
-  } else if (travelMemories.length > 0 && weather) {
-    systemPrompt = `${MEMORY_SYSTEM_PROMPT} ユーザーの旅行メモリーを最優先で反映し、天気予報にも合わせて調整してください。`;
-  } else if (travelMemories.length > 0) {
-    systemPrompt = `${MEMORY_SYSTEM_PROMPT} ユーザーの旅行メモリーを最優先で反映してください。`;
-  } else if (weather) {
-    systemPrompt = WEATHER_SYSTEM_PROMPT;
-  }
-  if (isRegenerate) {
-    systemPrompt = includeAiAdvice
-      ? `${REGENERATE_SYSTEM_PROMPT} カップル・初デート向けは aiAdvice も作成。天気予報がある場合は天候に合わせたスポット選定を維持。`
-      : `${REGENERATE_SYSTEM_PROMPT}${weather ? ' 天気予報がある場合は天候に合わせたスポット選定を維持。' : ''}`;
-  } else if (!isAdjustment && !isImaHima && !isBestDay && includeAiAdvice) {
-    systemPrompt = weather
-      ? `${DATE_SYSTEM_PROMPT} 天気予報に合わせて屋内・屋外スポットを調整してください。`
-      : DATE_SYSTEM_PROMPT;
-  } else if (!isAdjustment && !isImaHima && !isBestDay && isMultiDay) {
-    systemPrompt = weather
-      ? `${MULTI_DAY_SYSTEM_PROMPT} 日ごとの天気予報に合わせてスポットを調整してください。`
-      : MULTI_DAY_SYSTEM_PROMPT;
-  }
+  let systemPrompt = useCompactPrompt
+    ? buildCompactSystemPrompt(input.tripDuration, durationConfig.dayCount)
+    : SYSTEM_PROMPT;
+  if (!useCompactPrompt) {
+    if (isAdjustment) {
+      systemPrompt = ADJUST_SYSTEM_PROMPT;
+    } else if (isBestDay) {
+      systemPrompt = BEST_DAY_SYSTEM_PROMPT;
+    } else if (isImaHima) {
+      systemPrompt = IMA_HIMA_SYSTEM_PROMPT;
+    } else if (userPreferences.hasData && weather) {
+      systemPrompt = `${MEMORY_SYSTEM_PROMPT} 天気予報にも合わせて屋内・屋外を調整してください。`;
+    } else if (userPreferences.hasData) {
+      systemPrompt = MEMORY_SYSTEM_PROMPT;
+    } else if (travelMemories.length > 0 && weather) {
+      systemPrompt = `${MEMORY_SYSTEM_PROMPT} ユーザーの旅行メモリーを最優先で反映し、天気予報にも合わせて調整してください。`;
+    } else if (travelMemories.length > 0) {
+      systemPrompt = `${MEMORY_SYSTEM_PROMPT} ユーザーの旅行メモリーを最優先で反映してください。`;
+    } else if (weather) {
+      systemPrompt = WEATHER_SYSTEM_PROMPT;
+    }
+    if (isRegenerate) {
+      systemPrompt = includeAiAdvice
+        ? `${REGENERATE_SYSTEM_PROMPT} カップル・初デート向けは aiAdvice も作成。天気予報がある場合は天候に合わせたスポット選定を維持。`
+        : `${REGENERATE_SYSTEM_PROMPT}${weather ? ' 天気予報がある場合は天候に合わせたスポット選定を維持。' : ''}`;
+    } else if (!isAdjustment && !isImaHima && !isBestDay && includeAiAdvice) {
+      systemPrompt = weather
+        ? `${DATE_SYSTEM_PROMPT} 天気予報に合わせて屋内・屋外スポットを調整してください。`
+        : DATE_SYSTEM_PROMPT;
+    } else if (!isAdjustment && !isImaHima && !isBestDay && isMultiDay) {
+      systemPrompt = weather
+        ? `${MULTI_DAY_SYSTEM_PROMPT} 日ごとの天気予報に合わせてスポットを調整してください。`
+        : MULTI_DAY_SYSTEM_PROMPT;
+    }
 
-  if (isAdjustment && weather) {
-    systemPrompt = `${systemPrompt} 天気予報に合わせて屋内・屋外スポットを調整してください。`;
-  }
-  if (isAdjustment && travelMemories.length > 0) {
-    systemPrompt = `${systemPrompt} ユーザーの旅行メモリーを反映してください。`;
-  }
+    if (isAdjustment && weather) {
+      systemPrompt = `${systemPrompt} 天気予報に合わせて屋内・屋外スポットを調整してください。`;
+    }
+    if (isAdjustment && travelMemories.length > 0) {
+      systemPrompt = `${systemPrompt} ユーザーの旅行メモリーを反映してください。`;
+    }
 
-  if ((isImaHima || isBestDay) && weather) {
-    systemPrompt = `${systemPrompt} 天気予報に合わせて屋内・屋外スポットを調整してください。`;
-  }
+    if ((isImaHima || isBestDay) && weather) {
+      systemPrompt = `${systemPrompt} 天気予報に合わせて屋内・屋外スポットを調整してください。`;
+    }
 
-  systemPrompt = `${systemPrompt} コンシェルジュモード: conciergeAnalysis を完成させてから days を設計。全 item に reservationUrl, websiteUrl, travelTimeToNext, weatherBackup を設定してください。`;
+    systemPrompt = `${systemPrompt} コンシェルジュモード: conciergeAnalysis を完成させてから days を設計。全 item に reservationUrl, websiteUrl, travelTimeToNext, weatherBackup を設定してください。`;
 
-  if (realPlaces && realPlaces.places.length > 0) {
-    systemPrompt = `${systemPrompt} 実在スポットリストが提供されています。リスト以外の店名・施設名を一切使用しないこと。activity にはリストの名称をそのまま使用し、架空のスポットは禁止。飲食店だけに偏らず、リスト内の公園・文化・観光スポットも積極的に使うこと。同じスポットを旅全体で2回以上使わないこと。`;
+    if (realPlaces && realPlaces.places.length > 0) {
+      systemPrompt = `${systemPrompt} 実在スポットリストが提供されています。リスト以外の店名・施設名を一切使用しないこと。activity にはリストの名称をそのまま使用し、架空のスポットは禁止。飲食店だけに偏らず、リスト内の公園・文化・観光スポットも積極的に使うこと。同じスポットを旅全体で2回以上使わないこと。`;
+    }
   }
 
   logPlanGenerationStep('prepared', buildPlanGenerationLogPayload(normalized, {
@@ -1101,18 +1392,30 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     systemPrompt,
   }));
 
-  let plan = await fetchPlanFromAi({
-    apiKey,
-    systemPrompt,
-    planInput: enrichedInput,
-    tripDuration: input.tripDuration,
-    includeAiAdvice,
-    schemaOverrides,
-    customDuration: input.customDuration,
-    tripDate: input.tripDate,
-    tripEndDate: input.tripEndDate,
-    weather,
-  });
+  let plan: GeneratedPlan;
+  const aiPlanInput = promptPlanInput ?? enrichedInput;
+  try {
+    plan = await fetchPlanFromAi({
+      apiKey,
+      systemPrompt,
+      planInput: aiPlanInput,
+      fallbackPlanInput: enrichedInput,
+      tripDuration: input.tripDuration,
+      includeAiAdvice,
+      schemaOverrides,
+      customDuration: input.customDuration,
+      tripDate: input.tripDate,
+      tripEndDate: input.tripEndDate,
+      weather,
+    });
+  } catch (err) {
+    if (__DEV__ && isDevFallbackEligibleError(err)) {
+      console.warn('[AI] using dev fallback plan after retries exhausted', err);
+      plan = buildDevFallbackTravelPlan(enrichedInput);
+    } else {
+      throw err;
+    }
+  }
 
   if (realPlaces) {
     plan = attachRealPlaces(plan, realPlaces);
@@ -1135,7 +1438,7 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     !input.spontaneous &&
     !input.bestDay;
 
-  if (shouldBalanceCheck && analyzeItineraryBalance(plan.days).isTooFoodHeavy) {
+  if (!plan.devFallbackNotice && shouldBalanceCheck && analyzeItineraryBalance(plan.days).isTooFoodHeavy) {
     if (input.abortSignal?.aborted) {
       throw new DOMException('Aborted', 'AbortError');
     }
@@ -1178,6 +1481,7 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     logItineraryQualityReport(qualityReport);
 
     const canQualityFix =
+      !plan.devFallbackNotice &&
       !input.planAdjustment &&
       !input.weatherReplan &&
       !input.itineraryQualityFix &&

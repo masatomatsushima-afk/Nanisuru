@@ -1,5 +1,5 @@
 import { router, Stack } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,18 +16,33 @@ import { PrimaryButton } from '@/components/ui/premium-card';
 import { ScreenBackground } from '@/components/ui/screen-background';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
-import { setPreferenceOnboardingCompleted } from '@/lib/preference-onboarding-storage';
-import { saveTravelUserPreferences, getTravelUserPreferences } from '@/lib/travel-user-preferences';
 import {
   AVOID_THING_OPTIONS,
   BUDGET_STYLE_OPTIONS,
   COMPANION_TYPE_OPTIONS,
+  EMPTY_TRAVEL_USER_PREFERENCES,
   FAVORITE_CATEGORY_OPTIONS,
   TRAVEL_PACE_OPTIONS,
   WALKING_TOLERANCE_OPTIONS,
 } from '@/types/travel-user-preferences';
 
 const TOTAL_STEPS = 6;
+
+const PREFERENCE_ONBOARDING_SCREEN_OPTIONS = {
+  headerShown: false,
+} as const;
+
+type PreferenceForm = Omit<typeof EMPTY_TRAVEL_USER_PREFERENCES, 'updatedAt'>;
+
+const DEFAULT_PREFERENCE_FORM: PreferenceForm = {
+  favoriteCategories: [],
+  travelPace: null,
+  walkingTolerance: null,
+  budgetStyle: null,
+  avoidThings: [],
+  companionTypes: [],
+  freeTextPreference: '',
+};
 
 function OptionChip({
   label,
@@ -54,45 +69,12 @@ function toggleMulti(values: string[], value: string): string[] {
 export default function PreferenceOnboardingScreen() {
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState(0);
-  const [favoriteCategories, setFavoriteCategories] = useState<string[]>([]);
-  const [travelPace, setTravelPace] = useState<string | null>(null);
-  const [walkingTolerance, setWalkingTolerance] = useState<string | null>(null);
-  const [budgetStyle, setBudgetStyle] = useState<string | null>(null);
-  const [avoidThings, setAvoidThings] = useState<string[]>([]);
-  const [companionTypes, setCompanionTypes] = useState<string[]>([]);
-  const [freeTextPreference, setFreeTextPreference] = useState('');
+  const [form, setForm] = useState<PreferenceForm>(() => DEFAULT_PREFERENCE_FORM);
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    void getTravelUserPreferences().then((prefs) => {
-      setFavoriteCategories(prefs.favoriteCategories);
-      setTravelPace(prefs.travelPace);
-      setWalkingTolerance(prefs.walkingTolerance);
-      setBudgetStyle(prefs.budgetStyle);
-      setAvoidThings(prefs.avoidThings);
-      setCompanionTypes(prefs.companionTypes);
-      setFreeTextPreference(prefs.freeTextPreference);
-    });
-  }, []);
-
-  const handleNext = async () => {
-    if (step < TOTAL_STEPS - 1) {
-      setStep((prev) => prev + 1);
-      return;
-    }
-
+  const handleSave = async () => {
     setIsSaving(true);
     try {
-      await saveTravelUserPreferences({
-        favoriteCategories,
-        travelPace,
-        walkingTolerance,
-        budgetStyle,
-        avoidThings,
-        companionTypes,
-        freeTextPreference,
-      });
-      await setPreferenceOnboardingCompleted(true);
       if (router.canGoBack()) {
         router.back();
       } else {
@@ -103,8 +85,15 @@ export default function PreferenceOnboardingScreen() {
     }
   };
 
-  const handleSkip = async () => {
-    await setPreferenceOnboardingCompleted(true);
+  const handleNext = () => {
+    if (step < TOTAL_STEPS - 1) {
+      setStep((prev) => prev + 1);
+      return;
+    }
+    void handleSave();
+  };
+
+  const handleSkip = () => {
     if (router.canGoBack()) {
       router.back();
     } else {
@@ -115,17 +104,17 @@ export default function PreferenceOnboardingScreen() {
   const canProceed = () => {
     switch (step) {
       case 0:
-        return favoriteCategories.length > 0;
+        return form.favoriteCategories.length > 0;
       case 1:
-        return travelPace !== null;
+        return form.travelPace !== null;
       case 2:
-        return walkingTolerance !== null;
+        return form.walkingTolerance !== null;
       case 3:
-        return budgetStyle !== null;
+        return form.budgetStyle !== null;
       case 4:
         return true;
       case 5:
-        return companionTypes.length > 0;
+        return form.companionTypes.length > 0;
       default:
         return false;
     }
@@ -143,8 +132,13 @@ export default function PreferenceOnboardingScreen() {
                 <OptionChip
                   key={option}
                   label={option}
-                  selected={favoriteCategories.includes(option)}
-                  onPress={() => setFavoriteCategories((prev) => toggleMulti(prev, option))}
+                  selected={form.favoriteCategories.includes(option)}
+                  onPress={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      favoriteCategories: toggleMulti(prev.favoriteCategories, option),
+                    }))
+                  }
                 />
               ))}
             </View>
@@ -159,8 +153,8 @@ export default function PreferenceOnboardingScreen() {
                 <OptionChip
                   key={option}
                   label={option}
-                  selected={travelPace === option}
-                  onPress={() => setTravelPace(option)}
+                  selected={form.travelPace === option}
+                  onPress={() => setForm((prev) => ({ ...prev, travelPace: option }))}
                 />
               ))}
             </View>
@@ -175,8 +169,8 @@ export default function PreferenceOnboardingScreen() {
                 <OptionChip
                   key={option}
                   label={option}
-                  selected={walkingTolerance === option}
-                  onPress={() => setWalkingTolerance(option)}
+                  selected={form.walkingTolerance === option}
+                  onPress={() => setForm((prev) => ({ ...prev, walkingTolerance: option }))}
                 />
               ))}
             </View>
@@ -191,8 +185,8 @@ export default function PreferenceOnboardingScreen() {
                 <OptionChip
                   key={option}
                   label={option}
-                  selected={budgetStyle === option}
-                  onPress={() => setBudgetStyle(option)}
+                  selected={form.budgetStyle === option}
+                  onPress={() => setForm((prev) => ({ ...prev, budgetStyle: option }))}
                 />
               ))}
             </View>
@@ -208,16 +202,23 @@ export default function PreferenceOnboardingScreen() {
                 <OptionChip
                   key={option}
                   label={option}
-                  selected={avoidThings.includes(option)}
-                  onPress={() => setAvoidThings((prev) => toggleMulti(prev, option))}
+                  selected={form.avoidThings.includes(option)}
+                  onPress={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      avoidThings: toggleMulti(prev.avoidThings, option),
+                    }))
+                  }
                 />
               ))}
             </View>
             <Text style={styles.fieldLabel}>その他の苦手なもの</Text>
             <TextInput
               style={styles.input}
-              value={freeTextPreference}
-              onChangeText={setFreeTextPreference}
+              value={form.freeTextPreference}
+              onChangeText={(freeTextPreference) =>
+                setForm((prev) => ({ ...prev, freeTextPreference }))
+              }
               placeholder="例）騒がしい店、強い匂い"
               placeholderTextColor={NS.colors.textMuted}
               multiline
@@ -234,8 +235,13 @@ export default function PreferenceOnboardingScreen() {
                 <OptionChip
                   key={option}
                   label={option}
-                  selected={companionTypes.includes(option)}
-                  onPress={() => setCompanionTypes((prev) => toggleMulti(prev, option))}
+                  selected={form.companionTypes.includes(option)}
+                  onPress={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      companionTypes: toggleMulti(prev.companionTypes, option),
+                    }))
+                  }
                 />
               ))}
             </View>
@@ -248,7 +254,7 @@ export default function PreferenceOnboardingScreen() {
 
   return (
     <ScreenBackground>
-      <Stack.Screen options={{ headerShown: false }} />
+      <Stack.Screen options={PREFERENCE_ONBOARDING_SCREEN_OPTIONS} />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -279,19 +285,15 @@ export default function PreferenceOnboardingScreen() {
 
           <PrimaryButton
             label={
-              isSaving
-                ? '保存中...'
-                : step === TOTAL_STEPS - 1
-                  ? '好みを保存する'
-                  : '次へ'
+              isSaving ? '保存中...' : step === TOTAL_STEPS - 1 ? '保存' : '次へ'
             }
-            onPress={() => void handleNext()}
+            onPress={handleNext}
             disabled={!canProceed() || isSaving}
             variant="warm"
           />
 
           {step === 0 ? (
-            <Pressable style={styles.skipBtn} onPress={() => void handleSkip()}>
+            <Pressable style={styles.skipBtn} onPress={handleSkip}>
               <Text style={styles.skipText}>あとで設定する</Text>
             </Pressable>
           ) : (

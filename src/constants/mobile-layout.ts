@@ -20,6 +20,11 @@ export function getSheetScrollPaddingBottom(insetsBottom: number): number {
   return insetsBottom + SHEET_SCROLL_EXTRA;
 }
 
+/** Extra bottom space so generate button stays above keyboard on mobile Safari. */
+export function getFormSheetScrollPaddingBottom(insetsBottom: number): number {
+  return insetsBottom + SHEET_SCROLL_EXTRA + Spacing.five + 96;
+}
+
 export function getStackScreenPaddingBottom(insetsBottom: number): number {
   return insetsBottom + Spacing.six;
 }

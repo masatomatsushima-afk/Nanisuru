@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { PREFERENCES_TEMPORARILY_DISABLED } from '@/lib/preferences-disabled';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 import {
   EMPTY_TRAVEL_USER_PREFERENCES,
@@ -18,6 +19,19 @@ type UserPreferencesRow = {
   free_text_preference: string | null;
   updated_at: string;
 };
+
+let cachedPreferences: TravelUserPreferences | null = null;
+let cachedUserId: string | null | undefined;
+let loadPromise: Promise<TravelUserPreferences> | null = null;
+
+function preferencesEqual(
+  left: TravelUserPreferences | null,
+  right: TravelUserPreferences | null,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
 
 function rowToPreferences(row: UserPreferencesRow): TravelUserPreferences {
   return {
@@ -95,31 +109,85 @@ async function saveToSupabase(userId: string, prefs: TravelUserPreferences): Pro
   }
 }
 
-export async function getTravelUserPreferences(): Promise<TravelUserPreferences> {
+async function resolveAuthUserId(): Promise<string | null> {
+  if (!isSupabaseConfigured()) return null;
+
+  const supabase = getSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user?.id ?? null;
+}
+
+async function fetchTravelUserPreferencesFromStorage(
+  userId: string | null,
+): Promise<TravelUserPreferences> {
   let prefs: TravelUserPreferences | null = null;
 
-  if (isSupabaseConfigured()) {
-    const supabase = getSupabase();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      prefs = await loadFromSupabase(user.id);
-    }
+  if (userId) {
+    prefs = await loadFromSupabase(userId);
   }
 
   if (!prefs) {
     prefs = await loadFromAsyncStorage();
   }
 
-  const resolved = prefs ?? EMPTY_TRAVEL_USER_PREFERENCES;
-  console.log('[Preferences] loaded', resolved);
-  return resolved;
+  return prefs ?? EMPTY_TRAVEL_USER_PREFERENCES;
+}
+
+export function invalidateTravelUserPreferencesCache(): void {
+  if (PREFERENCES_TEMPORARILY_DISABLED) return;
+  cachedPreferences = null;
+  cachedUserId = undefined;
+  loadPromise = null;
+}
+
+export async function getTravelUserPreferences(): Promise<TravelUserPreferences> {
+  if (PREFERENCES_TEMPORARILY_DISABLED) {
+    return EMPTY_TRAVEL_USER_PREFERENCES;
+  }
+
+  const userId = await resolveAuthUserId();
+
+  if (cachedPreferences !== null && cachedUserId === userId) {
+    return cachedPreferences;
+  }
+
+  if (loadPromise) {
+    return loadPromise;
+  }
+
+  loadPromise = (async () => {
+    try {
+      const resolved = await fetchTravelUserPreferencesFromStorage(userId);
+
+      if (!preferencesEqual(cachedPreferences, resolved)) {
+        if (__DEV__) {
+          console.log('[Preferences] loaded', resolved);
+        }
+        cachedPreferences = resolved;
+        cachedUserId = userId;
+      } else if (cachedPreferences === null) {
+        cachedPreferences = resolved;
+        cachedUserId = userId;
+      }
+
+      return cachedPreferences ?? resolved;
+    } finally {
+      loadPromise = null;
+    }
+  })();
+
+  return loadPromise;
 }
 
 export async function saveTravelUserPreferences(
   input: Omit<TravelUserPreferences, 'updatedAt'>,
 ): Promise<TravelUserPreferences> {
+  if (PREFERENCES_TEMPORARILY_DISABLED) {
+    return EMPTY_TRAVEL_USER_PREFERENCES;
+  }
+
   const prefs: TravelUserPreferences = {
     ...input,
     updatedAt: new Date().toISOString(),
@@ -137,6 +205,12 @@ export async function saveTravelUserPreferences(
     }
   }
 
-  console.log('[Preferences] saved', prefs);
+  cachedPreferences = prefs;
+  cachedUserId = await resolveAuthUserId();
+
+  if (__DEV__) {
+    console.log('[Preferences] saved', prefs);
+  }
+
   return prefs;
 }

@@ -15,6 +15,7 @@ import {
   signOut as authSignOut,
   signUpWithEmailPassword,
 } from '@/lib/auth';
+import { invalidateTravelUserPreferencesCache } from '@/lib/travel-user-preferences';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase';
 
 type AuthContextValue = {
@@ -31,6 +32,12 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function sessionsEqual(previous: Session | null, next: Session | null): boolean {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+  return previous.access_token === next.access_token && previous.user?.id === next.user?.id;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -38,7 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isConfigured) {
-      setIsLoading(false);
+      setIsLoading((prev) => (prev ? false : prev));
       return;
     }
 
@@ -50,23 +57,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange(async (event, nextSession) => {
       if (!isActive) return;
 
-      setSession(nextSession);
+      setSession((prev) => (sessionsEqual(prev, nextSession) ? prev : nextSession));
       console.log('[Auth] session loaded', nextSession?.user?.id ?? null);
 
       if (nextSession?.user && (event === 'SIGNED_IN' || event === 'INITIAL_SESSION')) {
         await bootstrapUserProfile(nextSession.user);
       }
 
+      if (event === 'SIGNED_OUT') {
+        invalidateTravelUserPreferencesCache();
+      }
+
       if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
-        setIsLoading(false);
+        setIsLoading((prev) => (prev ? false : prev));
       }
     });
 
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       if (!isActive) return;
-      setSession(currentSession);
+      setSession((prev) => (sessionsEqual(prev, currentSession) ? prev : currentSession));
       console.log('[Auth] session loaded', currentSession?.user?.id ?? null);
-      setIsLoading(false);
+      setIsLoading((prev) => (prev ? false : prev));
     });
 
     return () => {
@@ -85,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     await authSignOut();
+    invalidateTravelUserPreferencesCache();
   }, []);
 
   const getUserId = useCallback(() => session?.user?.id ?? null, [session]);

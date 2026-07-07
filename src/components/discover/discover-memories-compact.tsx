@@ -13,6 +13,7 @@ import { VisualCover } from '@/components/ui/visual-cover';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { fetchPublicTripMemories } from '@/lib/trip-memories';
+import { safeKey } from '@/lib/safe-text';
 import type { TripMemory } from '@/types/trip-memory';
 
 export function DiscoverMemoriesCompact() {
@@ -55,9 +56,9 @@ export function DiscoverMemoriesCompact() {
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scroll}>
-        {memories.map((memory) => (
+        {memories.map((memory, index) => (
           <Pressable
-            key={memory.id}
+            key={`${safeKey(memory.id, `memory-${index}`)}-${index}`}
             style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
             onPress={() => router.push(`/memory/${memory.id}`)}>
             <VisualCover

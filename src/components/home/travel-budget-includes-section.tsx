@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { SelectChip } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
+import { safeChipKey, safeText } from '@/lib/safe-text';
 import {
   TRAVEL_BUDGET_INCLUDE_OPTIONS,
   toggleTravelBudgetInclude,
@@ -29,8 +30,8 @@ export function TravelBudgetIncludesSection({
       <View style={styles.chipGrid}>
         {TRAVEL_BUDGET_INCLUDE_OPTIONS.map((option, index) => (
           <SelectChip
-            key={option}
-            label={option}
+            key={safeChipKey('budget-include', { id: option, label: option }, index)}
+            label={safeText(option)}
             selected={value.includes(option)}
             onPress={() => onChange(toggleTravelBudgetInclude(value, option))}
             colorIndex={index}
@@ -65,7 +66,7 @@ const styles = StyleSheet.create({
   chipGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.one + 2,
+    gap: NS.layout.chipGap,
     marginTop: Spacing.one,
   },
   hint: {

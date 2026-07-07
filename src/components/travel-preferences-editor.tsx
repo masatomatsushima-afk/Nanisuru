@@ -1,7 +1,5 @@
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -14,7 +12,6 @@ import { PremiumCard, PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import {
-  loadTravelPreferencesState,
   saveTravelPreferencesState,
 } from '@/lib/travel-preferences';
 import type { TravelMemoryCategory } from '@/types/travel-memory';
@@ -148,33 +145,9 @@ export function TravelPreferencesEditor({
   const [preferences, setPreferences] = useState<TravelPreferencesState>(
     createEmptyTravelPreferencesState(),
   );
-  const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
-
-  const loadPreferences = useCallback(async () => {
-    if (!isLoggedIn || !isConfigured) {
-      setPreferences(createEmptyTravelPreferencesState());
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-    try {
-      setPreferences(await loadTravelPreferencesState());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '好みの取得に失敗しました');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [isConfigured, isLoggedIn]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void loadPreferences();
-    }, [loadPreferences]),
-  );
 
   const updateCategory = (category: TravelMemoryCategory, next: CategoryPreferenceState) => {
     setPreferences((prev) => ({ ...prev, [category]: next }));
@@ -192,7 +165,6 @@ export function TravelPreferencesEditor({
       await saveTravelPreferencesState(preferences);
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 1600);
-      await loadPreferences();
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存に失敗しました');
     } finally {
@@ -237,12 +209,7 @@ export function TravelPreferencesEditor({
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        {isLoading ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator color={NS.colors.accent} />
-          </View>
-        ) : (
-          <View style={styles.categoryList}>
+        <View style={styles.categoryList}>
             {TRAVEL_PREFERENCE_CATEGORIES.map((category) => (
               <CategorySection
                 key={category.value}
@@ -252,13 +219,12 @@ export function TravelPreferencesEditor({
               />
             ))}
           </View>
-        )}
 
         <View style={styles.saveWrap}>
           <PrimaryButton
             label={isSaving ? '保存中...' : '好みを保存'}
             onPress={handleSave}
-            disabled={isSaving || isLoading}
+            disabled={isSaving}
           />
         </View>
       </PremiumCard>

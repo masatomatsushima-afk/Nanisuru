@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useEffect } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { DatePickerField } from '@/components/date-picker-field';
 import { TravelTimePickerField } from '@/components/home/travel-time-picker-field';
@@ -34,6 +34,12 @@ import {
 } from '@/lib/trip-schedule';
 import type { TravelPlanValidationErrors } from '@/lib/travel-plan-form-validation';
 import type { TravelBudgetIncludeOption } from '@/lib/travel-budget-includes';
+import { safeChipKey, safeKey, safeText } from '@/lib/safe-text';
+import {
+  getTravelFormRestoreLevel,
+  logTravelFormRestoreOnce,
+  travelFormSectionAtLeast,
+} from '@/lib/travel-form-restore';
 import type { CompanionOption } from '@/types/plan';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
 import type { TravelIntentOption } from '@/types/plan-creation';
@@ -79,9 +85,9 @@ type TravelPlanSheetFormProps = {
   isLoading: boolean;
   error: string | null;
   onGenerate: () => void;
-  generateDisabled: boolean;
   validationMessages?: string[];
   onRetry?: () => void;
+  sheetScrollRef?: RefObject<ScrollView | null>;
 };
 
 function FieldError({ message }: { message?: string }) {
@@ -136,11 +142,11 @@ export function TravelPlanSheetForm({
   isLoading,
   error,
   onGenerate,
-  generateDisabled,
   validationMessages = [],
   onRetry,
   customPreferences,
   onCustomPreferencesChange,
+  sheetScrollRef,
 }: TravelPlanSheetFormProps) {
   const { symbol } = getCurrency(currency);
   const err = (key: keyof TravelPlanValidationErrors) =>
@@ -154,45 +160,31 @@ export function TravelPlanSheetForm({
     onTripScheduleChange(next);
   };
 
-  const isButtonDisabled = generateDisabled || isLoading;
+  const isButtonDisabled = isLoading;
   const showValidationSummary = showValidation && !isLoading && validationMessages.length > 0;
 
   useEffect(() => {
-    if (!__DEV__) return;
-    console.log('[GenerateButton] disabled state', {
-      disabled: isButtonDisabled,
-      isGeneratingPlan: isLoading,
-      validationErrors,
-      formState: {
-        destination: location,
-        departureDate: tripSchedule.departureDate,
-        returnDate: tripSchedule.returnDate,
-        budget,
-        peopleCount: people,
-        companionType: companion,
-      },
+    if (!showValidationSummary || !sheetScrollRef?.current) return;
+    requestAnimationFrame(() => {
+      sheetScrollRef.current?.scrollToEnd({ animated: true });
     });
-  }, [
-    isButtonDisabled,
-    isLoading,
-    validationErrors,
-    location,
-    tripSchedule.departureDate,
-    tripSchedule.returnDate,
-    budget,
-    people,
-    companion,
-  ]);
+  }, [showValidationSummary, sheetScrollRef, validationMessages.length]);
 
   const handleGeneratePress = () => {
-    if (__DEV__) {
-      console.log('[GenerateButton] clicked');
-    }
     onGenerate();
   };
 
+  const restoreLevel = getTravelFormRestoreLevel();
+  const show = (section: Parameters<typeof travelFormSectionAtLeast>[1]) =>
+    travelFormSectionAtLeast(restoreLevel, section);
+
+  useEffect(() => {
+    logTravelFormRestoreOnce();
+  }, []);
+
   return (
     <View style={styles.wrap}>
+      {show('destination') ? (
       <SheetField label="行き先" error={err('destination')}>
         <TextInput
           style={[styles.input, err('destination') && styles.inputError]}
@@ -204,7 +196,9 @@ export function TravelPlanSheetForm({
           autoCapitalize="none"
         />
       </SheetField>
+      ) : null}
 
+      {show('dates') ? (
       <View style={styles.scheduleSection}>
         <DatePickerField
           label="出発日"
@@ -238,8 +232,8 @@ export function TravelPlanSheetForm({
           <View style={styles.chipGrid}>
             {TRIP_DURATION_QUICK_OPTIONS.map((option, index) => (
               <SelectChip
-                key={option}
-                label={option}
+                key={safeChipKey('duration', { id: option, label: option }, index)}
+                label={safeText(option)}
                 selected={selectedDurationQuick === option}
                 onPress={() =>
                   applyScheduleChange(
@@ -296,7 +290,9 @@ export function TravelPlanSheetForm({
           </View>
         ) : null}
       </View>
+      ) : null}
 
+      {show('time') ? (
       <View style={styles.row}>
         <View style={styles.halfField}>
           <TravelTimePickerField
@@ -327,7 +323,10 @@ export function TravelPlanSheetForm({
           />
         </View>
       </View>
+      ) : null}
 
+      {show('budget') ? (
+      <>
       <SheetField label="予算" error={err('budget')}>
         <View style={styles.budgetRow}>
           <Text style={styles.budgetPrefix}>{symbol}</Text>
@@ -345,27 +344,32 @@ export function TravelPlanSheetForm({
 
       <SheetField label="通貨">
         <View style={styles.currencyRow}>
-          {CURRENCY_OPTIONS.map((option) => {
+          {CURRENCY_OPTIONS.map((option, index) => {
             const selected = currency === option.code;
             return (
               <Pressable
-                key={option.code}
+                key={safeChipKey('currency', { id: option.code, label: option.code }, index)}
                 style={[styles.currencyChip, selected && styles.currencyChipSelected]}
                 onPress={() => onCurrencyChange(option.code)}>
                 <Text style={[styles.currencyCode, selected && styles.currencyCodeSelected]}>
-                  {option.code}
+                  {safeText(option.code)}
                 </Text>
               </Pressable>
             );
           })}
         </View>
       </SheetField>
+      </>
+      ) : null}
 
+      {show('budgetIncludes') ? (
       <TravelBudgetIncludesSection
         value={budgetIncludes}
         onChange={onBudgetIncludesChange}
       />
+      ) : null}
 
+      {show('people') ? (
       <SheetField label="人数" error={err('peopleCount')}>
         <TextInput
           style={[styles.input, err('peopleCount') && styles.inputError]}
@@ -377,13 +381,15 @@ export function TravelPlanSheetForm({
           keyboardType="number-pad"
         />
       </SheetField>
+      ) : null}
 
+      {show('companion') ? (
       <SheetField label="誰と行く？" error={err('companionType')}>
         <View style={styles.chipGrid}>
           {COMPANION_OPTIONS.map((option, index) => (
             <SelectChip
-              key={option}
-              label={option}
+              key={safeChipKey('companion', { id: option, label: option }, index)}
+              label={safeText(option)}
               selected={companion === option}
               onPress={() => onCompanionChange(option)}
               colorIndex={index}
@@ -391,13 +397,15 @@ export function TravelPlanSheetForm({
           ))}
         </View>
       </SheetField>
+      ) : null}
 
+      {show('purpose') ? (
       <SheetField label="旅行の目的" optional>
         <View style={styles.chipGrid}>
           {TRAVEL_SHEET_PURPOSE_OPTIONS.map((option, index) => (
             <SelectChip
-              key={option.id}
-              label={option.label}
+              key={safeChipKey('purpose', option, index)}
+              label={safeText(option.label)}
               selected={selectedPurposeId === option.id}
               onPress={() => onPurposeSelect(option)}
               colorIndex={index}
@@ -405,7 +413,9 @@ export function TravelPlanSheetForm({
           ))}
         </View>
       </SheetField>
+      ) : null}
 
+      {show('custom') ? (
       <SheetField label="その他の希望" optional>
         <TextInput
           style={[styles.input, styles.inputMultiline]}
@@ -425,31 +435,32 @@ export function TravelPlanSheetForm({
           textAlignVertical="top"
         />
       </SheetField>
-
-      <View style={styles.generateWrap}>
-        <PrimaryButton
-          label="プランを生成"
-          onPress={handleGeneratePress}
-          disabled={isButtonDisabled}
-        />
-      </View>
+      ) : null}
 
       {showValidationSummary ? (
         <View style={styles.validationSummary}>
           <Text style={styles.validationSummaryTitle}>未入力の項目があります</Text>
-          {validationMessages.map((message) => (
-            <Text key={message} style={styles.validationSummaryItem}>
-              {`・${message}`}
+          {validationMessages.map((message, index) => (
+            <Text
+              key={safeKey(message, `validation-${index}`)}
+              style={styles.validationSummaryItem}>
+              {`・${safeText(message)}`}
             </Text>
           ))}
         </View>
       ) : null}
 
-      {generateDisabled && !showValidation && !isLoading ? (
-        <Text style={styles.helperText}>必須項目を入力するとプランを生成できます</Text>
+      {show('generate') ? (
+      <View style={styles.generateWrap}>
+        <PrimaryButton
+          label={isLoading ? 'プランを作成中…' : 'プランを生成'}
+          onPress={handleGeneratePress}
+          disabled={isButtonDisabled}
+        />
+      </View>
       ) : null}
 
-      {error ? <AppErrorBanner message={error} onRetry={onRetry} /> : null}
+      {error ? <AppErrorBanner message={safeText(error)} onRetry={onRetry} /> : null}
     </View>
   );
 }
@@ -457,7 +468,8 @@ export function TravelPlanSheetForm({
 const styles = StyleSheet.create({
   wrap: {
     gap: NS.layout.sectionGap,
-    paddingBottom: 48,
+    width: '100%',
+    maxWidth: '100%',
   },
   scheduleSection: {
     gap: Spacing.two,
@@ -516,6 +528,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingHorizontal: Spacing.three,
     paddingVertical: 14,
+    minHeight: MIN_TOUCH_TARGET,
   },
   inputMultiline: {
     minHeight: 88,
@@ -535,9 +548,12 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     gap: Spacing.two,
+    width: '100%',
+    maxWidth: '100%',
   },
   halfField: {
     flex: 1,
+    minWidth: 0,
   },
   budgetRow: {
     flexDirection: 'row',
@@ -579,6 +595,8 @@ const styles = StyleSheet.create({
     borderColor: NS.colors.coral,
     borderWidth: 2,
     backgroundColor: NS.colors.coralSoft,
+    ...NS.shadow.card,
+    shadowOpacity: 0.1,
   },
   currencyCode: {
     color: NS.colors.textSecondary,
@@ -595,7 +613,8 @@ const styles = StyleSheet.create({
   },
   generateWrap: {
     marginTop: Spacing.two,
-    marginBottom: Spacing.two,
+    marginBottom: Spacing.four,
+    paddingBottom: Spacing.two,
   },
   validationSummary: {
     gap: Spacing.one + 2,
@@ -615,11 +634,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     fontWeight: '600',
-  },
-  helperText: {
-    color: NS.colors.textMuted,
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 20,
   },
 });

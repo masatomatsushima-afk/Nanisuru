@@ -1,15 +1,13 @@
-import type { Href } from 'expo-router';
-
 import type { PlanCreationType } from '@/types/plan-creation';
 
-/** Verified app routes (see src/app). */
+/** Verified app routes as plain strings (never pass Symbol-branded Href to router). */
 export const HOME_ROUTES = {
-  explore: '/(tabs)/explore' as Href,
-  profile: '/(tabs)/profile' as Href,
-  memories: '/memories' as Href,
-  afterPlan: '/after-plan' as Href,
-  myTrips: '/my-trips' as Href,
-  localGems: '/local-gems' as Href,
+  explore: '/(tabs)/explore',
+  profile: '/(tabs)/profile',
+  memories: '/memories',
+  afterPlan: '/after-plan',
+  myTrips: '/my-trips',
+  localGems: '/local-gems',
 } as const;
 
 export type HomePlanMode = 'now' | 'travel' | 'night';
@@ -28,7 +26,7 @@ export const PLAN_MODE_TO_TYPE: Record<HomePlanMode, PlanCreationType> = {
 
 export type HomeActionTarget =
   | { kind: 'openForm'; mode: HomePlanMode; planType?: PlanCreationType; routeLabel: string }
-  | { kind: 'href'; href: Href; routeLabel: string };
+  | { kind: 'href'; href: string; routeLabel: string };
 
 export type HomeFeatureIconName =
   | 'clock.fill'

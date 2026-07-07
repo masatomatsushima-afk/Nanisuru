@@ -140,7 +140,8 @@ function HeroBanner({
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const idx = Math.round(e.nativeEvent.contentOffset.x / (width + ACTION_GAP));
-    setActive(Math.min(idx, HERO_SLIDES.length - 1));
+    const next = Math.min(idx, HERO_SLIDES.length - 1);
+    setActive((prev) => (prev === next ? prev : next));
   };
 
   return (
@@ -560,7 +561,7 @@ function DiscoverPreview({ width }: { width: number }) {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ gap: ACTION_GAP }}>
           {cards.map((c, index) => (
-            <DiscoverCardView key={c.id ?? `home-discover-${index}`} card={c} width={cardW} />
+            <DiscoverCardView key={`home-discover-${c.id}-${index}`} card={c} width={cardW} />
           ))}
         </ScrollView>
       )}
