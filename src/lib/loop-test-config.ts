@@ -26,7 +26,8 @@ export const LOOP_TEST_RESTORE = {
   /** Saved trips tab — set true only to bisect Supabase-backed favorites.real */
   savedTripsReal: false,
   screenAi: false,
-  screenProfile: true,
+  /** Profile tab — set true only to bisect Supabase-backed profile.real */
+  screenProfile: false,
 
   /**
    * Travel Plan form — bisect via travelFormRestoreLevel if Symbol/loop errors return.
