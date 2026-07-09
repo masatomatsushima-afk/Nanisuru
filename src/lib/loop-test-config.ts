@@ -23,6 +23,8 @@ export const LOOP_TEST_RESTORE = {
   screenHome: true,
   screenExplore: true,
   screenFavorites: true,
+  /** Saved trips tab — set true only to bisect Supabase-backed favorites.real */
+  savedTripsReal: false,
   screenAi: false,
   screenProfile: true,
 
