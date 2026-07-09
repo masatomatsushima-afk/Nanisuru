@@ -20,6 +20,8 @@ export type OutfitPackingAdvice = {
   dateOutfitTips?: string[];
   travelPackingAdvice?: string[];
   styleMode?: OutfitStyleMode;
+  /** True only when a real per-day weather forecast is available — not seasonal/unavailable modes. */
+  weatherAvailable?: boolean;
 };
 
 export function isOutfitStyleMode(value: string): value is OutfitStyleMode {

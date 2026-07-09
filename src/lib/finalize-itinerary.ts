@@ -22,7 +22,7 @@ import {
   getLatestActivityEndMinutes,
   parseTimeToMinutes,
 } from './itinerary-quality';
-import { generateOutfitPackingAdvice } from './outfit-packing-advice';
+import { generateOutfitPackingAdvice, isWeatherForecastAvailable } from './outfit-packing-advice';
 import { logPlanGenerationStep } from './plan-generation-log';
 import { recommendTransport } from './transport-guidance';
 
@@ -283,8 +283,15 @@ function ensureOutfitAdvice(
 ): { plan: FinalizablePlan; fixes: string[] } {
   if (report.outfitAdviceIssues.length === 0) return { plan, fixes: [] };
 
+  const weather = plan.details.weather ?? options.weather;
+  const forecastHasRain =
+    isWeatherForecastAvailable(weather) &&
+    (Boolean(weather?.hasRainExpected) ||
+      weather!.days.some((day) => day.category === 'rainy' || day.precipitationProbability >= 45));
+
   const styleMode =
     options.outfitStyleMode === 'AIに任せる' &&
+    forecastHasRain &&
     report.outfitAdviceIssues.some((issue) => issue.includes('雨'))
       ? '雨対策重視'
       : options.outfitStyleMode;

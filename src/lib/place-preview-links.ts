@@ -31,6 +31,9 @@ export function buildPlacePreviewSearchQuery(
   item: ItineraryItem,
   tripLocation?: string,
 ): string {
+  if (item.socialQuery?.trim()) return item.socialQuery.trim();
+  if (item.mapsQuery?.trim()) return item.mapsQuery.trim();
+
   const name = item.activity.trim();
   const city = resolvePlaceCity(item, tripLocation);
   const category = item.placeCategory?.trim();

@@ -1,8 +1,15 @@
 import type { CompanionOption, ItineraryDay, WeatherForecast } from '@/types/plan';
+
+/** True only when a real per-day forecast exists — seasonal/unavailable modes return false. */
+export function isWeatherForecastAvailable(weather: WeatherForecast | undefined): boolean {
+  return Boolean(weather?.days?.length && weather.available !== false && weather.planningMode !== 'unavailable');
+}
 import { isDateRelatedCompanion } from '@/types/plan';
 import type { PlanCreationType } from '@/types/plan-creation';
 import type { OutfitPackingAdvice, OutfitStyleMode } from '@/types/outfit-advice';
 import { resolveOutfitStyleMode } from '@/types/outfit-advice';
+import { getTodayIsoDate } from '@/lib/weather';
+import { buildSeasonalWeatherContext, type SeasonalWeatherContext } from '@/lib/weather-planning';
 
 type ItinerarySignals = {
   hasFancyDinner: boolean;
@@ -110,46 +117,92 @@ function inferClimateHint(location: string): 'tropical' | 'temperate' | 'cold' |
   return 'temperate';
 }
 
-function weatherStats(weather?: WeatherForecast) {
-  if (weather?.seasonalContext) {
-    const ctx = weather.seasonalContext;
-    const hasRain = ctx.riskNotes.some((note) => /雨|梅雨|スコール/i.test(note));
-    const isHot = /暑|猛暑|熱帯|紫外線/i.test(`${ctx.guidance}${ctx.outfitAdvice}${ctx.seasonLabel}`);
-    const isCold = /寒|冬|冷/i.test(`${ctx.guidance}${ctx.outfitAdvice}${ctx.seasonLabel}`);
+/**
+ * Resolve a seasonal weather profile to ground outfit advice in destination + date, even when
+ * no live forecast is available (e.g. Lightweight MVP mode, API failure, or a trip far in the
+ * future). Prefers the real forecast's own seasonal context when present; otherwise synthesizes
+ * one from destination + trip date so advice is never a flat, season-blind template.
+ */
+function resolveSeasonalContext(
+  weather: WeatherForecast | undefined,
+  location: string,
+  tripDate: string | undefined,
+): SeasonalWeatherContext {
+  if (weather?.seasonalContext) return weather.seasonalContext;
+  const destination = location.trim() || '目的地';
+  return buildSeasonalWeatherContext(destination, tripDate || getTodayIsoDate());
+}
+
+/**
+ * Rain/snow/wind/day-night-swing claims require an actual per-day forecast — they must never be
+ * guessed from seasonal profile text (e.g. a summer risk note mentioning "にわか雨" used to leak
+ * into a confident "雨の可能性があるため" line with zero real data behind it).
+ */
+function weatherStats(weather: WeatherForecast | undefined, seasonalContext: SeasonalWeatherContext) {
+  if (isWeatherForecastAvailable(weather)) {
+    const forecast = weather!;
+    const maxTemp = Math.max(...forecast.days.map((d) => d.temperatureMax));
+    const minTemp = Math.min(...forecast.days.map((d) => d.temperatureMin));
+    const maxRainProb = Math.max(...forecast.days.map((d) => d.precipitationProbability));
 
     return {
-      maxTemp: isHot ? 32 : isCold ? 8 : 22,
-      minTemp: isCold ? 2 : isHot ? 22 : 12,
-      maxRainProb: hasRain ? 55 : 20,
-      hasRain,
-      mostlyOutdoor: !hasRain && !isHot,
+      weatherAvailable: true,
+      maxTemp,
+      minTemp,
+      maxRainProb,
+      hasRain: forecast.hasRainExpected || maxRainProb >= 40,
+      mostlyOutdoor: forecast.days.some((d) => d.preferOutdoor),
+      isHot: maxTemp >= 28,
+      isCold: maxTemp < 12,
     };
   }
 
-  if (!weather?.days.length) {
-    return {
-      maxTemp: 22,
-      minTemp: 15,
-      maxRainProb: 0,
-      hasRain: false,
-      mostlyOutdoor: true,
-    };
-  }
-
-  const maxTemp = Math.max(...weather.days.map((d) => d.temperatureMax));
-  const minTemp = Math.min(...weather.days.map((d) => d.temperatureMin));
-  const maxRainProb = Math.max(...weather.days.map((d) => d.precipitationProbability));
+  // No exact per-day forecast available: weather is NOT available. Only a broad hot/mild/cold
+  // temperature band inferred from the destination/month seasonal profile is used (this is
+  // "7月後半の韓国は暑くなりやすい"-style seasonal knowledge, not a weather forecast claim).
+  // Rain, snow, wind, and day/night swings are never asserted here — there is no evidence for them.
+  const combinedText = `${seasonalContext.guidance}${seasonalContext.outfitAdvice}${seasonalContext.riskNotes.join(' ')}`;
+  const isHot = /暑|猛暑|真夏|熱帯/.test(`${combinedText}${seasonalContext.seasonLabel}`);
+  const isCold = !isHot && /寒|冬|冷/.test(`${combinedText}${seasonalContext.seasonLabel}`);
 
   return {
-    maxTemp,
-    minTemp,
-    maxRainProb,
-    hasRain: weather.hasRainExpected || maxRainProb >= 40,
-    mostlyOutdoor: weather.days.some((d) => d.preferOutdoor),
+    weatherAvailable: false,
+    maxTemp: isHot ? 32 : isCold ? 6 : 21,
+    minTemp: isHot ? 24 : isCold ? -2 : 13,
+    maxRainProb: 0,
+    hasRain: false,
+    mostlyOutdoor: !isHot,
+    isHot,
+    isCold,
   };
 }
 
-function styleOutfitLine(mode: OutfitStyleMode): string | null {
+/**
+ * Opening line(s) used in place of a weather-based lead when no real forecast is available.
+ * Explicitly states the uncertainty, then gives season/month/destination-only guidance —
+ * never a rain/snow/wind/temperature-swing claim.
+ */
+function buildWeatherUnavailableIntro(
+  seasonalContext: SeasonalWeatherContext,
+  isHot: boolean,
+  isCold: boolean,
+): string[] {
+  const lines = ['天気情報が取得できていないため、気温や雨の有無は断定できません。'];
+  const destination = seasonalContext.destination || '旅行先';
+  const monthLabel = seasonalContext.monthLabel || '今回の時期';
+
+  if (isHot) {
+    lines.push(`${monthLabel}の${destination}旅行なので、暑さ・湿度・日差し対策を中心に準備してください。`);
+  } else if (isCold) {
+    lines.push(`${monthLabel}の${destination}旅行なので、防寒対策を中心に準備してください。`);
+  } else {
+    lines.push(`${monthLabel}の${destination}旅行として、脱ぎ着しやすい服装を準備しておくと安心です。`);
+  }
+
+  return lines;
+}
+
+function styleOutfitLine(mode: OutfitStyleMode, weatherAvailable: boolean): string | null {
   switch (mode) {
     case 'カジュアル':
       return 'カジュアルな装いで、移動や入店もしやすい服装がおすすめです。';
@@ -164,7 +217,10 @@ function styleOutfitLine(mode: OutfitStyleMode): string | null {
     case '防寒重視':
       return '重ね着できる上着と、冷えやすい足元の対策を優先しましょう。';
     case '雨対策重視':
-      return '濡れても困りにくい色・素材を選び、防水・撥水できるアイテムを意識しましょう。';
+      // Rain-style preference only — never imply rain is expected without a real forecast.
+      return weatherAvailable
+        ? '濡れても困りにくい色・素材を選び、防水・撥水できるアイテムを意識しましょう。'
+        : null;
     default:
       return null;
   }
@@ -177,6 +233,7 @@ function buildTravelPackingAdvice(input: {
   minTemp: number;
   maxTemp: number;
   isTravelPlan: boolean;
+  weatherAvailable: boolean;
 }): string[] {
   if (!input.isTravelPlan || input.dayCount < 2) return [];
 
@@ -185,16 +242,20 @@ function buildTravelPackingAdvice(input: {
 
   lines.push(`${input.dayCount}日の旅なので、洗濯できる前提ならトップス${tops}で十分なことが多いです。`);
 
-  if (input.maxTemp - input.minTemp >= 8) {
-    lines.push('朝晩の寒暖差があるため、重ね着できる服があると安心です。');
-  }
+  // Day/night temperature swing and rain-day guidance require a real per-day forecast — without
+  // one, there's no evidence for a specific day/night or rain-day claim.
+  if (input.weatherAvailable) {
+    if (input.maxTemp - input.minTemp >= 8) {
+      lines.push('朝晩の寒暖差があるため、重ね着できる服があると安心です。');
+    }
 
-  if (input.hasRain || input.maxRainProb >= 35) {
-    lines.push('雨の日が予報に含まれるため、防水の靴か替えの靴下があると安心です。');
-  }
+    if (input.hasRain || input.maxRainProb >= 35) {
+      lines.push('雨の日が予報に含まれるため、防水の靴か替えの靴下があると安心です。');
+    }
 
-  if (input.minTemp <= 10) {
-    lines.push('朝晩は冷える日があるので、薄手のダウンやカーディガンがあると便利です。');
+    if (input.minTemp <= 10) {
+      lines.push('朝晩は冷える日があるので、薄手のダウンやカーディガンがあると便利です。');
+    }
   }
 
   return lines.slice(0, 3);
@@ -211,7 +272,9 @@ export function generateOutfitPackingAdvice(input: {
   tripDate?: string;
 }): OutfitPackingAdvice {
   const signals = analyzeItinerary(input.days);
-  const stats = weatherStats(input.weather);
+  const seasonalContext = resolveSeasonalContext(input.weather, input.location, input.tripDate);
+  const stats = weatherStats(input.weather, seasonalContext);
+  const weatherAvailable = stats.weatherAvailable;
   const styleMode = resolveOutfitStyleMode(
     input.outfitStyleMode,
     input.planType,
@@ -226,6 +289,7 @@ export function generateOutfitPackingAdvice(input: {
     : new Date().getMonth() + 1;
   const season = inferSeason(month);
   const climate = inferClimateHint(input.location);
+  const isHumidHeat = stats.isHot && climate !== 'dry';
   const tempSwing = stats.maxTemp - stats.minTemp;
 
   const outfit: string[] = [];
@@ -234,12 +298,24 @@ export function generateOutfitPackingAdvice(input: {
   const cautions: string[] = [];
   const dateOutfitTips: string[] = [];
 
-  const styleLine = styleOutfitLine(styleMode);
+  const styleLine = styleOutfitLine(styleMode, weatherAvailable);
   if (styleLine) outfit.push(styleLine);
 
-  if (stats.maxTemp >= 28) {
-    outfit.push('日中は暑くなるため、通気性の良い薄手の服がおすすめです。');
+  // No exact forecast available (e.g. weather API unavailable in Lightweight MVP mode): state the
+  // uncertainty explicitly, then lead with destination + month seasonal guidance only — never a
+  // rain/snow/wind/temperature-swing claim, since there's no real data behind it.
+  if (!weatherAvailable) {
+    outfit.push(...buildWeatherUnavailableIntro(seasonalContext, stats.isHot, stats.isCold));
+  }
+
+  if (stats.isHot) {
+    outfit.push(
+      isHumidHeat
+        ? '湿度も高くなりやすい時期なので、半袖・薄手のトップスなど通気性が良く汗が乾きやすい素材の服がおすすめです。'
+        : '日中は暑くなるため、半袖・薄手のトップスなど通気性の良い服がおすすめです。',
+    );
     items.push('日焼け止め');
+    if (!items.includes('帽子')) items.push('帽子');
     if (stats.maxTemp >= 32 || climate === 'tropical' || climate === 'dry') {
       items.push('サングラス');
       cautions.push('直射日光が強い時間帯は、帽子や日陰での休憩も検討してください。');
@@ -254,18 +330,31 @@ export function generateOutfitPackingAdvice(input: {
     items.push('羽織り');
   }
 
-  if (tempSwing >= 7 || stats.minTemp <= 15) {
+  // Day/night temperature-swing claims need a real per-day forecast — without one there's no
+  // evidence for "night will be cooler", so this only fires when weatherAvailable is true.
+  if (weatherAvailable && !stats.isHot && (tempSwing >= 7 || stats.minTemp <= 15)) {
     outfit.push('昼は暖かくても、夜は冷える可能性があるため薄手の羽織りがあると安心です。');
     if (!items.includes('羽織り')) items.push('羽織り');
+  } else if (stats.isHot && signals.indoorItemCount > 0) {
+    // Keep the "bring a layer" advice specific: hot-trip layering is about indoor A/C, not night chill.
+    outfit.push('屋内は冷房が効いていることが多いため、冷房対策として薄手のシャツを1枚持っておくと便利です。');
+    items.push('薄手のシャツ（冷房対策）');
   }
 
-  if (stats.hasRain || stats.maxRainProb >= 40 || styleMode === '雨対策重視') {
+  // Rain gear is only suggested when a real forecast explicitly indicates rain. A user-selected
+  // "雨対策重視" style is a preference, not a weather claim, so it's worded differently.
+  if (weatherAvailable && (stats.hasRain || stats.maxRainProb >= 40)) {
     outfit.push('雨の可能性があるため、白い靴や濡れやすい服は避けるのがおすすめです。');
     items.push('折りたたみ傘');
+    items.push('防水・撥水加工の靴');
     cautions.push('路面が滑りやすい場合があるので、足元は防滑性のある靴が安心です。');
+  } else if (weatherAvailable && styleMode === '雨対策重視' && (stats.hasRain || stats.maxRainProb >= 40)) {
+    outfit.push('雨対策重視のスタイルのため、濡れても目立ちにくい色・素材を選ぶと安心です。');
+    items.push('折りたたみ傘');
+    items.push('防水・撥水加工の靴');
   }
 
-  if (signals.hasLongWalking || styleMode === '動きやすさ重視') {
+  if (signals.hasLongWalking || styleMode === '動きやすさ重視' || stats.isHot) {
     footwear.push('歩く時間が多いプランなので、履き慣れたスニーカーがおすすめです。');
   } else {
     footwear.push('長時間歩いても疲れにくい、履き慣れた靴がおすすめです。');
@@ -291,6 +380,8 @@ export function generateOutfitPackingAdvice(input: {
 
   if (signals.hasBeachWater) {
     items.push('タオル');
+    items.push('サンダル');
+    items.push('着替え一式');
     cautions.push('水辺のスポットがあるため、着替えやタオルがあると安心です。');
     if (/泳|シュノーケ|ダイビング|snorkel|dive/i.test(input.days.flatMap((d) => d.items).map(itemHaystack).join(' '))) {
       cautions.push('水泳・マリンアクティビティがある場合は、水着の準備も検討してください。');
@@ -298,7 +389,13 @@ export function generateOutfitPackingAdvice(input: {
   }
 
   if (signals.outdoorItemCount > signals.indoorItemCount) {
-    cautions.push('屋外スポットが多いため、日差し・風・急な天候変化に備えると快適です。');
+    if (stats.isHot) {
+      cautions.push('屋外スポットが多いため、こまめな水分補給と日陰での休憩を意識すると快適です。');
+    } else if (weatherAvailable) {
+      cautions.push('屋外スポットが多いため、日差し・風・急な天候変化に備えると快適です。');
+    } else {
+      cautions.push('屋外スポットが多いため、歩きやすい靴とこまめな休憩を意識すると快適です。');
+    }
   }
 
   items.push('モバイルバッテリー');
@@ -307,7 +404,7 @@ export function generateOutfitPackingAdvice(input: {
   if (isTravelPlan) {
     items.push('予約確認');
     items.push('パスポート / ID');
-    if (stats.hasRain) items.push('替えの靴下');
+    if (weatherAvailable && stats.hasRain) items.push('替えの靴下');
   } else {
     items.push('現金');
   }
@@ -333,22 +430,30 @@ export function generateOutfitPackingAdvice(input: {
     minTemp: stats.minTemp,
     maxTemp: stats.maxTemp,
     isTravelPlan,
+    weatherAvailable,
   });
 
-  const title = '今日のおすすめ服装';
+  // Travel plans span multiple days, so the advice is framed around the whole trip rather than
+  // "today" — matches weatherAvailable=false messaging, which already talks about the trip period.
+  const title = isTravelPlan ? '旅行中のおすすめ服装' : '今日のおすすめ服装';
 
   const dedupe = (list: string[]) => [...new Set(list)].slice(0, 4);
+  // Outfit gets extra slots: the weatherAvailable=false intro is 2 lines (disclaimer + season
+  // guidance) on top of itinerary-specific lines (beach/hiking/dinner/etc.), which would otherwise
+  // crowd each other out of a tighter cap.
+  const dedupeOutfit = (list: string[]) => [...new Set(list)].slice(0, 6);
   const dedupeItems = (list: string[]) => [...new Set(list)].slice(0, 8);
 
   return {
     title,
-    outfit: dedupe(outfit),
+    outfit: dedupeOutfit(outfit),
     footwear: dedupe(footwear),
     items: dedupeItems(items),
     cautions: dedupe(cautions),
     dateOutfitTips: dateOutfitTips.length ? dedupe(dateOutfitTips) : undefined,
     travelPackingAdvice: travelPackingAdvice.length ? travelPackingAdvice : undefined,
     styleMode,
+    weatherAvailable,
   };
 }
 

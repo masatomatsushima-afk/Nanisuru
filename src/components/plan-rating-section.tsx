@@ -9,7 +9,7 @@ import { savePlanRating } from '@/lib/plan-rating';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import type { PlanFeedbackTag, PlanRatingContext } from '@/types/plan-rating';
-import { PLAN_FEEDBACK_TAGS } from '@/types/plan-rating';
+import { getFeedbackTagsForTrip, resolveTripAudience } from '@/lib/trip-type-copy';
 
 type PlanRatingSectionProps = {
   context: PlanRatingContext;
@@ -137,6 +137,10 @@ export function PlanRatingSection({
     }
   };
 
+  const feedbackTags = getFeedbackTagsForTrip(
+    resolveTripAudience({ companion: context.companion }),
+  );
+
   return (
     <>
       <SuccessOverlay visible={showSuccess} message="評価ありがとうございます！" />
@@ -155,7 +159,7 @@ export function PlanRatingSection({
 
         <Text style={styles.feedbackLabel}>クイックフィードバック（任意・複数選択可）</Text>
         <View style={styles.chipGrid}>
-          {PLAN_FEEDBACK_TAGS.map((tag) => (
+          {feedbackTags.map((tag) => (
             <FeedbackChip
               key={tag}
               label={tag}

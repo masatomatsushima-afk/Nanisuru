@@ -2,6 +2,7 @@ import type { BudgetScopeSettings } from '@/types/budget-scope';
 import { BUDGET_BREAKDOWN_KEY_LABELS, BUDGET_SCOPE_META } from '@/types/budget-scope';
 import type { CompanionOption, ItineraryDay, ItineraryItem, PlanDetails, WeatherForecast } from '@/types/plan';
 import type { OutfitPackingAdvice, OutfitStyleMode } from '@/types/outfit-advice';
+import { isWeatherForecastAvailable } from './outfit-packing-advice';
 import type { PlanCreationType } from '@/types/plan-creation';
 import type { TransportGuidanceContext } from '@/types/transport-guidance';
 import type { TravelTimingSettings } from '@/types/travel-timing';
@@ -367,14 +368,17 @@ function validateOutfitConsistency(
     .join(' ')
     .toLowerCase();
 
+  const forecastAvailable = isWeatherForecastAvailable(weather);
+
   const hasRain =
-    weather?.hasRainExpected ||
-    weather?.seasonalContext?.riskNotes.some((note) => /雨|梅雨|スコール/i.test(note)) ||
-    weather?.days.some((day) => day.category === 'rainy' || day.precipitationProbability >= 45);
+    forecastAvailable &&
+    (Boolean(weather?.hasRainExpected) ||
+      weather!.days.some((day) => day.category === 'rainy' || day.precipitationProbability >= 45));
   const hasCold =
-    weather?.seasonalContext?.riskNotes.some((note) => /寒|冬|冷/i.test(note)) ||
-    weather?.days.some((day) => day.temperatureMin <= 8);
-  const hasWind = weather?.days.some((day) => /風|wind/i.test(day.condition));
+    forecastAvailable && weather!.days.some((day) => day.temperatureMin <= 8);
+  const hasWind =
+    forecastAvailable &&
+    weather!.days.some((day) => /風|wind/i.test(day.condition));
   const hasOutdoor = days.some((day) =>
     day.items.some((item) => ['散歩', '景色', '体験'].includes(item.activityCategory ?? '')),
   );

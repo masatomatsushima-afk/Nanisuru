@@ -361,6 +361,30 @@ export default function PlanDetailScreen() {
         <Text style={styles.companionNote}>{COMPANION_SUBTITLES[companion]}</Text>
         {mood ? <Text style={styles.moodText}>気分：{mood}</Text> : null}
         {planDetails.summary ? <Text style={styles.summaryText}>{planDetails.summary}</Text> : null}
+        {(() => {
+          const destinationLines = [
+            planDetails.country && planDetails.city
+              ? `目的地：${planDetails.country}・${planDetails.city}`
+              : planDetails.destinationLabel
+                ? `目的地：${planDetails.destinationLabel}`
+                : null,
+            planDetails.baseArea ? `拠点：${planDetails.baseArea}` : null,
+            planDetails.accommodation ? `宿泊先：${planDetails.accommodation}` : null,
+            planDetails.arrivalPoint ? `到着場所：${planDetails.arrivalPoint}` : null,
+          ].filter((line): line is string => Boolean(line));
+
+          if (destinationLines.length === 0) return null;
+
+          return (
+            <View style={styles.destinationNotice}>
+              {destinationLines.map((line) => (
+                <Text key={line} style={styles.destinationNoticeLine}>
+                  {line}
+                </Text>
+              ))}
+            </View>
+          );
+        })()}
         {planDetails.isFallback ? (
           <Text style={styles.fallbackNotice}>{PLAN_DETAIL_FALLBACK_NOTICE}</Text>
         ) : null}
@@ -631,6 +655,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     marginTop: Spacing.two,
+  },
+  destinationNotice: {
+    marginTop: Spacing.two,
+    gap: 2,
+  },
+  destinationNoticeLine: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
   },
   personalityBadge: {
     alignSelf: 'flex-start',

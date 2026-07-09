@@ -1,5 +1,6 @@
 import type { ItineraryItem } from '@/types/plan';
 import { buildGoogleMapsSearchUrl } from '@/lib/geo';
+import { scopeMapsQueryToLocation } from '@/lib/destination-safety';
 
 export function isValidHttpUrl(value: string | undefined): boolean {
   if (!value) return false;
@@ -16,21 +17,30 @@ export function buildGoogleMapsUrl(activity: string, location: string): string {
   return buildGoogleMapsSearchUrl(query);
 }
 
-export function buildDirectionsDestination(item: ItineraryItem): string {
+/**
+ * Builds the query used for both "open in Google Maps" and "directions" links. Always prefers
+ * the item's own destination-scoped mapsQuery (set at generation time); only falls back to raw
+ * title/address text for legacy items that predate mapsQuery, and even then the destination is
+ * appended so the search can never resolve near the device's current location instead of the
+ * actual trip destination.
+ */
+export function buildDirectionsDestination(item: ItineraryItem, location?: string): string {
+  if (item.mapsQuery?.trim()) {
+    return item.mapsQuery.trim();
+  }
+
   const name = item.activity.trim();
   const address = item.placeAddress?.trim();
-  if (name && address) {
-    return `${name}, ${address}`;
-  }
-  return name;
+  const base = name && address ? `${name}, ${address}` : name;
+  return scopeMapsQueryToLocation(base, location);
 }
 
-export function getPlaceMapsUrl(item: ItineraryItem): string {
+export function getPlaceMapsUrl(item: ItineraryItem, location?: string): string {
   const website = item.websiteUrl?.trim();
   if (website && isGoogleMapsUrl(website)) {
     return website;
   }
-  return buildGoogleMapsSearchUrl(buildDirectionsDestination(item));
+  return buildGoogleMapsSearchUrl(buildDirectionsDestination(item, location));
 }
 
 export function buildReservationSearchUrl(activity: string, location: string): string {
@@ -53,7 +63,12 @@ export function getWebsiteUrl(item: ItineraryItem, location: string): string | n
 }
 
 export function getMapsUrl(item: ItineraryItem, location: string): string {
-  return getPlaceMapsUrl(item);
+  return getPlaceMapsUrl(item, location);
+}
+
+/** True when it's safe to offer live "directions from current location" for this item. */
+export function canOfferDirections(item: ItineraryItem): boolean {
+  return item.isSpecificPlace !== false && Boolean(item.mapsQuery?.trim() || item.activity?.trim());
 }
 
 export function hasTravelTime(item: ItineraryItem): boolean {

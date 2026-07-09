@@ -112,40 +112,38 @@ export function formatTravelPlanValidationUserMessage(
   return `未入力の項目があります\n${labels.join('、')}を入力してください`;
 }
 
+/**
+ * AI/network generation failures are expected (timeout, 5xx, offline, malformed response) and are
+ * handled by retry + a dev fallback plan wherever possible — never console.error here, or
+ * Expo/RN Web shows a red screen even on runs that otherwise recover fine. Kept at console.warn
+ * (and only in __DEV__) so it's still visible for debugging without alarming the UI.
+ */
 export function logTravelPlanGenerationFailed(error: unknown): void {
-  console.error('[TravelPlanSubmit] generation failed', error);
-  console.error('[TravelPlanSubmit] platform', Platform.OS);
+  if (!__DEV__) return;
 
   const requestUrl = getPlanGenerationRequestUrl(error);
-  if (requestUrl) {
-    console.error('[TravelPlanSubmit] request URL', requestUrl);
-  }
-
-  if (error instanceof Error) {
-    console.error('[TravelPlanSubmit] error message', error.message);
-    if (error.stack) {
-      console.error('[TravelPlanSubmit] error stack', error.stack);
-    }
-  }
-
-  if (error instanceof OpenAiRequestError) {
-    console.error('[TravelPlanSubmit] OpenAI status', error.status, error.statusText);
-    console.error('[TravelPlanSubmit] OpenAI response', error.body);
-    return;
-  }
-
   const record =
     error && typeof error === 'object'
       ? (error as Record<string, unknown>)
       : ({} as Record<string, unknown>);
 
-  if (record.status != null) {
-    console.error('[TravelPlanSubmit] error status', record.status);
-  }
-  if (typeof record.body === 'string') {
-    console.error('[TravelPlanSubmit] error response', record.body);
-  }
-  if (record.code != null) {
-    console.error('[TravelPlanSubmit] error code', record.code);
-  }
+  console.warn('[TravelPlanSubmit] generation failed', {
+    platform: Platform.OS,
+    requestUrl,
+    message: error instanceof Error ? error.message : String(error),
+    status:
+      error instanceof OpenAiRequestError
+        ? error.status
+        : typeof record.status === 'number'
+          ? record.status
+          : undefined,
+    statusText: error instanceof OpenAiRequestError ? error.statusText : undefined,
+    body:
+      error instanceof OpenAiRequestError
+        ? error.body
+        : typeof record.body === 'string'
+          ? record.body
+          : undefined,
+    code: record.code,
+  });
 }

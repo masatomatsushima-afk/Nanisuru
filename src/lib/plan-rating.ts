@@ -56,6 +56,14 @@ const FEEDBACK_MEMORY_MAP: Partial<
     category: 'companion',
     content: '一人でも楽しめる・気兼ねしないプランを好む',
   },
+  家族向きで良い: {
+    category: 'companion',
+    content: '家族みんなで楽しめる・子ども連れでも回りやすいプランを好む',
+  },
+  子ども連れには微妙: {
+    category: 'companion',
+    content: '子ども連れには移動や待ち時間が多いプランは避けたい',
+  },
 };
 
 const POSITIVE_ACTIVITY_PATTERNS: Array<{

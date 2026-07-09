@@ -9,7 +9,9 @@ export function safeJsonParse<T>(value: unknown, fallback: T): T {
     if (!trimmed) return fallback;
     return JSON.parse(trimmed) as T;
   } catch (error) {
-    console.error('[JSON] parse failed', {
+    // Malformed JSON (e.g. an AI response or route param) is expected and always falls back to
+    // a safe default here — must stay console.warn, not console.error (red screen).
+    console.warn('[JSON] parse failed', {
       value: typeof value === 'string' ? value.slice(0, 500) : value,
       error,
     });
@@ -22,7 +24,7 @@ export function cleanSerializable<T>(value: T): T {
   try {
     return JSON.parse(JSON.stringify(value)) as T;
   } catch (error) {
-    console.error('[JSON] clean serialize failed', error);
+    console.warn('[JSON] clean serialize failed', error);
     return value;
   }
 }

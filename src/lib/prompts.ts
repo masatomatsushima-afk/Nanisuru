@@ -110,6 +110,17 @@ export type PlanInput = {
   outfitStyleMode?: OutfitStyleMode;
   /** Lighter prompt for initial travel plan generation (smaller/faster OpenAI request). */
   compactPrompt?: boolean;
+  /** Optional accommodation hub — hotel name or area text (MVP, no Places API). */
+  accommodation?: string;
+  accommodationName?: string;
+  accommodationArea?: string;
+  accommodationNote?: string;
+  /** Structured destination detail fields (MVP text input). */
+  country?: string;
+  city?: string;
+  baseArea?: string;
+  arrivalPoint?: string;
+  destinationLabel?: string;
 };
 
 const PERSONALITY_GUIDE: Record<PersonalityOption, string> = {

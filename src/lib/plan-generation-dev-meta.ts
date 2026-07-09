@@ -1,5 +1,10 @@
 import type { PlanInput } from './prompts';
 import type { TripDurationOption } from '@/types/plan';
+import { normalizeAccommodationFields } from './accommodation-input';
+import {
+  destinationDetailsToPayload,
+  resolveDestinationDetailsFromPlanInput,
+} from './destination-detail-input';
 
 export type PlanGenerationDevMeta = {
   destination: string;
@@ -18,6 +23,15 @@ export type PlanGenerationDevMeta = {
   weatherSummary?: string;
   preferencesSummary?: string;
   localGemsCount: number;
+  accommodation?: string;
+  accommodationName?: string;
+  accommodationArea?: string;
+  accommodationNote?: string;
+  country?: string;
+  city?: string;
+  baseArea?: string;
+  arrivalPoint?: string;
+  destinationLabel?: string;
 };
 
 export function extractPlanGenerationDevMeta(input: PlanInput): PlanGenerationDevMeta {
@@ -37,8 +51,13 @@ export function extractPlanGenerationDevMeta(input: PlanInput): PlanGenerationDe
       : null,
   ].filter(Boolean);
 
+  const accommodationFields = normalizeAccommodationFields(
+    input.accommodation ?? input.accommodationArea ?? input.accommodationName,
+  );
+  const destinationDetails = resolveDestinationDetailsFromPlanInput(input);
+
   return {
-    destination: input.location.trim() || '未指定',
+    destination: input.location.trim() || destinationDetails.destinationLabel || '未指定',
     departureDate: input.departureDate ?? input.tripDate,
     returnDate: input.returnDate ?? input.tripEndDate ?? input.tripDate,
     durationLabel: input.durationLabel ?? input.tripDuration,
@@ -62,6 +81,8 @@ export function extractPlanGenerationDevMeta(input: PlanInput): PlanGenerationDe
     weatherSummary: input.weather?.summary?.trim() || input.weather?.seasonalContext?.guidance,
     preferencesSummary: preferencesParts.length ? preferencesParts.join(' / ') : undefined,
     localGemsCount: input.localHiddenSpots?.length ?? 0,
+    ...accommodationFields,
+    ...destinationDetailsToPayload(destinationDetails),
   };
 }
 

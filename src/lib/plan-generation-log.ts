@@ -15,6 +15,7 @@ import { getDurationDisplayLabel } from './trip-duration';
 import { validateTripSchedule } from './trip-schedule';
 import type { TripScheduleEditorValue } from '@/types/trip-schedule';
 import { APP_MESSAGES, AppError, extractPlanGenerationErrorDetail } from './app-errors';
+import { isDevFallbackEligibleError } from './openai-dev-fallback';
 
 export type NormalizedPlanGenerationInput = {
   planType?: PlanCreationType;
@@ -71,6 +72,21 @@ export function logPlanGenerationError(
       message: detail,
       ...(payload ?? {}),
     });
+    return;
+  }
+
+  // AI fetch/parse/timeout/network failures are expected (timeout, 5xx, offline, malformed
+  // response) at any step of the generation flow — including later steps like
+  // 'travel_plan_generate' when a secondary AI call (balance/quality fix) fails — and are
+  // retried or replaced by a dev fallback plan upstream. Must stay console.warn, not
+  // console.error (which triggers a red screen in Expo/RN Web).
+  if (step === 'openai_fetch' || step === 'openai_parse' || isDevFallbackEligibleError(error)) {
+    if (__DEV__) {
+      console.warn(`${LOG_PREFIX} AI generation warning (will retry or fall back) ${step}`, {
+        message: detail,
+        ...(payload ?? {}),
+      });
+    }
     return;
   }
 

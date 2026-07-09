@@ -49,7 +49,7 @@ import {
   travelBudgetIncludesToBudgetScope,
   type TravelBudgetIncludeOption,
 } from '@/lib/travel-budget-includes';
-import { buildLocationCurrencyHint, inferCurrencyFromLocation } from '@/lib/location-currency';
+import { buildLocationCurrencyHint } from '@/lib/location-currency';
 import { SuccessOverlay } from '@/components/success-overlay';
 import { AiAdviceSection } from '@/components/ai-advice-section';
 import { BudgetBreakdownSection } from '@/components/budget-breakdown-section';
@@ -158,6 +158,7 @@ import {
   resolveTravelPurpose,
   validateTravelPlanForm,
 } from '@/lib/travel-plan-form-validation';
+import { normalizeAccommodationFields } from '@/lib/accommodation-input';
 import {
   buildPlanDetailParamsFromGeneration,
   logTravelPlanSubmitPayload,
@@ -180,6 +181,10 @@ import {
 } from '@/lib/travel-plan-submit-debug';
 import { installPlanApiHealthCheckDevHook } from '@/lib/plan-api-health-check';
 import { isLightweightMvp, lightweightMvpLog } from '@/lib/lightweight-mvp';
+import {
+  getRecommendReasonsForTrip,
+  resolveTripAudience,
+} from '@/lib/trip-type-copy';
 
 const TRAVEL_PLAN_USER_ERROR = 'AIプラン生成に失敗しました。入力内容を確認してもう一度お試しください。';
 
@@ -201,7 +206,9 @@ function logTravelPlanGenerationError(error: unknown): void {
       ? (error as Record<string, unknown>)
       : ({} as Record<string, unknown>);
 
-  console.error('[TravelPlanForm] generation error', {
+  // Kept for potential future use — AI generation failures are expected (timeout/502/network/
+  // parse) and handled via a dev fallback plan, so must stay console.warn, not console.error.
+  console.warn('[TravelPlanForm] generation error', {
     message: detail,
     name: error instanceof Error ? error.name : record.name,
     status: record.status,
@@ -214,13 +221,6 @@ function logTravelPlanGenerationError(error: unknown): void {
 
 const accent = NS.colors.accent;
 
-const RECOMMEND_REASONS = [
-  '雨の日でも楽しめる',
-  '初デートで会話しやすい',
-  '予算内に収まる',
-  '移動時間が少ない',
-] as const;
-
 function ReasonCard({ label }: { label: string }) {
   return (
     <View style={styles.reasonCard}>
@@ -232,12 +232,14 @@ function ReasonCard({ label }: { label: string }) {
   );
 }
 
-function RecommendReasonsSection() {
+function RecommendReasonsSection({ companion }: { companion: CompanionOption }) {
+  const reasons = getRecommendReasonsForTrip(resolveTripAudience({ companion }), 4);
+
   return (
     <View style={styles.reasonsSection}>
       <Text style={styles.reasonsTitle}>おすすめ理由</Text>
       <View style={styles.reasonsGrid}>
-        {RECOMMEND_REASONS.map((reason) => (
+        {reasons.map((reason) => (
           <ReasonCard key={reason} label={reason} />
         ))}
       </View>
@@ -564,7 +566,7 @@ function ItineraryTimeline({
           <AiAdviceSection advice={details.aiAdvice} />
         ) : null}
 
-        <RecommendReasonsSection />
+        <RecommendReasonsSection companion={companion} />
 
         <PlanRatingSection
           context={ratingContext}
@@ -821,6 +823,11 @@ const INITIAL_GENERATION_STEP = 0;
 export default function HomeScreen() {
   const [planType, setPlanType] = useState<PlanCreationType>('今日のお出かけ');
   const [location, setLocation] = useState('');
+  const [country, setCountry] = useState('');
+  const [city, setCity] = useState('');
+  const [baseArea, setBaseArea] = useState('');
+  const [accommodation, setAccommodation] = useState('');
+  const [arrivalPoint, setArrivalPoint] = useState('');
   const [tripSchedule, setTripSchedule] = useState<TripScheduleEditorValue>(() =>
     applyPlanTypeDefaults('今日のお出かけ', createDefaultTripSchedule()),
   );
@@ -961,14 +968,10 @@ export default function HomeScreen() {
     }, [refreshMemorySummary]),
   );
 
-  useEffect(() => {
-    const trimmed = location.trim();
-    if (!trimmed) return;
-    const nextCurrency = inferCurrencyFromLocation(trimmed);
-    setCurrency((prev) => (prev === nextCurrency ? prev : nextCurrency));
-  }, [location]);
-
-  const locationCurrencyHint = buildLocationCurrencyHint(location);
+  // NOTE: currency is never auto-changed from the destination text — the user's own
+  // CurrencySelector choice is authoritative (e.g. JPY must stay JPY for a Korea trip).
+  // `locationCurrencyHint` below is informational only (shows the local currency as a hint).
+  const locationCurrencyHint = buildLocationCurrencyHint(city || country || location);
 
   const resetPlan = () => {
     setShowItinerary(false);
@@ -1110,6 +1113,11 @@ export default function HomeScreen() {
 
     const plan = await generatePlanWithAi({
       location: effectiveLocation,
+      country: snap?.country,
+      city: snap?.city,
+      baseArea: snap?.baseArea,
+      arrivalPoint: snap?.arrivalPoint,
+      destinationLabel: snap?.destinationLabel ?? effectiveLocation,
       budget: effectiveBudget,
       currency,
       people: effectivePeople,
@@ -1137,6 +1145,7 @@ export default function HomeScreen() {
       travelTiming:
         planType === '旅行プラン' || planType === '週末プラン' ? effectiveTravelTiming : undefined,
       outfitStyleMode,
+      ...normalizeAccommodationFields(snap?.accommodation),
     });
     return plan;
   };
@@ -1499,6 +1508,10 @@ export default function HomeScreen() {
     () =>
       validateTravelPlanForm({
         destination: location,
+        country,
+        city,
+        baseArea,
+        arrivalPoint,
         tripSchedule,
         arrivalTime: travelTiming.arrivalTime,
         departureTime: travelTiming.departureTime,
@@ -1510,9 +1523,14 @@ export default function HomeScreen() {
         travelIntent,
         travelPurpose,
         customPreferences,
+        accommodation,
       }),
     [
       location,
+      country,
+      city,
+      baseArea,
+      arrivalPoint,
       tripSchedule,
       travelTiming.arrivalTime,
       travelTiming.departureTime,
@@ -1524,6 +1542,7 @@ export default function HomeScreen() {
       travelIntent,
       travelPurpose,
       customPreferences,
+      accommodation,
     ],
   );
 
@@ -1549,6 +1568,10 @@ export default function HomeScreen() {
 
     const formState = {
       destination: location,
+      country,
+      city,
+      baseArea,
+      arrivalPoint,
       tripSchedule,
       arrivalTime: travelTiming.arrivalTime,
       departureTime: travelTiming.departureTime,
@@ -1560,6 +1583,7 @@ export default function HomeScreen() {
       travelIntent,
       travelPurpose,
       customPreferences,
+      accommodation,
     };
 
     const resolvedTravelPurpose = resolveTravelPurpose(formState);
@@ -1620,6 +1644,11 @@ export default function HomeScreen() {
 
     travelSubmitSnapshotRef.current = {
       location: normalizedState.location,
+      country: normalizedState.country,
+      city: normalizedState.city,
+      baseArea: normalizedState.baseArea,
+      arrivalPoint: normalizedState.arrivalPoint,
+      destinationLabel: normalizedState.destinationLabel,
       budget: normalizedState.budget,
       people: normalizedState.people,
       currency,
@@ -1631,6 +1660,7 @@ export default function HomeScreen() {
       tripSchedule: nextTripSchedule,
       budgetScope: nextBudgetScope,
       budgetIncludes: travelBudgetIncludes,
+      accommodation: normalizedState.accommodation,
     };
 
     logTravelPlanSubmitPayload(travelSubmitSnapshotRef.current);
@@ -1643,6 +1673,11 @@ export default function HomeScreen() {
     setTripSchedule(nextTripSchedule);
 
     setLocation(normalizedState.location);
+    setCountry(normalizedState.country ?? '');
+    setCity(normalizedState.city ?? '');
+    setBaseArea(normalizedState.baseArea ?? '');
+    setArrivalPoint(normalizedState.arrivalPoint ?? '');
+    setAccommodation(normalizedState.accommodation ?? '');
     setBudget(normalizedState.budget);
     setPeople(normalizedState.people);
     setTravelTiming(nextTravelTiming);
@@ -1655,7 +1690,9 @@ export default function HomeScreen() {
     try {
       await handleGenerate({ overlayReady: true });
     } catch (error) {
-      if (__DEV__) console.error('[GenerateButton] error', error);
+      // Expected AI failures (timeout/502/network/parse) are handled via a dev fallback plan
+      // upstream — must stay console.warn, not console.error (red screen in Expo/RN Web).
+      if (__DEV__) console.warn('[GenerateButton] error', error);
       if (!isAbortError(error)) {
         logTravelPlanGenerationFailed(error);
         setError(formatPlanGenerationDevError(TRAVEL_PLAN_USER_ERROR, error));
@@ -1672,8 +1709,16 @@ export default function HomeScreen() {
       return (
         <>
           <TravelPlanSheetForm
-            location={location}
-            onLocationChange={handleLocationChange}
+            country={country}
+            onCountryChange={setCountry}
+            city={city}
+            onCityChange={setCity}
+            baseArea={baseArea}
+            onBaseAreaChange={setBaseArea}
+            accommodation={accommodation}
+            onAccommodationChange={setAccommodation}
+            arrivalPoint={arrivalPoint}
+            onArrivalPointChange={setArrivalPoint}
             tripSchedule={tripSchedule}
             onTripScheduleChange={(next) => {
               setTripSchedule(next);

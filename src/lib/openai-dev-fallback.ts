@@ -18,6 +18,28 @@ const DEV_FALLBACK_ERROR_PATTERNS = [
   /504/i,
 ];
 
+/** Generic network failures (Wi-Fi drop, wrong LAN IP, offline, etc.) — also expected in dev. */
+const DEV_FALLBACK_NETWORK_PATTERNS = [
+  /network request failed/i,
+  /failed to fetch/i,
+  /load failed/i,
+  /network error/i,
+  /econnrefused/i,
+  /econnreset/i,
+  /internet connection/i,
+  /offline/i,
+];
+
+/** AI response came back malformed/empty — also expected in dev, use the fallback plan instead. */
+const DEV_FALLBACK_PARSE_ERROR_PATTERNS = [
+  /プランの形式が正しくありません/,
+  /json parse error/i,
+  /unexpected token/i,
+  /is not valid json/i,
+  /unexpected end of json input/i,
+  /aiからの応答が空でした/,
+];
+
 export function isDevFallbackEligibleError(error: unknown): boolean {
   if (!__DEV__) return false;
 
@@ -30,6 +52,16 @@ export function isDevFallbackEligibleError(error: unknown): boolean {
     if (openAiError.status != null && [502, 503, 504].includes(openAiError.status)) {
       return true;
     }
+  }
+
+  // Generic network / connection failures (e.g. PlanGenerationRequestError with code
+  // 'NETWORK_ERROR') are just as expected in dev as a timeout — never a red-screen crash.
+  if (
+    error instanceof Error &&
+    (error.name === 'PlanGenerationRequestError' || error.name === 'AppError') &&
+    (error as Error & { code?: string }).code === 'NETWORK_ERROR'
+  ) {
+    return true;
   }
 
   const record =
@@ -52,7 +84,11 @@ export function isDevFallbackEligibleError(error: unknown): boolean {
     .filter(Boolean)
     .join(' ');
 
-  return DEV_FALLBACK_ERROR_PATTERNS.some((pattern) => pattern.test(combined));
+  return (
+    DEV_FALLBACK_ERROR_PATTERNS.some((pattern) => pattern.test(combined)) ||
+    DEV_FALLBACK_NETWORK_PATTERNS.some((pattern) => pattern.test(combined)) ||
+    DEV_FALLBACK_PARSE_ERROR_PATTERNS.some((pattern) => pattern.test(combined))
+  );
 }
 
 export function isDevFallbackApiResponse(data: unknown): data is {

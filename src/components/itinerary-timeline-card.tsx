@@ -133,7 +133,7 @@ export function ItineraryTimelineCard({
 
           <PlaceAtmosphereLinks item={item} location={location} />
 
-          <ItineraryMapActions item={item} />
+          <ItineraryMapActions item={item} location={location} />
 
           {editable && onEditPress ? (
             <Pressable

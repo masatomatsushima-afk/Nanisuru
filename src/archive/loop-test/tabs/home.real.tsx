@@ -23,6 +23,10 @@ import {
 import { AppErrorBanner } from '@/components/app-error-banner';
 import { APP_MESSAGES, getPlanGenerationErrorMessage, isSupabaseError, formatPlanGenerationDevError, extractPlanGenerationErrorDetail } from '@/lib/app-errors';
 import { linkPlanRatingToTrip } from '@/lib/plan-rating';
+import {
+  getRecommendReasonsForTrip,
+  resolveTripAudience,
+} from '@/lib/trip-type-copy';
 import { formatCombinedMood } from '@/lib/custom-preferences';
 import {
   applyPlanTypeDefaults,
@@ -201,13 +205,6 @@ function logTravelPlanGenerationError(error: unknown): void {
 
 const accent = NS.colors.accent;
 
-const RECOMMEND_REASONS = [
-  '雨の日でも楽しめる',
-  '初デートで会話しやすい',
-  '予算内に収まる',
-  '移動時間が少ない',
-] as const;
-
 function ReasonCard({ label }: { label: string }) {
   return (
     <View style={styles.reasonCard}>
@@ -219,12 +216,14 @@ function ReasonCard({ label }: { label: string }) {
   );
 }
 
-function RecommendReasonsSection() {
+function RecommendReasonsSection({ companion }: { companion: CompanionOption }) {
+  const reasons = getRecommendReasonsForTrip(resolveTripAudience({ companion }), 4);
+
   return (
     <View style={styles.reasonsSection}>
       <Text style={styles.reasonsTitle}>おすすめ理由</Text>
       <View style={styles.reasonsGrid}>
-        {RECOMMEND_REASONS.map((reason) => (
+        {reasons.map((reason) => (
           <ReasonCard key={reason} label={reason} />
         ))}
       </View>
@@ -542,7 +541,7 @@ function ItineraryTimeline({
           <AiAdviceSection advice={details.aiAdvice} />
         ) : null}
 
-        <RecommendReasonsSection />
+        <RecommendReasonsSection companion={companion} />
 
         <PlanRatingSection
           context={ratingContext}
@@ -1521,8 +1520,16 @@ export default function HomeScreen() {
       return (
         <>
           <TravelPlanSheetForm
-            location={location}
-            onLocationChange={handleLocationChange}
+            country=""
+            onCountryChange={() => {}}
+            city=""
+            onCityChange={() => {}}
+            baseArea=""
+            onBaseAreaChange={() => {}}
+            accommodation=""
+            onAccommodationChange={() => {}}
+            arrivalPoint=""
+            onArrivalPointChange={() => {}}
             tripSchedule={tripSchedule}
             onTripScheduleChange={(next) => {
               setTripSchedule(next);

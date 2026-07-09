@@ -17,6 +17,8 @@ export const PLAN_FEEDBACK_TAGS = [
   'もっとゆっくりしたい',
   'デート向きで良い',
   '一人向きで良い',
+  '家族向きで良い',
+  '子ども連れには微妙',
 ] as const;
 
 export type PlanFeedbackTag = (typeof PLAN_FEEDBACK_TAGS)[number];

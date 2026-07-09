@@ -36,6 +36,11 @@ import type { TravelPlanValidationErrors } from '@/lib/travel-plan-form-validati
 import type { TravelBudgetIncludeOption } from '@/lib/travel-budget-includes';
 import { safeChipKey, safeKey, safeText } from '@/lib/safe-text';
 import {
+  COUNTRY_SUGGESTIONS,
+  getArrivalPointSuggestions,
+  getBaseAreaSuggestions,
+} from '@/lib/destination-detail-input';
+import {
   getTravelFormRestoreLevel,
   logTravelFormRestoreOnce,
   travelFormSectionAtLeast,
@@ -58,8 +63,16 @@ export const TRAVEL_SHEET_PURPOSE_OPTIONS = [
 const COMPANION_OPTIONS: CompanionOption[] = ['一人', '友達', 'カップル', '初デート', '家族'];
 
 type TravelPlanSheetFormProps = {
-  location: string;
-  onLocationChange: (value: string) => void;
+  country: string;
+  onCountryChange: (value: string) => void;
+  city: string;
+  onCityChange: (value: string) => void;
+  baseArea: string;
+  onBaseAreaChange: (value: string) => void;
+  accommodation: string;
+  onAccommodationChange: (value: string) => void;
+  arrivalPoint: string;
+  onArrivalPointChange: (value: string) => void;
   tripSchedule: TripScheduleEditorValue;
   onTripScheduleChange: (value: TripScheduleEditorValue) => void;
   travelTiming: TravelTimingSettings;
@@ -118,9 +131,42 @@ function SheetField({
   );
 }
 
+function SuggestionChips({
+  suggestions,
+  onSelect,
+  prefix,
+}: {
+  suggestions: string[];
+  onSelect: (value: string) => void;
+  prefix: string;
+}) {
+  if (suggestions.length === 0) return null;
+  return (
+    <View style={styles.chipGrid}>
+      {suggestions.map((label, index) => (
+        <SelectChip
+          key={safeChipKey(prefix, { id: label, label }, index)}
+          label={safeText(label)}
+          selected={false}
+          onPress={() => onSelect(label)}
+          colorIndex={index}
+        />
+      ))}
+    </View>
+  );
+}
+
 export function TravelPlanSheetForm({
-  location,
-  onLocationChange,
+  country,
+  onCountryChange,
+  city,
+  onCityChange,
+  baseArea,
+  onBaseAreaChange,
+  accommodation,
+  onAccommodationChange,
+  arrivalPoint,
+  onArrivalPointChange,
   tripSchedule,
   onTripScheduleChange,
   travelTiming,
@@ -182,20 +228,91 @@ export function TravelPlanSheetForm({
     logTravelFormRestoreOnce();
   }, []);
 
+  const baseAreaSuggestions = getBaseAreaSuggestions(city);
+  const arrivalSuggestions = getArrivalPointSuggestions(city);
+
   return (
     <View style={styles.wrap}>
       {show('destination') ? (
-      <SheetField label="行き先" error={err('destination')}>
-        <TextInput
-          style={[styles.input, err('destination') && styles.inputError]}
-          value={location}
-          onChangeText={onLocationChange}
-          onEndEditing={() => onLocationChange(normalizeUserInput(location))}
-          placeholder="例）大阪、韓国、ケアンズ、京都"
-          placeholderTextColor={NS.colors.textMuted}
-          autoCapitalize="none"
-        />
-      </SheetField>
+      <View style={styles.destinationSection}>
+        <Text style={styles.sectionTitle}>目的地の詳細</Text>
+        <Text style={styles.sectionHint}>国・都市・拠点を分けて入力すると、より具体的なプランになります</Text>
+
+        <SheetField label="国・地域" optional error={err('destination')}>
+          <TextInput
+            style={[styles.input, err('destination') && styles.inputError]}
+            value={country}
+            onChangeText={onCountryChange}
+            onEndEditing={() => onCountryChange(normalizeUserInput(country))}
+            placeholder="例）日本 / 韓国 / フランス / オーストラリア"
+            placeholderTextColor={NS.colors.textMuted}
+            autoCapitalize="none"
+          />
+          <SuggestionChips
+            prefix="country"
+            suggestions={[...COUNTRY_SUGGESTIONS]}
+            onSelect={onCountryChange}
+          />
+        </SheetField>
+
+        <SheetField label="都市" optional error={err('destination')}>
+          <TextInput
+            style={[styles.input, err('destination') && styles.inputError]}
+            value={city}
+            onChangeText={onCityChange}
+            onEndEditing={() => onCityChange(normalizeUserInput(city))}
+            placeholder="例）大阪 / ソウル / Paris / Melbourne"
+            placeholderTextColor={NS.colors.textMuted}
+            autoCapitalize="none"
+          />
+        </SheetField>
+
+        <SheetField label="拠点エリア" optional>
+          <TextInput
+            style={styles.input}
+            value={baseArea}
+            onChangeText={onBaseAreaChange}
+            onEndEditing={() => onBaseAreaChange(normalizeUserInput(baseArea))}
+            placeholder="例）難波 / 明洞 / 博多 — 自由入力OK"
+            placeholderTextColor={NS.colors.textMuted}
+            autoCapitalize="none"
+          />
+          <SuggestionChips
+            prefix="baseArea"
+            suggestions={baseAreaSuggestions}
+            onSelect={onBaseAreaChange}
+          />
+        </SheetField>
+
+        <SheetField label="宿泊先・ホテル" optional>
+          <TextInput
+            style={styles.input}
+            value={accommodation}
+            onChangeText={onAccommodationChange}
+            onEndEditing={() => onAccommodationChange(normalizeUserInput(accommodation))}
+            placeholder="例）明洞駅近く / 難波駅近く / ホテル名"
+            placeholderTextColor={NS.colors.textMuted}
+            autoCapitalize="none"
+          />
+        </SheetField>
+
+        <SheetField label="到着場所" optional>
+          <TextInput
+            style={styles.input}
+            value={arrivalPoint}
+            onChangeText={onArrivalPointChange}
+            onEndEditing={() => onArrivalPointChange(normalizeUserInput(arrivalPoint))}
+            placeholder="例）仁川空港 / 関西空港 / 新大阪駅"
+            placeholderTextColor={NS.colors.textMuted}
+            autoCapitalize="none"
+          />
+          <SuggestionChips
+            prefix="arrival"
+            suggestions={arrivalSuggestions}
+            onSelect={onArrivalPointChange}
+          />
+        </SheetField>
+      </View>
       ) : null}
 
       {show('dates') ? (
@@ -470,6 +587,21 @@ const styles = StyleSheet.create({
     gap: NS.layout.sectionGap,
     width: '100%',
     maxWidth: '100%',
+  },
+  destinationSection: {
+    gap: Spacing.three,
+  },
+  sectionTitle: {
+    color: NS.colors.text,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  sectionHint: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 18,
+    marginTop: -Spacing.one,
   },
   scheduleSection: {
     gap: Spacing.two,

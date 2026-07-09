@@ -24,6 +24,11 @@ import type { TripScheduleEditorValue } from '@/types/trip-schedule';
 
 export type TravelPlanSubmitSnapshot = {
   location: string;
+  country?: string;
+  city?: string;
+  baseArea?: string;
+  arrivalPoint?: string;
+  destinationLabel?: string;
   budget: string;
   people: string;
   currency: CurrencyCode;
@@ -34,6 +39,7 @@ export type TravelPlanSubmitSnapshot = {
   tripSchedule: TripScheduleEditorValue;
   budgetIncludes: TravelBudgetIncludeOption[];
   travelPurpose: string;
+  accommodation?: string;
 };
 
 export function snapshotToTravelPlanFormInput(
@@ -41,6 +47,10 @@ export function snapshotToTravelPlanFormInput(
 ): TravelPlanFormInput {
   return {
     destination: snap.location,
+    country: snap.country,
+    city: snap.city,
+    baseArea: snap.baseArea,
+    arrivalPoint: snap.arrivalPoint,
     tripSchedule: snap.tripSchedule,
     arrivalTime: snap.travelTiming.arrivalTime,
     departureTime: snap.travelTiming.departureTime,
@@ -52,6 +62,7 @@ export function snapshotToTravelPlanFormInput(
     travelIntent: snap.travelIntent,
     travelPurpose: snap.travelPurpose,
     customPreferences: snap.customPreferences,
+    accommodation: snap.accommodation,
   };
 }
 

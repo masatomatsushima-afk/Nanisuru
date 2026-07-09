@@ -8,33 +8,36 @@ import { AppErrorBanner } from '@/components/app-error-banner';
 import { APP_MESSAGES } from '@/lib/app-errors';
 import { LOCATION_PERMISSION_DENIED_MESSAGE } from '@/lib/current-location';
 import { buildGoogleMapsDirectionsUrl } from '@/lib/geo';
-import { buildDirectionsDestination, getPlaceMapsUrl } from '@/lib/concierge-links';
+import { buildDirectionsDestination, canOfferDirections, getPlaceMapsUrl } from '@/lib/concierge-links';
 import type { ItineraryItem } from '@/types/plan';
 
 type ItineraryMapActionsProps = {
   item: ItineraryItem;
+  /** Trip destination (e.g. "韓国") — ensures map/direction queries stay scoped to it. */
+  location?: string;
 };
 
 async function openGoogleMapsUrl(url: string): Promise<void> {
   await Linking.openURL(url);
 }
 
-export function ItineraryMapActions({ item }: ItineraryMapActionsProps) {
-  const { location, fetchLocation } = useUserLocation();
+export function ItineraryMapActions({ item, location }: ItineraryMapActionsProps) {
+  const { location: currentLocation, fetchLocation } = useUserLocation();
   const [directionsError, setDirectionsError] = useState<string | null>(null);
   const [isDirectionsLoading, setIsDirectionsLoading] = useState(false);
 
-  const destination = buildDirectionsDestination(item);
+  const destination = buildDirectionsDestination(item, location);
+  const showDirections = canOfferDirections(item);
 
   const handleOpenPlace = () => {
     setDirectionsError(null);
-    void openGoogleMapsUrl(getPlaceMapsUrl(item));
+    void openGoogleMapsUrl(getPlaceMapsUrl(item, location));
   };
 
   const handleDirections = async () => {
     setDirectionsError(null);
 
-    let coords = location;
+    let coords = currentLocation;
 
     if (!coords) {
       setIsDirectionsLoading(true);
@@ -71,19 +74,21 @@ export function ItineraryMapActions({ item }: ItineraryMapActionsProps) {
           onPress={handleOpenPlace}>
           <Text style={styles.buttonText}>📍 Google Mapsで開く</Text>
         </Pressable>
-        <Pressable
-          style={({ pressed }) => [
-            styles.button,
-            styles.buttonSecondary,
-            pressed && styles.pressed,
-            isDirectionsLoading && styles.buttonDisabled,
-          ]}
-          onPress={() => void handleDirections()}
-          disabled={isDirectionsLoading}>
-          <Text style={styles.buttonTextSecondary}>
-            {isDirectionsLoading ? '現在地を取得中...' : '📍 現在地から道案内'}
-          </Text>
-        </Pressable>
+        {showDirections ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.button,
+              styles.buttonSecondary,
+              pressed && styles.pressed,
+              isDirectionsLoading && styles.buttonDisabled,
+            ]}
+            onPress={() => void handleDirections()}
+            disabled={isDirectionsLoading}>
+            <Text style={styles.buttonTextSecondary}>
+              {isDirectionsLoading ? '現在地を取得中...' : '📍 現在地から道案内'}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
       {directionsError ? (
         <AppErrorBanner

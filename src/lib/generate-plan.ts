@@ -63,7 +63,28 @@ import {
 import { formatBudgetAmount, formatBudgetDisplay } from './format-budget';
 import { finalizeItineraryBeforeDisplay } from './finalize-itinerary';
 import { isAbortError } from './plan-generation-progress';
-import { inferCurrencyFromLocation } from './location-currency';
+import {
+  buildDestinationPromptRules,
+  sanitizeItineraryForDestination,
+} from './destination-safety';
+import {
+  buildAccommodationPromptSection,
+  normalizeAccommodationFields,
+} from './accommodation-input';
+import {
+  buildDestinationDetailPromptSection,
+  destinationDetailsToPayload,
+  normalizeDestinationFromDetails,
+  resolveDestinationDetailsFromPlanInput,
+} from './destination-detail-input';
+import { enforceSpecificityOnDays } from './spot-specificity';
+import { validateAndFixItinerarySchedule } from './itinerary-schedule-validation';
+import {
+  buildTripTypePromptSection,
+  resolveTripAudience,
+  sanitizeItineraryTripCopy,
+  sanitizePlanDetailsTripCopy,
+} from './trip-type-copy';
 import {
   APP_MESSAGES,
   AppError,
@@ -87,6 +108,7 @@ import {
 } from './plan-generation-dev-meta';
 import {
   buildDevFallbackTravelPlan,
+  DESTINATION_SAFETY_FALLBACK_NOTICE,
   parseDevFallbackTravelPlanFromApiResponse,
 } from './travel-plan-dev-fallback';
 import { isLightweightMvp, lightweightMvpLog } from './lightweight-mvp';
@@ -479,13 +501,72 @@ const MVP_ITEM_SCHEMA = {
   type: 'object',
   properties: {
     time: { type: 'string', description: 'HH:MM' },
-    title: { type: 'string', description: '実在しそうな具体的なスポット・活動名（日本語）' },
-    area: { type: 'string', description: '具体的なエリア・地区名（日本語）' },
-    description: { type: 'string', description: '1文だけの短い説明（日本語）' },
+    title: {
+      type: 'string',
+      description:
+        '具体的なスポット名を含む活動名（日本語）。例: "広蔵市場でローカルグルメ"。「地元の市場散策」「人気カフェ」のような曖昧な表現は禁止。',
+    },
+    placeName: {
+      type: 'string',
+      description:
+        '実在する具体的な店名・施設名・地名のみ（例: "広蔵市場"）。確信が持てる実在の場所が無い場合は、エリア名（例: "鍾路エリア"）を入れ、店名を創作しないこと。',
+    },
+    area: { type: 'string', description: '具体的なエリア・地区名（日本語）。例: "鍾路 / 広蔵市場"' },
+    category: {
+      type: 'string',
+      enum: ['food', 'cafe', 'sightseeing', 'shopping', 'nightlife', 'activity'],
+      description: 'このスポットの種類。',
+    },
+    popularityType: {
+      type: 'string',
+      enum: ['popular', 'hidden_gem', 'local', 'classic', 'fallback'],
+      description:
+        '人気の定番スポットか、穴場・ローカル向けかの目安。1日の中で popular と hidden_gem/local を混ぜること。',
+    },
+    description: { type: 'string', description: 'なぜこの場所を選んだかを1文で（日本語）' },
     estimatedCost: { type: 'string', description: '概算費用。現地通貨で例: 15,000KRW' },
     note: { type: 'string', description: '移動・注意点などの短い補足。無ければ空文字' },
+    mapsQuery: {
+      type: 'string',
+      description:
+        'Google Maps検索用クエリ。必ず目的地の都市名と国名（英語）を含めること。例: "Gwangjang Market Seoul Korea"。"local market"のような曖昧な語だけは禁止。',
+    },
+    socialQuery: {
+      type: 'string',
+      description:
+        'Instagram/TikTok風の検索クエリ（英語）。例: "Gwangjang Market Seoul food"。空の場合はmapsQueryと同じ内容でよい。',
+    },
+    isSpecificPlace: {
+      type: 'boolean',
+      description: 'placeNameが実在する具体的な1つの場所を指す場合はtrue。抽象的な内容（エリア散策など）ならfalse。',
+    },
+    confidence: {
+      type: 'string',
+      enum: ['high', 'medium', 'low'],
+      description: 'placeNameが実在すると確信できる度合い。確信が低い場合はlowにし、isSpecificPlace=falseにすること。',
+    },
+    source: {
+      type: 'string',
+      enum: ['seed', 'openai', 'google_places_later', 'fallback'],
+      description: 'このスポット名の由来。通常は openai。',
+    },
   },
-  required: ['time', 'title', 'area', 'description', 'estimatedCost', 'note'],
+  required: [
+    'time',
+    'title',
+    'placeName',
+    'area',
+    'category',
+    'popularityType',
+    'description',
+    'estimatedCost',
+    'note',
+    'mapsQuery',
+    'socialQuery',
+    'isSpecificPlace',
+    'confidence',
+    'source',
+  ],
   additionalProperties: false,
 } as const;
 
@@ -539,10 +620,37 @@ function buildMvpPlanJsonSchema(dayCount: number, itemsMin: number, itemsMax: nu
 }
 
 const MVP_SYSTEM_PROMPT =
-  'あなたは旅行プランナーです。指定条件に厳密に従い、実行可能な日別旅行プランのみをJSONで作成してください。' +
+  'あなたは世界中どの目的地にも対応する旅行プランナーです。指定条件に厳密に従い、実行可能な日別旅行プランのみをJSONで作成してください。' +
   '1日目は到着時刻以降から開始し、最終日は出発時刻の2〜3時間前までに終える。中日は朝から夜まで使ってよい。' +
   '各日3〜5件とし、食事・移動・休憩を自然に含め、同一エリア内で無理のない移動距離にすること。' +
+  '【destination lock・最重要】You must only suggest places inside the requested destination. Never mix another city, country, or region — 指定された目的地（都市・国・地域）以外のスポットは一切禁止。これは日本国内の地方都市（例: 福岡、札幌、金沢など）や、海外の小都市・馴染みの薄い場所にも同じように適用すること。' +
+  'If you are not sure a specific venue exists in the destination, use a general area or activity description instead of a place name. Do not invent fake restaurants or landmarks. 実在するか確信が持てない場合は、架空の店名・施設名を作らず、一般的なエリア表現を使うこと。' +
+  'The plan must be useful even for small towns, local cities, and destinations you are less familiar with — don’t default to famous places from a different location just because you know them better.' +
+  'ユーザーが指定した予算の通貨は必ずそのまま使うこと（Preserve the user\'s selected currency exactly）。目的地が海外でも、ユーザー通貨がJPYならJPYのまま、現地通貨に勝手に変換しないこと。現地通貨の目安が有用な場合はestimatedCostの中で補足程度に触れてもよいが、主要な予算通貨として扱わないこと。' +
+  '【Maps検索クエリ・重要】For every item, provide a mapsQuery that includes the destination city and country (in English), e.g. "Gwangjang Market Seoul Korea" or "Fukuoka Hakata ramen Fukuoka Japan". Do not use vague map queries like "local market" or "cafe" without the destination. Never create a Google Maps query that could resolve near the user\'s current location instead of the requested destination — the mapsQuery must always be scoped to the requested destination. If the item is not a specific, real place (e.g. a general stroll or "explore the area"), set isSpecificPlace to false; otherwise true.' +
+  '【具体的なスポット名・最重要】Prefer specific real places, neighborhoods, markets, restaurants, cafes, landmarks, or streets over vague descriptions. ' +
+  'Avoid vague items like "local restaurant", "traditional food place", "market area", "cafe time", "hidden spot", 「地元の市場散策」「伝統的な韓国料理屋」「人気カフェ」「夜景スポット」「ショッピングエリア」「ローカルグルメ体験」のような曖昧な表現。' +
+  '悪い例: 「地元の市場散策」「人気カフェ」。良い例: 「広蔵市場でローカルグルメ」「聖水洞のカフェ通り」「南山ソウルタワーで夜景」のように、具体的な店名・市場名・エリア名・ランドマーク名をtitleとplaceNameに入れること。' +
+  'If you know a real place, provide it as placeName with a matching mapsQuery. If you are not confident a specific venue exists, do not invent a fake name — use a real, well-known neighborhood/area name instead (set confidence to "low" and isSpecificPlace to false in that case). ' +
+  'Every mapsQuery (and socialQuery) must include the destination city/country. Mix popular/classic spots with local/hidden-gem style areas across the day (popularityType) so the plan doesn\'t read as only tourist staples. ' +
+  'The plan should feel useful enough that a traveler can open Google Maps and go there directly — never rely only on the item title without a specific place or area name behind it.' +
+  '【抽象item禁止・最重要】Do not create vague itinerary items. Avoid items like "local restaurant", "cafe time", "traditional food place", "shopping area", 「明洞で韓国料理」「カフェでデザート」「コリアンBBQランチ」「韓国伝統市場でショッピング」. Prefer specific real places with a placeName the user can navigate to (e.g. "明洞餃子でカルグクス", "広蔵市場でローカルグルメ"). If you are not confident a place exists, set isSpecificPlace=false, confidence="low", and use a real neighborhood/area name — do NOT invent fake restaurants or cafes. The user should be able to open Maps and go there when isSpecificPlace=true. Never mix another city or country.' +
+  '【天気の扱い・重要】No real weather forecast is provided to you for this request. If weather data is unavailable, do not mention rain, snow, wind, or cold nights as facts (e.g. never write things like "雨の可能性があるため" or "夜は冷える可能性があります" without real weather data). Only mention rain gear (umbrella, waterproof shoes, etc.) when weather data explicitly indicates rain — otherwise omit it entirely. If weather is unavailable, base any seasonal remarks only on the season/month/destination (e.g. "7月後半の韓国は暑くなりやすい季節です"), never invent specific weather conditions.' +
+  '【destinationLabel・最重要】When destinationLabel, city, or baseArea are provided in the user prompt, treat destinationLabel as the authoritative destination identity. Never default to country-only scope when a city is specified — lock all spots to that city. When baseArea is set, keep mornings and evenings easy to return to baseArea and cluster nearby neighborhoods on the same day. When accommodation is provided, use it as the daily start/end hub. When arrivalPoint is provided, order day-1 activities starting from arrivalPoint toward baseArea/accommodation. Minimize wasteful round trips. Every mapsQuery must include city/country/baseArea context — do not use country alone when city is known.' +
+  '【宿泊先・重要】When accommodation is provided in the user prompt, treat it as the daily start/end hub (not the user\'s current GPS location). Begin mornings near the accommodation, end evenings where returning is easy, respect arrivalTime on day 1 and departureTime on the last day, and minimize wasteful round trips. Any mapsQuery for the accommodation must include destination city/country.' +
+  '【スケジュール現実性・最重要】Never repeat the same placeName, mapsQuery, or area+category across the whole trip. Night view / 夜景 / タワー夜景 / ライトアップ items must start at 18:30 or later — never schedule "夜景" at 15:00. Day 1 (arrival): max 2–3 light items near baseArea/accommodation after arrivalTime. Middle days: max 4–5 items. Final day: max 0–2 items before departure — if departureTime is set, assume airport/station arrival 2–3 hours before departure; no sightseeing or meals after that cutoff (e.g. 12:00 international flight → only light breakfast + hotel checkout + airport transfer). Leave 30–60 min travel/rest buffer between items. Do not repeat the same experience type across multiple days.' +
+  '【tripType・重要】Recommendation reasons (description), highlights, and planner copy MUST match the selected companion/tripType. Do NOT mention dating/couples on family trips. Do NOT mention family/kids on solo trips. Do NOT mention first dates unless companion is 初デート or plan is デートプラン. Feedback-style wording must also match tripType.' +
   '説明は短く簡潔にし、指定されたJSONスキーマの項目以外は出力しないこと。isFallbackは常にfalseにすること。';
+
+function buildPlanDetailDestinationFields(input: PlanInput): Partial<PlanDetails> {
+  const destinationDetails = resolveDestinationDetailsFromPlanInput(input);
+  return {
+    ...destinationDetailsToPayload(destinationDetails),
+    ...normalizeAccommodationFields(
+      input.accommodation ?? input.accommodationArea ?? input.accommodationName,
+    ),
+  };
+}
 
 function buildMvpUserPrompt(input: PlanInput): string {
   const durationConfig = resolveDurationConfig(input.tripDuration, input.customDuration);
@@ -552,9 +660,28 @@ function buildMvpUserPrompt(input: PlanInput): string {
   const interests = [input.travelPurpose, input.travelIntent, input.mustVisitPlaces]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value));
+  const destinationDetails = resolveDestinationDetailsFromPlanInput(input);
+  const normalized = normalizeDestinationFromDetails(destinationDetails);
+  const destinationRules = buildDestinationPromptRules(normalized);
+  const destinationDetailSection = buildDestinationDetailPromptSection(destinationDetails);
+  const accommodationSection = buildAccommodationPromptSection(
+    normalizeAccommodationFields(input.accommodation ?? input.accommodationArea),
+    destinationDetails.effectiveLocation || input.location,
+  );
+  const tripAudience = resolveTripAudience({
+    companion: input.companion,
+    planCreationType: input.planCreationType ?? input.planType,
+  });
+  const tripTypeSection = buildTripTypePromptSection(tripAudience, input.companion);
 
   const lines = [
-    `目的地: ${input.location || '未定'}`,
+    destinationDetails.destinationLabel
+      ? `目的地（destinationLabel）: ${destinationDetails.destinationLabel}`
+      : `目的地: ${input.location || '未定'}`,
+    destinationRules || null,
+    destinationDetailSection,
+    accommodationSection,
+    tripTypeSection,
     `期間: ${input.durationLabel ?? input.tripDuration}（${durationConfig.dayCount}日間）`,
     input.departureDate ? `出発日: ${input.departureDate}` : null,
     input.returnDate ? `帰着日: ${input.returnDate}` : null,
@@ -589,14 +716,27 @@ type MvpAiPlanResponse = {
     items: Array<{
       time: string;
       title: string;
+      placeName?: string;
       area: string;
+      category?: string;
+      popularityType?: string;
       description: string;
       estimatedCost?: string;
       note?: string;
+      mapsQuery?: string;
+      socialQuery?: string;
+      isSpecificPlace?: boolean;
+      confidence?: string;
+      source?: string;
     }>;
   }>;
   isFallback?: boolean;
 };
+
+const VALID_ITEM_CATEGORIES = new Set(['food', 'cafe', 'sightseeing', 'shopping', 'nightlife', 'activity']);
+const VALID_POPULARITY_TYPES = new Set(['popular', 'hidden_gem', 'local', 'classic', 'fallback']);
+const VALID_CONFIDENCE_LEVELS = new Set(['high', 'medium', 'low']);
+const VALID_SPOT_SOURCES = new Set(['seed', 'openai', 'google_places_later', 'fallback']);
 
 function parseMvpAiResponse(
   raw: unknown,
@@ -627,8 +767,24 @@ function parseMvpAiResponse(
       activity: item.title,
       reason: item.description,
       placeAddress: item.area,
+      placeName: item.placeName?.trim() || undefined,
+      category: VALID_ITEM_CATEGORIES.has(item.category ?? '')
+        ? (item.category as ItineraryItem['category'])
+        : undefined,
+      popularityType: VALID_POPULARITY_TYPES.has(item.popularityType ?? '')
+        ? (item.popularityType as ItineraryItem['popularityType'])
+        : undefined,
       estimatedCost: item.estimatedCost?.trim() || undefined,
       note: item.note?.trim() || undefined,
+      mapsQuery: item.mapsQuery?.trim() || undefined,
+      socialQuery: item.socialQuery?.trim() || item.mapsQuery?.trim() || undefined,
+      isSpecificPlace: typeof item.isSpecificPlace === 'boolean' ? item.isSpecificPlace : undefined,
+      confidence: VALID_CONFIDENCE_LEVELS.has(item.confidence ?? '')
+        ? (item.confidence as ItineraryItem['confidence'])
+        : undefined,
+      source: VALID_SPOT_SOURCES.has(item.source ?? '')
+        ? (item.source as ItineraryItem['source'])
+        : 'openai',
     })),
   }));
 
@@ -900,15 +1056,18 @@ function logFetchPlanFromAiRawError(error: unknown): void {
       ? (error as Record<string, unknown>)
       : ({} as Record<string, unknown>);
 
-  console.error('[fetchPlanFromAi] RAW ERROR', {
-    name: error instanceof Error ? error.name : record.name,
-    message: error instanceof Error ? error.message : String(error),
-    status: record.status,
-    code: record.code,
-    type: record.type,
-    stack: error instanceof Error ? error.stack : undefined,
-    raw: error,
-  });
+  // AI/network failures here are expected (timeout, 5xx, malformed response) and are handled by
+  // retry + dev fallback plan upstream — never console.error, or Expo/RN Web shows a red screen
+  // even though the app recovers gracefully right after this.
+  if (__DEV__) {
+    console.warn('[fetchPlanFromAi] request failed (will retry or fall back)', {
+      name: error instanceof Error ? error.name : record.name,
+      message: error instanceof Error ? error.message : String(error),
+      status: record.status,
+      code: record.code,
+      type: record.type,
+    });
+  }
 }
 
 function throwOpenAiHttpError(
@@ -917,12 +1076,16 @@ function throwOpenAiHttpError(
   errorBody: string,
   requestUrl?: string,
 ): never {
-  console.error('[fetchPlanFromAi] OpenAI response error', {
-    status,
-    statusText,
-    body: errorBody,
-    requestUrl,
-  });
+  // Expected failure mode (e.g. transient 5xx) — retried or replaced by a dev fallback plan
+  // upstream, so this must never be console.error (would trigger a red screen).
+  if (__DEV__) {
+    console.warn('[fetchPlanFromAi] OpenAI response error (will retry or fall back)', {
+      status,
+      statusText,
+      body: errorBody,
+      requestUrl,
+    });
+  }
   throw new OpenAiRequestError(status, statusText, errorBody, requestUrl);
 }
 
@@ -1008,7 +1171,12 @@ async function fetchPlanFromAi(params: {
 
       const status = lastError instanceof OpenAiRequestError ? lastError.status : undefined;
       const message = lastError instanceof Error ? lastError.message : String(lastError);
-      console.error('[AI] generation failed', { status, message, attempt });
+      // Expected failure mode (timeout/502/network/parse error) — retried or replaced by a dev
+      // fallback plan upstream, so this must stay console.warn (console.error triggers a red
+      // screen in Expo/RN Web even though the app recovers right after this).
+      if (__DEV__) {
+        console.warn('[AI] generation failed (will retry or fall back)', { status, message, attempt });
+      }
 
       if (attempt >= maxAttempts || !isRetryableOpenAiError(lastError)) {
         if (didTimeout() || lastError instanceof AiGenerationTimeoutError) {
@@ -1103,7 +1271,11 @@ async function executePlanFromAiRequest(params: {
   console.log('[TravelPlanSubmit] request URL', requestUrlForLog);
 
   if (useProxy && apiValidation && !apiValidation.ok) {
-    console.error('[TravelPlanSubmit] invalid API request config', apiValidation);
+    // Expected failure mode (bad LAN IP / origin mismatch) — retried or replaced by a dev
+    // fallback plan upstream. Must stay console.warn, not console.error (red screen).
+    if (__DEV__) {
+      console.warn('[TravelPlanSubmit] invalid API request config (will retry or fall back)', apiValidation);
+    }
     throw new PlanGenerationRequestError(
       apiValidation.userMessage ?? APP_MESSAGES.planApiBadOrigin,
       'NETWORK_ERROR',
@@ -1135,14 +1307,16 @@ async function executePlanFromAiRequest(params: {
       });
     }
   } catch (err) {
-    console.error('[TravelPlanSubmit] fetch failed raw', err);
-    console.error('[TravelPlanSubmit] fetch failed details', {
-      name: err instanceof Error ? err.name : undefined,
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-      requestUrl: requestUrlForLog,
-      origin: getWindowOriginForLog(),
-    });
+    // Network failure (Wi-Fi drop, wrong LAN IP, offline) — expected in dev, handled by the dev
+    // fallback plan upstream. Must stay console.warn, not console.error (red screen).
+    if (__DEV__) {
+      console.warn('[TravelPlanSubmit] fetch failed (will retry or fall back)', {
+        name: err instanceof Error ? err.name : undefined,
+        message: err instanceof Error ? err.message : String(err),
+        requestUrl: requestUrlForLog,
+        origin: getWindowOriginForLog(),
+      });
+    }
     logFetchPlanFromAiRawError(err);
     logPlanGenerationError('openai_fetch', err, { requestUrl: requestUrlForLog });
     if (params.planInput.abortSignal?.aborted || (isAbortError(err) && !params.attemptSignal.aborted)) {
@@ -1165,12 +1339,16 @@ async function executePlanFromAiRequest(params: {
 
   if (!response.ok) {
     const text = await response.text();
-    console.error('[TravelPlanSubmit] response not ok', {
-      status: response.status,
-      statusText: response.statusText,
-      text: lightweight ? text.slice(0, 300) : text,
-      requestUrl: requestUrlForLog,
-    });
+    // Expected failure mode (proxy/OpenAI returned non-2xx) — retried or replaced by a dev
+    // fallback plan upstream. Must stay console.warn, not console.error (red screen).
+    if (__DEV__) {
+      console.warn('[TravelPlanSubmit] response not ok (will retry or fall back)', {
+        status: response.status,
+        statusText: response.statusText,
+        text: lightweight ? text.slice(0, 300) : text,
+        requestUrl: requestUrlForLog,
+      });
+    }
     throwOpenAiHttpError(response.status, response.statusText, text, requestUrlForLog);
   }
 
@@ -1186,7 +1364,7 @@ async function executePlanFromAiRequest(params: {
     if (lightweight) {
       const budgetAmount = formatBudgetAmount(params.planInput.budget);
       const budgetDisplay = formatBudgetDisplay(budgetAmount, params.planInput.currency);
-      return parseMvpAiResponse(
+      const mvpPlan = parseMvpAiResponse(
         aiPayload,
         params.tripDuration,
         params.tripDate,
@@ -1195,6 +1373,69 @@ async function executePlanFromAiRequest(params: {
         params.customDuration,
         { display: budgetDisplay },
       );
+
+      const sanitized = sanitizeItineraryForDestination(
+        mvpPlan.days,
+        params.fallbackPlanInput.location,
+      );
+
+      if (sanitized.needsFullFallback) {
+        console.warn('[AI] destination mismatch detected in AI response, using safe fallback plan', {
+          destination: params.fallbackPlanInput.location,
+        });
+        return {
+          ...buildDevFallbackTravelPlan(params.fallbackPlanInput),
+          devFallbackNotice: DESTINATION_SAFETY_FALLBACK_NOTICE,
+        };
+      }
+
+      if (sanitized.wasModified) {
+        console.warn('[AI] replaced out-of-destination items in AI response with safe alternatives', {
+          destination: params.fallbackPlanInput.location,
+        });
+      }
+
+      const finalDays = enforceSpecificityOnDays(
+        sanitized.days,
+        params.fallbackPlanInput.location,
+      );
+
+      const destinationDetails = resolveDestinationDetailsFromPlanInput(params.fallbackPlanInput);
+      const scheduled = validateAndFixItinerarySchedule({
+        days: finalDays,
+        rawLocation: params.fallbackPlanInput.location,
+        travelTiming: params.planInput.travelTiming,
+        destinationDetails,
+      });
+
+      if (__DEV__ && scheduled.fixesApplied.length > 0) {
+        console.warn('[Itinerary] schedule validation applied fixes', {
+          fixes: scheduled.fixesApplied.slice(0, 8),
+          issues: scheduled.issuesFound.slice(0, 8),
+        });
+      }
+
+      const tripAudience = resolveTripAudience({
+        companion: params.planInput.companion,
+        planCreationType:
+          params.planInput.planCreationType ?? params.planInput.planType,
+      });
+      const tripCopy = sanitizeItineraryTripCopy(scheduled.days, tripAudience);
+      const detailsCopy = sanitizePlanDetailsTripCopy(mvpPlan.details, tripAudience);
+
+      if (__DEV__ && (tripCopy.fixesApplied.length > 0 || detailsCopy.fixesApplied.length > 0)) {
+        console.warn('[Itinerary] tripType copy validation applied fixes', {
+          itemFixes: tripCopy.fixesApplied.slice(0, 6),
+          detailFixes: detailsCopy.fixesApplied.slice(0, 6),
+        });
+      }
+
+      return {
+        ...mvpPlan,
+        days: tripCopy.days,
+        items: flattenItineraryDays(tripCopy.days),
+        details: detailsCopy.details,
+      };
     }
     return parseAiResponse(
       aiPayload,
@@ -1484,10 +1725,9 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     console.log('[TravelPlanSubmit] continuing generation');
   }
 
-  const resolvedCurrency =
-    realPlaces?.inferredCurrency ??
-    inferCurrencyFromLocation(locationTrimmed) ??
-    input.currency;
+  // The user's own currency selection is always authoritative — never silently swapped for a
+  // destination-guessed currency (e.g. picking JPY for a Korea trip must stay JPY, not become KRW).
+  const resolvedCurrency = input.currency;
 
   const includeAiAdvice = isDateRelatedCompanion(input.companion);
   const isRegenerate = Boolean(input.avoidActivities && input.avoidActivities.length > 0);
@@ -1683,22 +1923,34 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
       },
     };
 
-    plan = await fetchPlanFromAi({
-      apiKey,
-      systemPrompt: `${systemPrompt} 前回のプランは食事偏重だったため、散歩・体験・文化・景色・休憩を増やした人間らしいプランに作り直すこと。`,
-      planInput: rebalanceInput,
-      tripDuration: input.tripDuration,
-      includeAiAdvice,
-      schemaOverrides,
-      customDuration: input.customDuration,
-      tripDate: input.tripDate,
-      tripEndDate: input.tripEndDate,
-      weather,
-    });
+    try {
+      let rebalancedPlan = await fetchPlanFromAi({
+        apiKey,
+        systemPrompt: `${systemPrompt} 前回のプランは食事偏重だったため、散歩・体験・文化・景色・休憩を増やした人間らしいプランに作り直すこと。`,
+        planInput: rebalanceInput,
+        tripDuration: input.tripDuration,
+        includeAiAdvice,
+        schemaOverrides,
+        customDuration: input.customDuration,
+        tripDate: input.tripDate,
+        tripEndDate: input.tripEndDate,
+        weather,
+      });
 
-    if (realPlaces) {
-      plan = attachRealPlaces(plan, realPlaces);
-      plan = applyDuplicateDedupAndEnrich(plan, realPlaces);
+      if (realPlaces) {
+        rebalancedPlan = attachRealPlaces(rebalancedPlan, realPlaces);
+        rebalancedPlan = applyDuplicateDedupAndEnrich(rebalancedPlan, realPlaces);
+      }
+      plan = rebalancedPlan;
+    } catch (err) {
+      // This is a nice-to-have quality improvement on top of an already-usable plan — an
+      // expected AI failure here must fall back to keeping the original plan, not crash the
+      // whole generation flow.
+      if (__DEV__ && isDevFallbackEligibleError(err)) {
+        console.warn('[AI] balance-fix regeneration failed, keeping original plan', err);
+      } else {
+        throw err;
+      }
     }
   }
 
@@ -1735,30 +1987,41 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
         },
       };
 
-      plan = await fetchPlanFromAi({
-        apiKey,
-        systemPrompt: `${systemPrompt} 前回のプラン品質に問題があったため、重複排除・エリア多様性・到着出発時間・体験バランスを改善したプランに作り直すこと。`,
-        planInput: qualityFixInput,
-        tripDuration: input.tripDuration,
-        includeAiAdvice,
-        schemaOverrides,
-        customDuration: input.customDuration,
-        tripDate: input.tripDate,
-        tripEndDate: input.tripEndDate,
-        weather,
-      });
+      try {
+        let fixedPlan = await fetchPlanFromAi({
+          apiKey,
+          systemPrompt: `${systemPrompt} 前回のプラン品質に問題があったため、重複排除・エリア多様性・到着出発時間・体験バランスを改善したプランに作り直すこと。`,
+          planInput: qualityFixInput,
+          tripDuration: input.tripDuration,
+          includeAiAdvice,
+          schemaOverrides,
+          customDuration: input.customDuration,
+          tripDate: input.tripDate,
+          tripEndDate: input.tripEndDate,
+          weather,
+        });
 
-      if (realPlaces) {
-        plan = attachRealPlaces(plan, realPlaces);
-        plan = applyDuplicateDedupAndEnrich(plan, realPlaces);
+        if (realPlaces) {
+          fixedPlan = attachRealPlaces(fixedPlan, realPlaces);
+          fixedPlan = applyDuplicateDedupAndEnrich(fixedPlan, realPlaces);
+        }
+        plan = fixedPlan;
+
+        qualityReport = validateItineraryQuality(plan.days, {
+          travelTiming: input.travelTiming,
+          dayCount: durationConfig.dayCount,
+          gourmetTour,
+        });
+        logItineraryQualityReport(qualityReport);
+      } catch (err) {
+        // Same reasoning as the balance-fix retry above — keep the original plan instead of
+        // crashing when this nice-to-have quality regeneration hits an expected AI failure.
+        if (__DEV__ && isDevFallbackEligibleError(err)) {
+          console.warn('[AI] quality-fix regeneration failed, keeping original plan', err);
+        } else {
+          throw err;
+        }
       }
-
-      qualityReport = validateItineraryQuality(plan.days, {
-        travelTiming: input.travelTiming,
-        dayCount: durationConfig.dayCount,
-        gourmetTour,
-      });
-      logItineraryQualityReport(qualityReport);
     }
   }
 
@@ -1808,68 +2071,86 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   };
 
   const canRunFinalValidation = !input.spontaneous && !input.bestDay;
-  const { plan: finalizedPlan } = await finalizeItineraryBeforeDisplay({
-    plan,
-    realPlaces,
-    travelTiming: input.travelTiming,
-    dayCount: durationConfig.dayCount,
-    gourmetTour,
-    budgetScope: input.budgetScope,
-    location: locationTrimmed,
-    companion: input.companion,
-    outfitStyleMode: input.outfitStyleMode,
-    planCreationType: input.planCreationType,
-    tripDate: input.tripDate,
-    weather: plan.details.weather ?? weather,
-    transportContext,
-    allowAiPartialFix:
-      canRunFinalValidation &&
-      !input.itineraryQualityFix &&
-      !input.itineraryBalanceFix,
-    onPartialRegenerate: canRunFinalValidation
-      ? async (instruction, basePlan) =>
-          runQualityPartialRegeneration({
-            instruction,
-            basePlan,
-            enrichedInput,
-            apiKey,
-            systemPrompt,
-            tripDuration: input.tripDuration,
-            includeAiAdvice,
-            schemaOverrides,
-            customDuration: input.customDuration,
-            tripDate: input.tripDate,
-            tripEndDate: input.tripEndDate,
-            weather,
-            realPlaces,
-            abortSignal: input.abortSignal,
-          })
-      : undefined,
-    onRegenerateDays: canRunFinalValidation
-      ? async (dayNumbers, instruction, basePlan) =>
-          runQualityPartialRegeneration({
-            instruction,
-            basePlan,
-            enrichedInput,
-            apiKey,
-            systemPrompt,
-            tripDuration: input.tripDuration,
-            includeAiAdvice,
-            schemaOverrides,
-            customDuration: input.customDuration,
-            tripDate: input.tripDate,
-            tripEndDate: input.tripEndDate,
-            weather,
-            realPlaces,
-            targetDayNumbers: dayNumbers,
-            abortSignal: input.abortSignal,
-          })
-      : undefined,
-  });
+  // Lightweight/MVP mode intentionally avoids extra AI round-trips for reliability — the AI
+  // partial-fix path below is a nice-to-have quality polish on top of an already-usable plan.
+  const allowAiPartialFix =
+    canRunFinalValidation && !lightweight && !input.itineraryQualityFix && !input.itineraryBalanceFix;
+
+  let finalizedPlan: { days: ItineraryDay[]; details: PlanDetails } = plan;
+  try {
+    const finalizeResult = await finalizeItineraryBeforeDisplay({
+      plan,
+      realPlaces,
+      travelTiming: input.travelTiming,
+      dayCount: durationConfig.dayCount,
+      gourmetTour,
+      budgetScope: input.budgetScope,
+      location: locationTrimmed,
+      companion: input.companion,
+      outfitStyleMode: input.outfitStyleMode,
+      planCreationType: input.planCreationType,
+      tripDate: input.tripDate,
+      weather: plan.details.weather ?? weather,
+      transportContext,
+      allowAiPartialFix,
+      onPartialRegenerate: allowAiPartialFix
+        ? async (instruction, basePlan) =>
+            runQualityPartialRegeneration({
+              instruction,
+              basePlan,
+              enrichedInput,
+              apiKey,
+              systemPrompt,
+              tripDuration: input.tripDuration,
+              includeAiAdvice,
+              schemaOverrides,
+              customDuration: input.customDuration,
+              tripDate: input.tripDate,
+              tripEndDate: input.tripEndDate,
+              weather,
+              realPlaces,
+              abortSignal: input.abortSignal,
+            })
+        : undefined,
+      onRegenerateDays: allowAiPartialFix
+        ? async (dayNumbers, instruction, basePlan) =>
+            runQualityPartialRegeneration({
+              instruction,
+              basePlan,
+              enrichedInput,
+              apiKey,
+              systemPrompt,
+              tripDuration: input.tripDuration,
+              includeAiAdvice,
+              schemaOverrides,
+              customDuration: input.customDuration,
+              tripDate: input.tripDate,
+              tripEndDate: input.tripEndDate,
+              weather,
+              realPlaces,
+              targetDayNumbers: dayNumbers,
+              abortSignal: input.abortSignal,
+            })
+        : undefined,
+    });
+    finalizedPlan = finalizeResult.plan;
+  } catch (err) {
+    // The AI partial-fix inside finalization is a quality polish step — an expected AI failure
+    // here must fall back to the plan as generated, not crash the whole generation flow.
+    if (__DEV__ && isDevFallbackEligibleError(err)) {
+      console.warn('[AI] final quality-fix regeneration failed, using plan without it', err);
+    } else {
+      throw err;
+    }
+  }
 
   return {
     ...finalizedPlan,
     items: flattenItineraryDays(finalizedPlan.days),
+    details: {
+      ...finalizedPlan.details,
+      ...buildPlanDetailDestinationFields(input),
+    },
   };
 }
 

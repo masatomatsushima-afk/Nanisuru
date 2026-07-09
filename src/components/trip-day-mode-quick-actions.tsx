@@ -72,7 +72,7 @@ export function TripDayModeQuickActions({
 
   const openMaps = () => {
     if (!item) return;
-    void openUrl(getPlaceMapsUrl(item));
+    void openUrl(getPlaceMapsUrl(item, location));
   };
 
   const openWebsite = () => {

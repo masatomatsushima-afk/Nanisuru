@@ -27,9 +27,21 @@ import {
 
 import { formatCombinedTravelIntent } from './plan-creation';
 import { resolveTravelPurposeValue } from './travel-purpose';
+import { normalizeAccommodationFields } from './accommodation-input';
+import {
+  destinationDetailsToPayload,
+  resolveDestinationDetails,
+  type ResolvedDestinationDetails,
+} from './destination-detail-input';
 
 export type TravelPlanFormInput = {
+  /** Effective destination label — usually derived from country/city/baseArea. */
   destination: string;
+  /** Optional structured destination fields (MVP text input + suggestion chips). */
+  country?: string;
+  city?: string;
+  baseArea?: string;
+  arrivalPoint?: string;
   tripSchedule: TripScheduleEditorValue;
   arrivalTime?: string;
   departureTime?: string;
@@ -41,6 +53,8 @@ export type TravelPlanFormInput = {
   travelIntent: TravelIntentOption | '';
   travelPurpose?: string | null;
   customPreferences: PlanCustomPreferences;
+  /** Optional accommodation hub — hotel name or area (MVP text input). */
+  accommodation?: string;
 };
 
 export type TravelPlanValidationField =
@@ -115,10 +129,24 @@ export function getTravelPlanDurationMeta(input: TravelPlanFormInput) {
   };
 }
 
+export function resolveTravelPlanDestinationDetails(
+  input: TravelPlanFormInput,
+): ResolvedDestinationDetails {
+  return resolveDestinationDetails({
+    country: input.country,
+    city: input.city,
+    baseArea: input.baseArea,
+    accommodation: input.accommodation,
+    arrivalPoint: input.arrivalPoint,
+    legacyLocation: input.destination,
+  });
+}
+
 export function normalizeTravelPlanFormInput(input: TravelPlanFormInput): NormalizedTravelPlanFormInput {
-  const destination = normalizeUserInput(input.destination);
   const normalizedBudget = normalizeBudgetInput(input.budget);
   const normalizedPeopleCount = normalizePeopleCountInput(input.peopleCount);
+  const destinationDetails = resolveTravelPlanDestinationDetails(input);
+  const destination = destinationDetails.destinationLabel;
 
   const rawArrival = input.arrivalTime?.trim();
   const rawDeparture = input.departureTime?.trim();
@@ -129,9 +157,14 @@ export function normalizeTravelPlanFormInput(input: TravelPlanFormInput): Normal
 
   return {
     ...input,
+    country: destinationDetails.country,
+    city: destinationDetails.city,
+    baseArea: destinationDetails.baseArea,
+    arrivalPoint: destinationDetails.arrivalPoint,
     destination,
     budget: normalizedBudget,
     peopleCount: normalizedPeopleCount,
+    accommodation: normalizeAccommodationFields(input.accommodation).accommodation,
     customPreferences: {
       ...input.customPreferences,
       desiredPlaces: input.customPreferences.desiredPlaces
@@ -160,7 +193,7 @@ export function validateTravelPlanForm(input: TravelPlanFormInput): TravelPlanVa
   const resolved = resolveTravelPlanScheduleFromInput(input);
 
   if (!normalized.destination) {
-    errors.destination = '行き先を入力してください';
+    errors.destination = '国・地域または都市を入力してください';
   }
 
   if (!schedule.departureDate.trim() || !isValidIsoDate(schedule.departureDate)) {
@@ -283,10 +316,13 @@ export function buildTravelPlanSubmitPayload(input: TravelPlanFormInput) {
   const duration = getTravelPlanDurationMeta(input);
   const budgetIncludes = getTravelPlanBudgetIncludes(input);
   const budgetScope = travelBudgetIncludesToBudgetScope(input.budgetIncludes);
+  const accommodationFields = normalizeAccommodationFields(normalized.accommodation);
+  const destinationDetails = resolveTravelPlanDestinationDetails(normalized);
 
   return {
     mode: 'travel' as const,
     destination: normalized.destination,
+    ...destinationDetailsToPayload(destinationDetails),
     departureDate: duration.departureDate,
     returnDate: duration.returnDate,
     durationLabel: duration.durationLabel,
@@ -304,24 +340,38 @@ export function buildTravelPlanSubmitPayload(input: TravelPlanFormInput) {
     companionType: input.companionType,
     travelPurpose,
     customRequest: normalized.customPreferences.desiredPlaces || undefined,
+    ...accommodationFields,
   };
 }
 
 export function applyNormalizedTravelPlanFormState(input: TravelPlanFormInput): {
   location: string;
+  country?: string;
+  city?: string;
+  baseArea?: string;
+  arrivalPoint?: string;
+  destinationLabel: string;
   budget: string;
   people: string;
   arrivalTime?: string;
   departureTime?: string;
   customPreferences: PlanCustomPreferences;
+  accommodation?: string;
 } {
   const normalized = normalizeTravelPlanFormInput(input);
+  const destinationDetails = resolveTravelPlanDestinationDetails(normalized);
   return {
     location: normalized.destination,
+    country: destinationDetails.country,
+    city: destinationDetails.city,
+    baseArea: destinationDetails.baseArea,
+    arrivalPoint: destinationDetails.arrivalPoint,
+    destinationLabel: destinationDetails.destinationLabel,
     budget: normalized.normalizedBudget,
     people: normalized.normalizedPeopleCount,
     arrivalTime: normalized.normalizedArrivalTime,
     departureTime: normalized.normalizedDepartureTime,
     customPreferences: normalized.customPreferences,
+    accommodation: normalized.accommodation,
   };
 }
