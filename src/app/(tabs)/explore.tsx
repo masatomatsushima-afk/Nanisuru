@@ -1,345 +1,136 @@
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import {
-  DiscoverCategoryChips,
-  type DiscoverTopCategoryId,
-} from '@/components/discover/discover-category-chips';
-import { DiscoverCompactPlanCard } from '@/components/discover/discover-compact-plan-card';
-import { DiscoverEmptyState } from '@/components/discover/discover-empty-state';
-import { DiscoverFeaturedRow } from '@/components/discover/discover-featured-row';
-import { DiscoverHeader } from '@/components/discover/discover-header';
-import { DiscoverLocalCompact } from '@/components/discover/discover-local-compact';
-import { DiscoverMemoriesCompact } from '@/components/discover/discover-memories-compact';
-import { DiscoverSearchFilters } from '@/components/discover-search-filters';
-import { LifestyleSectionHeader } from '@/components/ui/lifestyle-section-header';
+import { PremiumCard } from '@/components/ui/premium-card';
 import { ScreenBackground } from '@/components/ui/screen-background';
-import { PrimaryButton } from '@/components/ui/premium-card';
+import { FadeInView } from '@/components/ui/fade-in-view';
 import { NS } from '@/constants/nanisuru-ui';
 import { BottomTabInset, Spacing } from '@/constants/theme';
-import { useAuth } from '@/contexts/auth-context';
-import { useUserLocation } from '@/contexts/user-location-context';
-import { applyDiscoverFilters, countActiveDiscoverFilters } from '@/lib/discover-filters';
-import { loadDiscoverFeed, type DiscoverFeedSection } from '@/lib/discover-feed';
-import { loopTestLogOnce } from '@/lib/loop-test-config';
-import {
-  filtersForDiscoverCategory,
-  isMemoryCategory,
-} from '@/lib/discover-top-category';
-import { notifyRankingEntries } from '@/lib/notifications';
-import { safeKey, safeText } from '@/lib/safe-text';
-import {
-  DEFAULT_DISCOVER_FILTERS,
-  type DiscoverFilterState,
-} from '@/types/discover-filters';
-import type { RankedPublicPlan } from '@/types/discover-ranking';
-import type { PublicPlan } from '@/types/public-plan';
+import { LOOP_TEST_RESTORE, loopTestLogOnce } from '@/lib/loop-test-config';
+import { getVisualPresetFromSeed } from '@/lib/visual-placeholders';
 
-function samePublicPlans(left: PublicPlan[], right: PublicPlan[]): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+const MVP_NOTICE = '人気プランや投稿機能は今後アップデート予定です';
+
+type StaticDiscoverCard = {
+  id: string;
+  title: string;
+  destination: string;
+  tags: string[];
+  category: string;
+  emoji: string;
+};
+
+const STATIC_IDEAS: StaticDiscoverCard[] = [
+  {
+    id: 'mvp-korea-food',
+    title: '韓国グルメ旅',
+    destination: 'ソウル',
+    tags: ['グルメ', '韓国'],
+    category: 'food',
+    emoji: '🍜',
+  },
+  {
+    id: 'mvp-osaka-cafe',
+    title: '大阪カフェ巡り',
+    destination: '大阪',
+    tags: ['カフェ', '散策'],
+    category: 'cafe',
+    emoji: '☕️',
+  },
+  {
+    id: 'mvp-tokyo-date',
+    title: '東京デートプラン',
+    destination: '東京',
+    tags: ['デート', '定番'],
+    category: 'date',
+    emoji: '💑',
+  },
+];
+
+function DiscoverIdeaCard({ item }: { item: StaticDiscoverCard }) {
+  const preset = getVisualPresetFromSeed(item.id, item.category);
+
+  return (
+    <PremiumCard style={styles.ideaCard}>
+      <View
+        style={[
+          styles.cover,
+          {
+            backgroundColor: preset.gradientStart,
+            borderBottomColor: preset.gradientEnd,
+          },
+        ]}>
+        <Text style={styles.coverEmoji}>{item.emoji}</Text>
+      </View>
+      <View style={styles.ideaBody}>
+        <Text style={styles.ideaTitle}>{item.title}</Text>
+        <Text style={styles.ideaDestination}>📍 {item.destination}</Text>
+        <View style={styles.tagRow}>
+          {item.tags.map((tag) => (
+            <View key={`${item.id}-${tag}`} style={styles.tagBadge}>
+              <Text style={styles.tagText}>#{tag}</Text>
+            </View>
+          ))}
+        </View>
+        <Text style={styles.comingSoon}>詳細は準備中</Text>
+      </View>
+    </PremiumCard>
+  );
 }
 
-function sameFeedSections(left: DiscoverFeedSection[], right: DiscoverFeedSection[]): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function sameTrending(left: RankedPublicPlan[], right: RankedPublicPlan[]): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-export default function DiscoverScreen() {
-  loopTestLogOnce('restore:Discover', 'restoring Discover');
-
+// MVP static screen only: no Supabase / OpenAI calls, no fetch, no useEffect on mount.
+function DiscoverMvpScreen() {
   const insets = useSafeAreaInsets();
-  const { isConfigured, session } = useAuth();
-  const { location, fetchLocation } = useUserLocation();
-  const currentUserId = session?.user.id ?? null;
-  const scrollRef = useRef<ScrollView>(null);
-  const memoriesAnchorY = useRef(0);
-  const didFetchLocationRef = useRef(false);
-
-  const [allPlans, setAllPlans] = useState<PublicPlan[]>([]);
-  const [feedSections, setFeedSections] = useState<DiscoverFeedSection[]>([]);
-  const [fromMock, setFromMock] = useState(false);
-  const [filters, setFilters] = useState<DiscoverFilterState>(DEFAULT_DISCOVER_FILTERS);
-  const [topCategory, setTopCategory] = useState<DiscoverTopCategoryId>('recommend');
-  const [trending, setTrending] = useState<RankedPublicPlan[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showSearch, setShowSearch] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
-
-  const areaHint = safeText(location?.city ?? location?.label);
-
-  const displayedPlans = useMemo(
-    () => applyDiscoverFilters(allPlans, filters),
-    [allPlans, filters],
-  );
-
-  const hasActiveFilters = countActiveDiscoverFilters(filters) > 0;
-  const showMemoriesSection = isMemoryCategory(topCategory);
-
-  const loadInFlightRef = useRef(false);
-
-  const loadPlans = useCallback(
-    async (refresh = false) => {
-      if (loadInFlightRef.current && !refresh) return;
-      loadInFlightRef.current = true;
-
-      if (refresh) setIsRefreshing((prev) => (prev ? prev : true));
-      else setIsLoading((prev) => (prev ? prev : true));
-      setError((prev) => (prev ? null : prev));
-
-      try {
-        const feed = await loadDiscoverFeed(undefined, null);
-        setAllPlans((prev) => (samePublicPlans(prev, feed.plans) ? prev : feed.plans));
-        setFeedSections((prev) =>
-          sameFeedSections(prev, feed.sections) ? prev : feed.sections,
-        );
-        setFromMock((prev) => (prev === feed.fromMock ? prev : feed.fromMock));
-        setTrending((prev) => (sameTrending(prev, feed.trending) ? prev : feed.trending));
-        if (currentUserId) {
-          void notifyRankingEntries(
-            feed.trending.map((item) => ({ plan: item.plan, rank: item.rank })),
-          );
-        }
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : '公開プランの取得に失敗しました';
-        setError((prev) => (prev === message ? prev : message));
-        setAllPlans((prev) => (prev.length === 0 ? prev : []));
-        setFeedSections((prev) => (prev.length === 0 ? prev : []));
-        setTrending((prev) => (prev.length === 0 ? prev : []));
-      } finally {
-        loadInFlightRef.current = false;
-        setIsLoading((prev) => (prev ? false : prev));
-        setIsRefreshing((prev) => (prev ? false : prev));
-      }
-    },
-    [currentUserId],
-  );
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!didFetchLocationRef.current) {
-        didFetchLocationRef.current = true;
-        void fetchLocation();
-      }
-      void loadPlans();
-    }, [fetchLocation, loadPlans]),
-  );
-
-  const handleTopCategoryChange = (categoryId: DiscoverTopCategoryId) => {
-    setTopCategory(categoryId);
-    setFilters(filtersForDiscoverCategory(categoryId));
-    if (isMemoryCategory(categoryId)) {
-      requestAnimationFrame(() => {
-        scrollRef.current?.scrollTo({
-          y: Math.max(memoriesAnchorY.current - Spacing.four, 0),
-          animated: true,
-        });
-      });
-    }
-  };
-
-  const renderBody = () => {
-    if (isLoading) {
-      return (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={NS.colors.accent} />
-          <Text style={styles.loadingText}>読み込み中…</Text>
-        </View>
-      );
-    }
-
-    if (error) {
-      return (
-        <DiscoverEmptyState
-          emoji="⚠️"
-          title="読み込みに失敗しました"
-          description={error}
-          buttonLabel="もう一度試す"
-          onAction={() => void loadPlans()}
-        />
-      );
-    }
-
-    if (allPlans.length === 0) {
-      return (
-        <>
-          <DiscoverEmptyState
-            title="まだ投稿がありません"
-            description="最初のおすすめプランを投稿してみませんか？"
-            buttonLabel="投稿する"
-            onAction={() => {
-              if (!session) router.push('/login');
-              else router.push('/(tabs)');
-            }}
-          />
-          <DiscoverLocalCompact
-            isConfigured={isConfigured}
-            isLoggedIn={Boolean(session)}
-            areaHint={areaHint || undefined}
-            onRequireLogin={() => router.push('/login')}
-          />
-        </>
-      );
-    }
-
-    return (
-      <>
-        {fromMock ? (
-          <View style={styles.mockNotice}>
-            <Text style={styles.mockNoticeText}>
-              サンプルデータを表示しています。公開プランを投稿すると、ここに表示されます。
-            </Text>
-          </View>
-        ) : null}
-
-        {!showMemoriesSection ? (
-          <>
-            <DiscoverFeaturedRow trending={trending} />
-
-            {feedSections.map((section, sectionIndex) => (
-              <View
-                key={safeKey(section.id, `discover-section-${sectionIndex}`)}
-                style={styles.section}>
-                <LifestyleSectionHeader title={safeText(section.title)} />
-                <View style={styles.feedGrid}>
-                  {section.plans.map((plan, index) => (
-                    <DiscoverCompactPlanCard
-                      key={`${safeKey(section.id, 'section')}-${safeKey(plan.id, `plan-${index}`)}-${index}`}
-                      plan={plan}
-                      variant="grid"
-                      colorIndex={index}
-                      onPress={() => router.push(`/public-plan/${safeText(plan.id)}`)}
-                      onCreatorPress={() =>
-                        router.push(`/creator/${safeText(plan.userId)}`)
-                      }
-                    />
-                  ))}
-                </View>
-              </View>
-            ))}
-
-            {hasActiveFilters ? (
-              <View style={styles.section}>
-                <LifestyleSectionHeader
-                  title="検索結果"
-                  subtitle={`${displayedPlans.length}件のプラン`}
-                />
-                {displayedPlans.length === 0 ? (
-                  <DiscoverEmptyState
-                    emoji="🔍"
-                    title="条件に合うプランがありません"
-                    description="フィルターを変えて、もう一度探してみてください。"
-                    buttonLabel="フィルターをリセット"
-                    onAction={() => setFilters(DEFAULT_DISCOVER_FILTERS)}
-                  />
-                ) : (
-                  <View style={styles.feedGrid}>
-                    {displayedPlans.map((plan, index) => (
-                      <DiscoverCompactPlanCard
-                        key={`search-${safeKey(plan.id, `plan-${index}`)}-${index}`}
-                        plan={plan}
-                        variant="grid"
-                        colorIndex={index}
-                        onPress={() => router.push(`/public-plan/${safeText(plan.id)}`)}
-                        onCreatorPress={() =>
-                          router.push(`/creator/${safeText(plan.userId)}`)
-                        }
-                      />
-                    ))}
-                  </View>
-                )}
-              </View>
-            ) : null}
-          </>
-        ) : null}
-
-        <View
-          onLayout={(event) => {
-            memoriesAnchorY.current = event.nativeEvent.layout.y;
-          }}>
-          <DiscoverMemoriesCompact />
-        </View>
-
-        <DiscoverLocalCompact
-          isConfigured={isConfigured}
-          isLoggedIn={Boolean(session)}
-          areaHint={areaHint || undefined}
-          onRequireLogin={() => router.push('/login')}
-        />
-      </>
-    );
-  };
 
   return (
     <ScreenBackground>
       <ScrollView
-        ref={scrollRef}
         style={styles.container}
         contentContainerStyle={[
           styles.content,
           {
+            paddingTop: insets.top + Spacing.four,
             paddingBottom: insets.bottom + BottomTabInset + Spacing.five,
           },
         ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={() => void loadPlans(true)}
-            tintColor={NS.colors.accent}
-          />
-        }>
-        <DiscoverHeader
-          onSearchPress={() => {
-            setShowSearch((prev) => !prev);
-            if (!showSearch) setShowFilters(false);
-          }}
-          onFilterPress={() => {
-            setShowFilters((prev) => !prev);
-            if (!showFilters) setShowSearch(false);
-          }}
-          filterActive={hasActiveFilters || showFilters}
-          isLoggedIn={Boolean(session)}
-          onRequireLogin={() => router.push('/login')}
-        />
-
-        <DiscoverCategoryChips activeId={topCategory} onChange={handleTopCategoryChange} />
-
-        {showSearch || showFilters ? (
-          <View style={styles.filtersWrap}>
-            <DiscoverSearchFilters value={filters} onChange={setFilters} />
+        showsVerticalScrollIndicator={false}>
+        <FadeInView>
+          <Text style={styles.eyebrow}>✨ DISCOVER</Text>
+          <Text style={styles.title}>発見</Text>
+          <Text style={styles.subtitle}>みんなの旅行アイデアを見つけよう</Text>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>MVP準備中</Text>
           </View>
-        ) : null}
+        </FadeInView>
 
-        {renderBody()}
-
-        {allPlans.length > 0 ? (
-          <View style={styles.bottomCta}>
-            <PrimaryButton
-              label="自分だけのプランを作る"
-              onPress={() => router.push('/(tabs)')}
-              variant="warm"
-            />
+        <FadeInView delay={60}>
+          <Text style={styles.sectionLabel}>旅行アイデア</Text>
+          <View style={styles.cardList}>
+            {STATIC_IDEAS.map((item) => (
+              <DiscoverIdeaCard key={item.id} item={item} />
+            ))}
           </View>
-        ) : null}
+        </FadeInView>
+
+        <FadeInView delay={120}>
+          <PremiumCard variant="flat" style={styles.noticeCard}>
+            <Text style={styles.noticeText}>{MVP_NOTICE}</Text>
+          </PremiumCard>
+        </FadeInView>
       </ScrollView>
     </ScreenBackground>
   );
+}
+
+export default function DiscoverScreen() {
+  if (LOOP_TEST_RESTORE.screenExplore) {
+    loopTestLogOnce('restore:Discover', 'restoring Discover');
+    const DiscoverScreenReal = require('@/archive/loop-test/tabs/explore.real').default;
+    return <DiscoverScreenReal />;
+  }
+
+  loopTestLogOnce('screen:Discover', 'MVP static discover screen');
+  return <DiscoverMvpScreen />;
 }
 
 const styles = StyleSheet.create({
@@ -352,42 +143,105 @@ const styles = StyleSheet.create({
     maxWidth: NS.layout.maxWidth,
     width: '100%',
     alignSelf: 'center',
+  },
+  eyebrow: {
+    color: NS.colors.accent,
+    ...NS.typography.eyebrow,
+    marginBottom: Spacing.two,
+  },
+  title: {
+    color: NS.colors.text,
+    ...NS.typography.title,
+    marginBottom: Spacing.two,
+  },
+  subtitle: {
+    color: NS.colors.textSecondary,
+    ...NS.typography.bodySm,
+    marginBottom: Spacing.three,
+  },
+  badge: {
+    alignSelf: 'flex-start',
+    backgroundColor: NS.colors.warningSoft,
+    borderRadius: NS.radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.25)',
+    marginBottom: Spacing.five,
+  },
+  badgeText: {
+    color: NS.colors.warning,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  sectionLabel: {
+    color: NS.colors.text,
+    ...NS.typography.titleSm,
+    marginBottom: Spacing.three,
+  },
+  cardList: {
     gap: Spacing.three,
+    marginBottom: Spacing.four,
   },
-  filtersWrap: {
-    marginTop: -Spacing.one,
+  ideaCard: {
+    overflow: 'hidden',
+    padding: 0,
   },
-  loadingWrap: {
-    alignItems: 'center',
-    paddingVertical: Spacing.six,
-    gap: Spacing.two,
+  cover: {
+    height: 120,
+    alignItems: 'flex-end',
+    justifyContent: 'flex-end',
+    padding: Spacing.three,
+    borderBottomWidth: 4,
   },
-  loadingText: {
+  coverEmoji: {
+    fontSize: 32,
+  },
+  ideaBody: {
+    padding: Spacing.three,
+    gap: Spacing.one,
+  },
+  ideaTitle: {
+    color: NS.colors.text,
+    fontSize: 17,
+    fontWeight: '900',
+    letterSpacing: -0.2,
+  },
+  ideaDestination: {
     color: NS.colors.textSecondary,
     fontSize: 13,
+    fontWeight: '600',
   },
-  section: {
-    gap: Spacing.two,
-  },
-  mockNotice: {
-    backgroundColor: NS.colors.yellowSoft,
-    borderRadius: NS.radius.lg,
-    padding: Spacing.three,
-  },
-  mockNoticeText: {
-    color: NS.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  feedGrid: {
+  tagRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.one,
+    gap: Spacing.one,
+    marginTop: Spacing.one,
   },
-  bottomCta: {
-    marginTop: Spacing.two,
-    paddingHorizontal: Spacing.one,
+  tagBadge: {
+    backgroundColor: NS.colors.accentSoft,
+    borderRadius: NS.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  tagText: {
+    color: NS.colors.accent,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  comingSoon: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: Spacing.one,
+  },
+  noticeCard: {
+    marginBottom: Spacing.four,
+  },
+  noticeText: {
+    color: NS.colors.textMuted,
+    ...NS.typography.bodySm,
+    textAlign: 'center',
+    lineHeight: 22,
   },
 });

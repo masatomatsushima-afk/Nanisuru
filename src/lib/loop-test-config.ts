@@ -21,7 +21,8 @@ export const LOOP_TEST_RESTORE = {
 
   /** B. Tab screens — enable one at a time */
   screenHome: true,
-  screenExplore: true,
+  /** Discover tab — set true only to bisect Supabase-backed explore.real */
+  screenExplore: false,
   screenFavorites: true,
   /** Saved trips tab — set true only to bisect Supabase-backed favorites.real */
   savedTripsReal: false,
