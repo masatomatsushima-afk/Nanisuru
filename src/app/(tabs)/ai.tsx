@@ -14,7 +14,11 @@ const CAN_DO_ITEMS = [
   { icon: '☔️', label: '雨の日プランの提案' },
   { icon: '💰', label: '予算に合わせた調整' },
   { icon: '📍', label: '近くの候補探し' },
+  { icon: '✏️', label: '予定の一部変更' },
 ] as const;
+
+const MVP_NOTICE =
+  '今は旅行プラン作成を優先しています。旅行秘書機能は今後アップデート予定です。';
 
 // MVP static screen only: no OpenAI / Supabase calls, no fetch, no useEffect on mount.
 function TravelSecretaryMvpScreen() {
@@ -57,13 +61,17 @@ function TravelSecretaryMvpScreen() {
 
         <FadeInView delay={120}>
           <PremiumCard variant="flat" style={styles.noticeCard}>
-            <Text style={styles.noticeText}>今は旅行プラン作成を優先しています</Text>
+            <Text style={styles.noticeText}>{MVP_NOTICE}</Text>
           </PremiumCard>
         </FadeInView>
 
         <FadeInView delay={160}>
           <View style={styles.buttonWrap}>
-            <PrimaryButton label="プランを作る" onPress={() => router.push('/(tabs)')} />
+            <PrimaryButton
+              label="プランを作る"
+              onPress={() => router.push('/(tabs)')}
+            />
+            <Text style={styles.buttonHint}>ホームの「旅行プラン」から作成できます</Text>
           </View>
         </FadeInView>
       </ScrollView>
@@ -157,5 +165,12 @@ const styles = StyleSheet.create({
   },
   buttonWrap: {
     marginTop: Spacing.two,
+    gap: Spacing.two,
+  },
+  buttonHint: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });
