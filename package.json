@@ -44,6 +44,7 @@
   },
   "scripts": {
     "start": "expo start",
+    "dev:phone": "expo start --web --host lan --clear --port 8091",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
