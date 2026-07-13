@@ -51,8 +51,8 @@ export const LOOP_TEST_RESTORE = {
   homeSectionDiscoverPreview: true,
   homeSectionPreferenceCard: true,
 
-  /** C. Custom bottom nav — enable last */
-  customTabBar: false,
+  /** C. Custom bottom nav — Nanisuru pill tab bar (emoji icons, no SymbolView on web) */
+  customTabBar: true,
 
   /** Maps to src/lib/preferences-disabled.ts — no React provider exists */
   preferencesIo: false,

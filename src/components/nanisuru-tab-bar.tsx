@@ -1,70 +1,81 @@
-import { SymbolView, type SymbolViewProps } from 'expo-symbols';
 import { memo, useCallback, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { BottomTabBarProps } from 'expo-router/build/react-navigation/bottom-tabs';
 
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
+import { safeText } from '@/lib/safe-text';
 
 type TabMeta = {
   label: string;
-  symbolName: SymbolViewProps['name'];
-  fallback: string;
+  icon: string;
   activeColor: string;
+  activeSoft: string;
 };
 
 const DEFAULT_TAB_META: TabMeta = {
   label: 'タブ',
-  symbolName: { ios: 'circle', android: 'circle', web: 'circle' },
-  fallback: '•',
-  activeColor: NS.colors.orange,
+  icon: '•',
+  activeColor: NS.colors.tabActive,
+  activeSoft: NS.colors.tabActiveSoft,
 };
 
+/** Plain-string route keys only — never derive labels from Symbol or component values. */
 const TAB_ITEMS: Record<string, TabMeta> = {
   index: {
     label: 'ホーム',
-    symbolName: { ios: 'house.fill', android: 'home', web: 'home' },
-    fallback: '🏠',
-    activeColor: '#FB923C',
-  },
-  favorites: {
-    label: '保存',
-    symbolName: { ios: 'bookmark', android: 'bookmark_border', web: 'bookmark_border' },
-    fallback: '📌',
-    activeColor: '#64748B',
+    icon: '🏠',
+    activeColor: NS.colors.orange,
+    activeSoft: NS.colors.orangeSoft,
   },
   explore: {
     label: '発見',
-    symbolName: { ios: 'safari', android: 'explore', web: 'explore' },
-    fallback: '🧭',
-    activeColor: '#64748B',
+    icon: '✨',
+    activeColor: NS.colors.tabActive,
+    activeSoft: NS.colors.tabActiveSoft,
+  },
+  favorites: {
+    label: '保存済み',
+    icon: '📌',
+    activeColor: NS.colors.coral,
+    activeSoft: NS.colors.coralSoft,
   },
   ai: {
     label: '旅行秘書',
-    symbolName: { ios: 'suitcase.fill', android: 'luggage', web: 'luggage' },
-    fallback: '🧳',
-    activeColor: '#64748B',
+    icon: '🧳',
+    activeColor: NS.colors.sky,
+    activeSoft: NS.colors.skySoft,
   },
   profile: {
     label: 'マイページ',
-    symbolName: { ios: 'person', android: 'person', web: 'person' },
-    fallback: '👤',
-    activeColor: '#64748B',
+    icon: '👤',
+    activeColor: NS.colors.purple,
+    activeSoft: NS.colors.purpleSoft,
   },
 };
 
+function resolveTabMeta(routeName: unknown): TabMeta {
+  const key = safeText(routeName);
+  return TAB_ITEMS[key] ?? DEFAULT_TAB_META;
+}
+
+function resolveAccessibilityLabel(
+  descriptorTitle: unknown,
+  meta: TabMeta,
+): string {
+  const fromOptions = safeText(descriptorTitle);
+  return fromOptions || meta.label;
+}
+
 function TabIcon({ meta, focused }: { meta: TabMeta; focused: boolean }) {
-  const tint = focused ? meta.activeColor : '#94A3B8';
+  const tint = focused ? meta.activeColor : NS.colors.textMuted;
 
   return (
-    <SymbolView
-      name={meta.symbolName}
-      size={focused ? 20 : 19}
-      tintColor={tint}
-      fallback={<Text style={[styles.fallbackIcon, { color: tint }]}>{meta.fallback}</Text>}
-    />
+    <Text style={[styles.icon, { color: tint }]} accessibilityElementsHidden importantForAccessibility="no">
+      {meta.icon}
+    </Text>
   );
 }
 
@@ -83,8 +94,7 @@ const TabBarButton = memo(function TabBarButton({
   accessibilityLabel,
   navigation,
 }: TabBarButtonProps) {
-  const activeColor =
-    route.name === 'index' && isFocused ? '#FB923C' : isFocused ? '#475569' : '#94A3B8';
+  const activeColor = isFocused ? meta.activeColor : NS.colors.textMuted;
 
   const onPress = useCallback(() => {
     if (isFocused) return;
@@ -114,13 +124,17 @@ const TabBarButton = memo(function TabBarButton({
       onPress={onPress}
       onLongPress={onLongPress}
       style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
+      {isFocused ? (
+        <View style={[styles.activePill, { backgroundColor: meta.activeSoft }]} />
+      ) : null}
       <TabIcon meta={meta} focused={isFocused} />
       <Text
         style={[styles.label, isFocused && { color: activeColor, fontWeight: '800' }]}
-        numberOfLines={1}>
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.72}>
         {meta.label}
       </Text>
-      {isFocused ? <View style={[styles.activeDot, { backgroundColor: activeColor }]} /> : null}
     </Pressable>
   );
 });
@@ -141,7 +155,8 @@ export const NanisuruTabBar = memo(function NanisuruTabBar({
       <View style={styles.bar}>
         {state.routes.map((route, index) => {
           const isFocused = state.index === index;
-          const meta = TAB_ITEMS[route.name] ?? DEFAULT_TAB_META;
+          const meta = resolveTabMeta(route.name);
+          const descriptor = descriptors[route.key];
 
           return (
             <TabBarButton
@@ -149,7 +164,7 @@ export const NanisuruTabBar = memo(function NanisuruTabBar({
               route={route}
               isFocused={isFocused}
               meta={meta}
-              accessibilityLabel={descriptors[route.key]?.options.title ?? meta.label}
+              accessibilityLabel={resolveAccessibilityLabel(descriptor?.options.title, meta)}
               navigation={navigation}
             />
           );
@@ -173,45 +188,59 @@ const styles = StyleSheet.create({
     paddingHorizontal: NS.layout.screenPadding,
     paddingTop: Spacing.two,
     backgroundColor: 'transparent',
+    pointerEvents: 'box-none',
   },
   bar: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'stretch',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: NS.colors.navBg,
     borderRadius: 28,
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.06)',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 8,
+    borderColor: NS.colors.navBorder,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+      },
+      android: { elevation: 6 },
+      default: {
+        boxShadow: '0 4px 16px rgba(15, 23, 42, 0.08)',
+      },
+    }),
   },
   tab: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 4,
-    paddingHorizontal: 2,
+    paddingHorizontal: 1,
     borderRadius: 20,
     gap: 2,
-    minHeight: 46,
+    minHeight: 48,
+    position: 'relative',
   },
-  tabPressed: { opacity: 0.86 },
-  fallbackIcon: { fontSize: 17, lineHeight: 19 },
+  tabPressed: { opacity: 0.88 },
+  activePill: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: 18,
+    marginHorizontal: 1,
+    marginVertical: 2,
+  },
+  icon: {
+    fontSize: 18,
+    lineHeight: 20,
+  },
   label: {
-    color: '#94A3B8',
-    fontSize: 9.5,
+    color: NS.colors.textMuted,
+    fontSize: 10,
     fontWeight: '600',
-    letterSpacing: -0.2,
-  },
-  activeDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    marginTop: 1,
+    letterSpacing: -0.3,
+    maxWidth: '100%',
+    textAlign: 'center',
   },
 });

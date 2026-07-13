@@ -1,6 +1,6 @@
 import { Tabs } from 'expo-router';
 
-import { NanisuruTabBar } from '@/components/nanisuru-tab-bar';
+import { renderNanisuruTabBar } from '@/components/nanisuru-tab-bar';
 import { LOOP_TEST_RESTORE, loopTestLogOnce } from '@/lib/loop-test-config';
 
 const TAB_SCREEN_OPTIONS = {
@@ -22,7 +22,7 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={TAB_SCREEN_OPTIONS}
-      tabBar={LOOP_TEST_RESTORE.customTabBar ? (props) => <NanisuruTabBar {...props} /> : undefined}>
+      tabBar={LOOP_TEST_RESTORE.customTabBar ? renderNanisuruTabBar : undefined}>
       <Tabs.Screen name="index" options={TAB_INDEX_OPTIONS} />
       <Tabs.Screen name="favorites" options={TAB_FAVORITES_OPTIONS} />
       <Tabs.Screen name="explore" options={TAB_EXPLORE_OPTIONS} />
