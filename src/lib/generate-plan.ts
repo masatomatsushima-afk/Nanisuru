@@ -112,6 +112,7 @@ import {
   parseDevFallbackTravelPlanFromApiResponse,
 } from './travel-plan-dev-fallback';
 import { isLightweightMvp, lightweightMvpLog } from './lightweight-mvp';
+import { fetchPlaceCandidatesForPlanPrompt } from './places/plan-places-candidates';
 import { learnFromCustomPreferences } from './custom-preferences';
 import {
   buildPlanGenerationLogPayload,
@@ -652,7 +653,7 @@ function buildPlanDetailDestinationFields(input: PlanInput): Partial<PlanDetails
   };
 }
 
-function buildMvpUserPrompt(input: PlanInput): string {
+function buildMvpUserPrompt(input: PlanInput, placeCandidatesSection?: string | null): string {
   const durationConfig = resolveDurationConfig(input.tripDuration, input.customDuration);
   const timing = input.travelTiming;
   const earliestStart = getEarliestActivityStartMinutes(timing);
@@ -700,7 +701,11 @@ function buildMvpUserPrompt(input: PlanInput): string {
     interests.length > 0 ? `興味・要望: ${interests.join(' / ')}` : null,
   ].filter((line): line is string => Boolean(line));
 
-  return `${lines.join('\n')}\n\n上記条件・ルールに従い日別の旅行プランのみを作成してください。`;
+  const closing = '上記条件・ルールに従い日別の旅行プランのみを作成してください。';
+  const baseSection = lines.join('\n');
+  return placeCandidatesSection
+    ? `${baseSection}\n\n${placeCandidatesSection}\n\n${closing}`
+    : `${baseSection}\n\n${closing}`;
 }
 
 type MvpAiPlanResponse = {
@@ -1110,8 +1115,12 @@ async function fetchPlanFromAi(params: {
     isTravelPlan && durationConfig.dayCount >= 3 && !params.planInput.spontaneous && !params.planInput.bestDay;
 
   const lightweight = isLightweightMvp();
+  // Google Places 実装が無効（デフォルト）のときは常に null → 既存の生成フローと完全に同じ。
+  const placeCandidates = lightweight
+    ? await fetchPlaceCandidatesForPlanPrompt(params.planInput)
+    : null;
   const userPrompt = lightweight
-    ? buildMvpUserPrompt(params.planInput)
+    ? buildMvpUserPrompt(params.planInput, placeCandidates?.promptSection)
     : buildConciergePrompt(params.planInput);
 
   if (lightweight) {

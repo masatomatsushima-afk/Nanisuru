@@ -65,7 +65,7 @@ export function validatePlacesEnv(): PlacesEnvValidation {
 
   if (mode === 'google' && hasGooglePlacesApiKey) {
     warnings.push(
-      'Google Places プロバイダは未実装です。API キーがあっても外部通信は行いません。',
+      'Google Places モードが有効です。/api/places-search 経由でサーバーからのみ外部通信します。',
     );
   }
 

@@ -15,8 +15,10 @@ export type PlaceCoordinates = {
 };
 
 export type PlacePhotoRef = {
-  /** Place Photos API から生成される参照URL（将来）。 */
+  /** Place Photos API から生成される参照URL（将来、media取得後）。未取得時は空文字。 */
   url: string;
+  /** Google Places の photo resource name（例: "places/ChIJ.../photos/AeJ..."）。まだ media は取得しない。 */
+  name?: string;
   attribution?: string;
 };
 

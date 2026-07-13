@@ -9,7 +9,7 @@ export type PlacesSearchErrorCode =
   | 'disabled'
   | 'invalid_mode'
   | 'missing_api_key'
-  | 'provider_not_implemented'
+  | 'no_candidates'
   | 'search_failed';
 
 export type PlacesSearchResult = {

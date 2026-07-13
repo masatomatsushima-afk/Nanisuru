@@ -67,7 +67,7 @@ export async function runPlacesProviderVerification(): Promise<VerificationRepor
         googleResult != null &&
         googleResult.candidates.length === 0 &&
         (googleResult.errorCode === 'missing_api_key' ||
-          googleResult.errorCode === 'provider_not_implemented'),
+          googleResult.errorCode === 'no_candidates'),
       googleThrew
         ? 'searchPlacesSafe threw'
         : `errorCode=${googleResult?.errorCode}, warning=${googleResult?.warning ?? 'none'}`,

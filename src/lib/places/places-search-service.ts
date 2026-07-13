@@ -41,8 +41,8 @@ export async function searchPlacesSafe(
         return createPlacesSuccessResult({
           provider: provider.providerName,
           candidates: [],
-          warning: 'Google Places provider is not implemented yet. Returning empty candidates.',
-          errorCode: 'provider_not_implemented',
+          warning: 'Google Places returned no candidates for this destination/area.',
+          errorCode: 'no_candidates',
         });
       }
 
