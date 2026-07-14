@@ -1,5 +1,5 @@
 import type { ItineraryItem } from '@/types/plan';
-import { buildGoogleMapsSearchUrl } from '@/lib/geo';
+import { buildGoogleMapsPlaceIdUrl, buildGoogleMapsSearchUrl } from '@/lib/geo';
 import { scopeMapsQueryToLocation } from '@/lib/destination-safety';
 
 export function isValidHttpUrl(value: string | undefined): boolean {
@@ -35,12 +35,22 @@ export function buildDirectionsDestination(item: ItineraryItem, location?: strin
   return scopeMapsQueryToLocation(base, location);
 }
 
+/**
+ * Maps button URL. Prefers a Google Place ID deep link (`query_place_id`) when the item is backed
+ * by a real Places candidate — this is the precise, unambiguous venue link. Falls back to the
+ * existing destination-scoped text search for items without a place_id (unchanged behavior).
+ */
 export function getPlaceMapsUrl(item: ItineraryItem, location?: string): string {
   const website = item.websiteUrl?.trim();
   if (website && isGoogleMapsUrl(website)) {
     return website;
   }
-  return buildGoogleMapsSearchUrl(buildDirectionsDestination(item, location));
+  const destination = buildDirectionsDestination(item, location);
+  const placeId = item.placeId?.trim();
+  if (placeId) {
+    return buildGoogleMapsPlaceIdUrl(placeId, destination);
+  }
+  return buildGoogleMapsSearchUrl(destination);
 }
 
 export function buildReservationSearchUrl(activity: string, location: string): string {

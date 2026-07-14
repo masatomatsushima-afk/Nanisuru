@@ -1,8 +1,8 @@
 /**
  * Server-side Google Places (New) Text Search proxy.
  * API key stays on the server — never sent to the browser.
- * Minimal fields only: place_id / name / rating / address / photo (resource name).
- * レビュー本文・営業時間は取得しない（範囲外）。
+ * Fields: place_id / name / rating / reviewCount(userRatingCount) / address / location / openNow /
+ * primaryType / photo(resource name) — enough to rank+select candidates. レビュー本文は取得しない。
  */
 
 const GOOGLE_PLACES_KEY_PLACEHOLDERS = new Set([
@@ -28,7 +28,11 @@ type GooglePlaceResult = {
   id?: string;
   displayName?: { text?: string };
   rating?: number;
+  userRatingCount?: number;
   formattedAddress?: string;
+  location?: { latitude?: number; longitude?: number };
+  currentOpeningHours?: { openNow?: boolean };
+  primaryType?: string;
   photos?: Array<{ name?: string }>;
 };
 
@@ -36,12 +40,17 @@ type MinimalPlaceCandidate = {
   placeId: string;
   placeName: string;
   rating: number | null;
+  reviewCount: number | null;
   address: string | null;
+  lat: number | null;
+  lng: number | null;
+  isOpenNow: boolean | null;
+  primaryType: string | null;
   photoRef: string | null;
 };
 
 function clampMaxResultCount(value: unknown): number {
-  const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 8;
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 10;
   return Math.min(10, Math.max(1, n));
 }
 
@@ -80,7 +89,9 @@ export async function POST(request: Request): Promise<Response> {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': apiKey,
         'X-Goog-FieldMask':
-          'places.id,places.displayName,places.rating,places.formattedAddress,places.photos',
+          'places.id,places.displayName,places.rating,places.userRatingCount,' +
+          'places.formattedAddress,places.location,places.currentOpeningHours.openNow,' +
+          'places.primaryType,places.photos',
       },
       body: JSON.stringify({ textQuery: query, maxResultCount }),
       signal: controller.signal,
@@ -110,7 +121,15 @@ export async function POST(request: Request): Promise<Response> {
         placeId: place.id as string,
         placeName: place.displayName!.text as string,
         rating: typeof place.rating === 'number' ? place.rating : null,
+        reviewCount: typeof place.userRatingCount === 'number' ? place.userRatingCount : null,
         address: place.formattedAddress?.trim() || null,
+        lat: typeof place.location?.latitude === 'number' ? place.location.latitude : null,
+        lng: typeof place.location?.longitude === 'number' ? place.location.longitude : null,
+        isOpenNow:
+          typeof place.currentOpeningHours?.openNow === 'boolean'
+            ? place.currentOpeningHours.openNow
+            : null,
+        primaryType: place.primaryType?.trim() || null,
         photoRef: place.photos?.[0]?.name?.trim() || null,
       }));
 

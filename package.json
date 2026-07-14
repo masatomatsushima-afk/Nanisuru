@@ -51,7 +51,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "verify:places-ranking": "npx --yes tsx scripts/verify-place-candidate-ranking.ts",
-    "verify:places-provider": "npx --yes tsx scripts/verify-places-provider.ts"
+    "verify:places-provider": "npx --yes tsx scripts/verify-places-provider.ts",
+    "verify:places-enforcement": "npx --yes tsx scripts/verify-place-candidate-enforcement.ts"
   },
   "private": true
 }

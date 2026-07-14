@@ -1,7 +1,7 @@
 import type { PlaceCategory, PopularityType } from '@/lib/destination-safety';
 
-/** Where a spot name came from — designed for future Google Places API swap-in. */
-export type SpotCandidateSource = 'seed' | 'openai' | 'google_places_later' | 'fallback';
+/** Where a spot name came from. `google_places` = confirmed real candidate from Google Places. */
+export type SpotCandidateSource = 'seed' | 'openai' | 'google_places' | 'google_places_later' | 'fallback';
 
 /**
  * A concrete place candidate attached to an itinerary item. Today this is usually a single

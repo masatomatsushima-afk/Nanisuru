@@ -113,6 +113,8 @@ import {
 } from './travel-plan-dev-fallback';
 import { isLightweightMvp, lightweightMvpLog } from './lightweight-mvp';
 import { fetchPlaceCandidatesForPlanPrompt } from './places/plan-places-candidates';
+import { enforcePlaceCandidateSelection } from './places/place-candidate-enforcement';
+import type { PlaceCandidate } from '@/types/place-candidate';
 import { learnFromCustomPreferences } from './custom-preferences';
 import {
   buildPlanGenerationLogPayload,
@@ -551,6 +553,11 @@ const MVP_ITEM_SCHEMA = {
       enum: ['seed', 'openai', 'google_places_later', 'fallback'],
       description: 'このスポット名の由来。通常は openai。',
     },
+    placeId: {
+      type: 'string',
+      description:
+        '候補リスト（JSON、渡されている場合）から店舗を選んだ場合は、そのcandidateの"place_id"を改変せずそのまま入れる。候補リストが渡されていない場合、または候補に該当するものが無い場合は空文字にすること。',
+    },
   },
   required: [
     'time',
@@ -567,6 +574,7 @@ const MVP_ITEM_SCHEMA = {
     'isSpecificPlace',
     'confidence',
     'source',
+    'placeId',
   ],
   additionalProperties: false,
 } as const;
@@ -641,6 +649,7 @@ const MVP_SYSTEM_PROMPT =
   '【宿泊先・重要】When accommodation is provided in the user prompt, treat it as the daily start/end hub (not the user\'s current GPS location). Begin mornings near the accommodation, end evenings where returning is easy, respect arrivalTime on day 1 and departureTime on the last day, and minimize wasteful round trips. Any mapsQuery for the accommodation must include destination city/country.' +
   '【スケジュール現実性・最重要】Never repeat the same placeName, mapsQuery, or area+category across the whole trip. Night view / 夜景 / タワー夜景 / ライトアップ items must start at 18:30 or later — never schedule "夜景" at 15:00. Day 1 (arrival): max 2–3 light items near baseArea/accommodation after arrivalTime. Middle days: max 4–5 items. Final day: max 0–2 items before departure — if departureTime is set, assume airport/station arrival 2–3 hours before departure; no sightseeing or meals after that cutoff (e.g. 12:00 international flight → only light breakfast + hotel checkout + airport transfer). Leave 30–60 min travel/rest buffer between items. Do not repeat the same experience type across multiple days.' +
   '【tripType・重要】Recommendation reasons (description), highlights, and planner copy MUST match the selected companion/tripType. Do NOT mention dating/couples on family trips. Do NOT mention family/kids on solo trips. Do NOT mention first dates unless companion is 初デート or plan is デートプラン. Feedback-style wording must also match tripType.' +
+  '【Google Places候補・絶対厳守】If the user prompt includes a "Google Places候補リスト" JSON array, you are ONLY allowed to name a specific real place (placeName + isSpecificPlace=true) if it is one of the candidates in that JSON array — copy its "name" into placeName exactly and copy its "place_id" into the placeId field exactly, unchanged. Inventing a place name that is not in that list is strictly forbidden when the list is provided. Each place_id may be used at most once across the entire trip — never reuse the same place_id in two different items. If none of the candidates fit an item, do not invent a name — use a generic area description instead (isSpecificPlace=false, placeName describing the area only, placeId as an empty string). When no such JSON list is provided in the user prompt, ignore this rule and follow the normal destination-lock rules above.' +
   '説明は短く簡潔にし、指定されたJSONスキーマの項目以外は出力しないこと。isFallbackは常にfalseにすること。';
 
 function buildPlanDetailDestinationFields(input: PlanInput): Partial<PlanDetails> {
@@ -733,6 +742,7 @@ type MvpAiPlanResponse = {
       isSpecificPlace?: boolean;
       confidence?: string;
       source?: string;
+      placeId?: string;
     }>;
   }>;
   isFallback?: boolean;
@@ -790,6 +800,7 @@ function parseMvpAiResponse(
       source: VALID_SPOT_SOURCES.has(item.source ?? '')
         ? (item.source as ItineraryItem['source'])
         : 'openai',
+      placeId: item.placeId?.trim() || null,
     })),
   }));
 
@@ -1160,6 +1171,7 @@ async function fetchPlanFromAi(params: {
         includeTourSuggestions,
         attemptSignal: signal,
         fallbackPlanInput: params.fallbackPlanInput ?? params.planInput,
+        placeCandidates: placeCandidates?.candidates,
       });
       cleanup();
       console.log('[AI] generation success');
@@ -1220,6 +1232,7 @@ async function executePlanFromAiRequest(params: {
   userPrompt: string;
   includeTourSuggestions: boolean;
   attemptSignal: AbortSignal;
+  placeCandidates?: PlaceCandidate[];
 }): Promise<GeneratedPlan> {
   const lightweight = isLightweightMvp();
   const model = 'gpt-4o-mini';
@@ -1383,8 +1396,20 @@ async function executePlanFromAiRequest(params: {
         { display: budgetDisplay },
       );
 
-      const sanitized = sanitizeItineraryForDestination(
+      // Google Places候補が無い（disabled/mock未使用/google失敗）ときは no-op — 既存動作そのまま。
+      const candidateEnforcement = enforcePlaceCandidateSelection(
         mvpPlan.days,
+        params.placeCandidates ?? [],
+        params.fallbackPlanInput.location,
+      );
+      if (__DEV__ && candidateEnforcement.fixesApplied.length > 0) {
+        console.warn('[Places] candidate selection enforcement applied fixes', {
+          fixes: candidateEnforcement.fixesApplied.slice(0, 8),
+        });
+      }
+
+      const sanitized = sanitizeItineraryForDestination(
+        candidateEnforcement.days,
         params.fallbackPlanInput.location,
       );
 

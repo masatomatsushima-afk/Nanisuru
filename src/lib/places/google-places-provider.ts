@@ -5,10 +5,12 @@
  * - Google への実HTTP通信は必ずサーバー側（`src/app/api/places-search+api.ts`）で行う。
  * - このファイル（クライアント側で実行される）は自社の同一オリジンAPIルートにのみ fetch する。
  *   Google のエンドポイントへ直接通信しない・APIキーを保持しない。
- * - 取得フィールドは place_id / name / rating / address / photo(resource name) のみ。
+ * - 取得フィールドは place_id / name / rating / reviewCount / address / location / openNow /
+ *   category(primaryType) / photo(resource name) のみ。レビュー本文はまだ取得しない。
  * - Web以外（プロキシに到達できない環境）やエラー時は例外を投げず空配列を返す（自動fallback）。
  */
 
+import type { PlaceCategory } from '@/lib/destination-safety';
 import type { PlaceCandidate } from '@/types/place-candidate';
 import type { PlacesProvider, PlaceSearchQuery } from './places-provider';
 
@@ -28,7 +30,12 @@ type PlacesSearchApiCandidate = {
   placeId: string;
   placeName: string;
   rating: number | null;
+  reviewCount: number | null;
   address: string | null;
+  lat: number | null;
+  lng: number | null;
+  isOpenNow: boolean | null;
+  primaryType: string | null;
   photoRef: string | null;
 };
 
@@ -38,6 +45,39 @@ type PlacesSearchApiResponse = {
   errorCode?: string;
   warning?: string;
 };
+
+/** Google Places (New) の primaryType を Nanisuru 内部の PlaceCategory へ変換（不明時は undefined）。 */
+const GOOGLE_TYPE_TO_CATEGORY: Record<string, PlaceCategory> = {
+  restaurant: 'food',
+  meal_takeaway: 'food',
+  meal_delivery: 'food',
+  food: 'food',
+  bakery: 'food',
+  market: 'food',
+  supermarket: 'food',
+  cafe: 'cafe',
+  coffee_shop: 'cafe',
+  bar: 'nightlife',
+  night_club: 'nightlife',
+  tourist_attraction: 'sightseeing',
+  museum: 'sightseeing',
+  park: 'sightseeing',
+  art_gallery: 'sightseeing',
+  historical_landmark: 'sightseeing',
+  place_of_worship: 'sightseeing',
+  amusement_park: 'activity',
+  zoo: 'activity',
+  aquarium: 'activity',
+  shopping_mall: 'shopping',
+  clothing_store: 'shopping',
+  department_store: 'shopping',
+  gift_shop: 'shopping',
+};
+
+function mapPrimaryTypeToCategory(primaryType: string | null): PlaceCategory | undefined {
+  if (!primaryType) return undefined;
+  return GOOGLE_TYPE_TO_CATEGORY[primaryType];
+}
 
 /** destination lock を維持するため、city/country を必ず含む検索文字列を作る。 */
 function buildTextQuery(query: PlaceSearchQuery): string {
@@ -79,7 +119,7 @@ export class GooglePlacesProvider implements PlacesProvider {
         signal: controller.signal,
         body: JSON.stringify({
           query: textQuery,
-          maxResultCount: query.maxResults ?? 8,
+          maxResultCount: query.maxResults ?? 10,
         }),
       });
 
@@ -96,7 +136,15 @@ export class GooglePlacesProvider implements PlacesProvider {
         placeId: candidate.placeId,
         placeName: candidate.placeName,
         rating: candidate.rating,
+        reviewCount: candidate.reviewCount,
         address: candidate.address ?? undefined,
+        coordinates:
+          candidate.lat != null && candidate.lng != null
+            ? { lat: candidate.lat, lng: candidate.lng }
+            : null,
+        openingHours:
+          candidate.isOpenNow != null ? { isOpenNow: candidate.isOpenNow } : undefined,
+        category: mapPrimaryTypeToCategory(candidate.primaryType),
         city: query.city,
         country: query.country,
         area: query.baseArea,

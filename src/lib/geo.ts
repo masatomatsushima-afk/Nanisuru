@@ -41,6 +41,16 @@ export function buildGoogleMapsSearchUrl(placeName: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName)}`;
 }
 
+/**
+ * Google Maps deep link built from a Place ID (Google Places). `fallbackQuery` is required by the
+ * Maps Search URL spec as the visible `query` param even when `query_place_id` is present, and is
+ * also what Maps falls back to if the place_id is ever invalid/stale.
+ */
+export function buildGoogleMapsPlaceIdUrl(placeId: string, fallbackQuery: string): string {
+  const query = encodeURIComponent(fallbackQuery || 'Google Maps');
+  return `https://www.google.com/maps/search/?api=1&query=${query}&query_place_id=${encodeURIComponent(placeId)}`;
+}
+
 export function buildGoogleMapsDirectionsUrl(
   originLatitude: number,
   originLongitude: number,
