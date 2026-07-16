@@ -13,6 +13,7 @@ import type { PlanInput } from '@/lib/prompts';
 import { normalizeAccommodationFields } from '@/lib/accommodation-input';
 import { resolveDestinationDetailsFromPlanInput } from '@/lib/destination-detail-input';
 import type { PlaceCategory } from '@/lib/destination-safety';
+import { resolvePurposeProfile } from '@/lib/purpose-profiles';
 import type { PlaceCandidate } from '@/types/place-candidate';
 import { pickTopPlaceCandidates } from './place-candidate-ranking';
 import type { PlaceRankingContext } from './place-ranking-context';
@@ -22,6 +23,24 @@ import type { PlacesSearchInput } from './places-search-input';
 const MAX_CANDIDATES_FOR_PROMPT = 10;
 
 const ALL_CATEGORIES: PlaceCategory[] = ['food', 'cafe', 'sightseeing', 'shopping', 'nightlife', 'activity'];
+
+/**
+ * 目的（PurposeProfile）が解決できたときは、その配分ルールに登場するカテゴリだけを検索・
+ * ランキング対象にする（= 目的 → 配分ルール → Google Places検索カテゴリ）。解決できない
+ * ときは既存動作のまま全カテゴリを対象にする。
+ */
+function resolveSearchCategories(input: PlanInput): PlaceCategory[] {
+  const profile = resolvePurposeProfile({
+    personality: input.personality,
+    companion: input.companion,
+    mood: input.mood,
+    travelIntent: input.travelIntent,
+    customPreferences: input.customPreferences,
+  });
+  if (!profile) return ALL_CATEGORIES;
+  const categories = Object.keys(profile.allocation) as PlaceCategory[];
+  return categories.length > 0 ? categories : ALL_CATEGORIES;
+}
 
 export type PlanPlaceCandidatesResult = {
   candidates: PlaceCandidate[];
@@ -45,7 +64,7 @@ function buildSearchInputFromPlanInput(input: PlanInput): PlacesSearchInput | nu
     country: destinationDetails.country,
     baseArea,
     accommodation: accommodation.accommodation,
-    categories: ALL_CATEGORIES,
+    categories: resolveSearchCategories(input),
     limit: MAX_CANDIDATES_FOR_PROMPT,
   };
 }
@@ -73,7 +92,8 @@ function toPromptCandidate(candidate: PlaceCandidate): PromptCandidate {
 }
 
 function buildPlaceCandidatesPromptSection(candidates: PlaceCandidate[]): string {
-  const json = JSON.stringify(candidates.map(toPromptCandidate), null, 2);
+  // No pretty-print indentation — same content, meaningfully fewer prompt tokens.
+  const json = JSON.stringify(candidates.map(toPromptCandidate));
 
   return (
     '【Google Places候補リスト・絶対厳守】以下のJSONはGoogle Placesから取得した実在確認済みの候補です。' +
@@ -101,6 +121,15 @@ export async function fetchPlaceCandidatesForPlanPrompt(
     if (!searchInput) return EMPTY_RESULT;
 
     const result = await searchPlacesSafe(searchInput);
+    if (__DEV__) {
+      // Dev-only diagnostic (no secrets): which provider actually ran, and what it returned.
+      console.log('[Places] searchPlacesSafe result', {
+        provider: result.provider,
+        ok: result.ok,
+        errorCode: result.errorCode ?? null,
+        candidateCount: result.candidates.length,
+      });
+    }
     if (!result.ok || result.candidates.length === 0) {
       return EMPTY_RESULT;
     }
@@ -111,7 +140,7 @@ export async function fetchPlaceCandidatesForPlanPrompt(
       country: searchInput.country,
       baseArea: searchInput.baseArea,
       accommodation: searchInput.accommodation,
-      categories: ALL_CATEGORIES,
+      categories: searchInput.categories ?? ALL_CATEGORIES,
       preferOpenNow: true,
     };
 

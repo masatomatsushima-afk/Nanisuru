@@ -43,7 +43,8 @@ export function getPlacesModeFromEnv(): PlacesMode {
 
 /**
  * Google Places API キーが設定されているか（キー本体は返さない）。
- * サーバー専用 env のみ参照 — クライアント bundle へ露出させない。
+ * サーバー専用 env のみ参照。ブラウザ bundle では undefined になるため、
+ * クライアント側のリクエスト可否判定には使わないこと（/api/places-search 側で検証する）。
  */
 export function isGooglePlacesApiKeyConfigured(): boolean {
   const key = process.env.GOOGLE_PLACES_API_KEY?.trim();

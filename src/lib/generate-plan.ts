@@ -108,12 +108,18 @@ import {
 } from './plan-generation-dev-meta';
 import {
   buildDevFallbackTravelPlan,
+  buildGooglePlacesFallbackTravelPlan,
   DESTINATION_SAFETY_FALLBACK_NOTICE,
   parseDevFallbackTravelPlanFromApiResponse,
 } from './travel-plan-dev-fallback';
 import { isLightweightMvp, lightweightMvpLog } from './lightweight-mvp';
-import { fetchPlaceCandidatesForPlanPrompt } from './places/plan-places-candidates';
+import {
+  fetchPlaceCandidatesForPlanPrompt,
+  type PlanPlaceCandidatesResult,
+} from './places/plan-places-candidates';
 import { enforcePlaceCandidateSelection } from './places/place-candidate-enforcement';
+import { enforcePurposeComposition } from './purpose-composition-enforcement';
+import { buildPurposeCompositionPromptSection, resolvePurposeProfile } from './purpose-profiles';
 import type { PlaceCandidate } from '@/types/place-candidate';
 import { learnFromCustomPreferences } from './custom-preferences';
 import {
@@ -683,6 +689,16 @@ function buildMvpUserPrompt(input: PlanInput, placeCandidatesSection?: string | 
     planCreationType: input.planCreationType ?? input.planType,
   });
   const tripTypeSection = buildTripTypePromptSection(tripAudience, input.companion);
+  const purposeProfile = resolvePurposeProfile({
+    personality: input.personality,
+    companion: input.companion,
+    mood: input.mood,
+    travelIntent: input.travelIntent,
+    customPreferences: input.customPreferences,
+  });
+  const purposeCompositionSection = purposeProfile
+    ? buildPurposeCompositionPromptSection(purposeProfile)
+    : null;
 
   const lines = [
     destinationDetails.destinationLabel
@@ -692,6 +708,7 @@ function buildMvpUserPrompt(input: PlanInput, placeCandidatesSection?: string | 
     destinationDetailSection,
     accommodationSection,
     tripTypeSection,
+    purposeCompositionSection,
     `期間: ${input.durationLabel ?? input.tripDuration}（${durationConfig.dayCount}日間）`,
     input.departureDate ? `出発日: ${input.departureDate}` : null,
     input.returnDate ? `帰着日: ${input.returnDate}` : null,
@@ -1117,6 +1134,13 @@ async function fetchPlanFromAi(params: {
   tripDate: string;
   tripEndDate?: string;
   weather?: WeatherForecast;
+  /**
+   * When provided (by `generatePlanWithAi`, which fetches candidates once up front so the same
+   * result can also be used to build a Google-candidates-based fallback plan if OpenAI fails),
+   * this is used as-is instead of fetching again. `undefined` = fetch internally (existing
+   * behavior, used by the regen/rebalance/quality-fix call sites that don't need the fallback).
+   */
+  placeCandidatesOverride?: PlanPlaceCandidatesResult | null;
 }): Promise<GeneratedPlan> {
   const durationConfig = resolveDurationConfig(params.tripDuration, params.customDuration);
   const isTravelPlan =
@@ -1127,9 +1151,23 @@ async function fetchPlanFromAi(params: {
 
   const lightweight = isLightweightMvp();
   // Google Places 実装が無効（デフォルト）のときは常に null → 既存の生成フローと完全に同じ。
-  const placeCandidates = lightweight
-    ? await fetchPlaceCandidatesForPlanPrompt(params.planInput)
-    : null;
+  const placesFetchStartedAt = Date.now();
+  const placeCandidates =
+    params.placeCandidatesOverride !== undefined
+      ? params.placeCandidatesOverride
+      : lightweight
+        ? await fetchPlaceCandidatesForPlanPrompt(params.planInput)
+        : null;
+  if (__DEV__ && lightweight && params.placeCandidatesOverride === undefined) {
+    // Dev-only diagnostic (no secrets): confirms whether Google Places candidates actually
+    // reached the prompt, and how much latency this step added before the OpenAI call starts.
+    // (When placeCandidatesOverride is passed in, generatePlanWithAi already logged this.)
+    console.log('[Places] candidates for prompt', {
+      placesCandidateCount: placeCandidates?.candidates.length ?? 0,
+      candidatesPassedToPrompt: Boolean(placeCandidates?.promptSection),
+      elapsedMs: Date.now() - placesFetchStartedAt,
+    });
+  }
   const userPrompt = lightweight
     ? buildMvpUserPrompt(params.planInput, placeCandidates?.promptSection)
     : buildConciergePrompt(params.planInput);
@@ -1434,9 +1472,40 @@ async function executePlanFromAiRequest(params: {
         params.fallbackPlanInput.location,
       );
 
+      const purposeProfile = resolvePurposeProfile({
+        personality: params.fallbackPlanInput.personality,
+        companion: params.fallbackPlanInput.companion,
+        mood: params.fallbackPlanInput.mood,
+        travelIntent: params.fallbackPlanInput.travelIntent,
+        customPreferences: params.fallbackPlanInput.customPreferences,
+      });
+      const purposeComposition = enforcePurposeComposition(finalDays, {
+        profile: purposeProfile,
+        selectedMood: params.fallbackPlanInput.mood,
+        candidates: params.placeCandidates ?? [],
+        rawLocation: params.fallbackPlanInput.location,
+      });
+      if (__DEV__) {
+        console.log('[Purpose] composition check', {
+          selectedMood: purposeComposition.selectedMood,
+          purposeId: purposeComposition.purposeId,
+          dominantCategory: purposeComposition.dominantCategory,
+          dominantCategoryItemCount: purposeComposition.dominantCategoryItemCount,
+          totalItemCount: purposeComposition.totalItemCount,
+          dominantCategoryRatio: Math.round(purposeComposition.dominantCategoryRatio * 100) / 100,
+          abstractWalkItemsRemoved: purposeComposition.abstractWalkItemsRemoved,
+          googlePlaceCount: purposeComposition.googlePlaceCount,
+        });
+        if (purposeComposition.fixesApplied.length > 0) {
+          console.warn('[Purpose] composition fixes applied', {
+            fixes: purposeComposition.fixesApplied.slice(0, 8),
+          });
+        }
+      }
+
       const destinationDetails = resolveDestinationDetailsFromPlanInput(params.fallbackPlanInput);
       const scheduled = validateAndFixItinerarySchedule({
-        days: finalDays,
+        days: purposeComposition.days,
         rawLocation: params.fallbackPlanInput.location,
         travelTiming: params.planInput.travelTiming,
         destinationDetails,
@@ -1899,6 +1968,26 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
 
   let plan: GeneratedPlan;
   const aiPlanInput = promptPlanInput ?? enrichedInput;
+  const aiRequestStartedAt = Date.now();
+
+  // Fetched once, up front, so the exact same Google Places result can be used both (a) to build
+  // the OpenAI prompt and (b) — if OpenAI then times out/fails below — to build a fallback plan
+  // from real candidates instead of the generic seed templates.
+  const placesFetchStartedAt = Date.now();
+  const placeCandidatesResult = lightweight
+    ? await fetchPlaceCandidatesForPlanPrompt(aiPlanInput)
+    : null;
+  const placesCandidateCount = placeCandidatesResult?.candidates.length ?? 0;
+  if (__DEV__ && lightweight) {
+    // Dev-only diagnostic (no secrets): confirms whether Google Places candidates actually
+    // reached the prompt, and how much latency this step added before the OpenAI call starts.
+    console.log('[Places] candidates for prompt', {
+      placesCandidateCount,
+      candidatesPassedToPrompt: Boolean(placeCandidatesResult?.promptSection),
+      elapsedMs: Date.now() - placesFetchStartedAt,
+    });
+  }
+
   try {
     plan = await fetchPlanFromAi({
       apiKey,
@@ -1912,11 +2001,33 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
       tripDate: input.tripDate,
       tripEndDate: input.tripEndDate,
       weather,
+      placeCandidatesOverride: placeCandidatesResult,
     });
   } catch (err) {
     if (__DEV__ && isDevFallbackEligibleError(err)) {
-      console.warn('[AI] using dev fallback plan after retries exhausted', err);
-      plan = buildDevFallbackTravelPlan(enrichedInput);
+      const googleCandidates = placeCandidatesResult?.candidates ?? [];
+      const fallbackType: 'google_places' | 'seed' = googleCandidates.length > 0 ? 'google_places' : 'seed';
+      // Dev-only diagnostic: elapsed time helps distinguish a genuine timeout (~20s per
+      // attempt in lightweight mode) from an immediate network/parse failure. No secrets logged.
+      console.warn('[AI] using dev fallback plan after retries exhausted', {
+        errorName: err instanceof Error ? err.name : typeof err,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        elapsedMs: Date.now() - aiRequestStartedAt,
+        fallbackType,
+        placesCandidateCount,
+      });
+      plan =
+        fallbackType === 'google_places'
+          ? buildGooglePlacesFallbackTravelPlan(enrichedInput, googleCandidates)
+          : buildDevFallbackTravelPlan(enrichedInput);
+      if (__DEV__) {
+        const finalGoogleItems = plan.items?.filter((item) => item.source === 'google_places') ?? [];
+        console.log('[AI] fallback plan built', {
+          fallbackType,
+          finalGooglePlaceCount: finalGoogleItems.length,
+          selectedPlaceIds: finalGoogleItems.map((item) => item.placeId).filter(Boolean),
+        });
+      }
     } else {
       throw err;
     }

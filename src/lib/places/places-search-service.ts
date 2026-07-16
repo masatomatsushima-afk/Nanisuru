@@ -1,10 +1,9 @@
 /**
  * Places 検索の安全な入口。
- * 例外を投げず PlacesSearchResult を返す。外部通信は mock/google 実装に委譲（google は未実装）。
+ * 例外を投げず PlacesSearchResult を返す。Google 実通信は /api/places-search（サーバー）経由のみ。
  */
 
 import { getPlacesProvider, resolvePlacesMode, type PlacesProviderConfig } from './get-places-provider';
-import { isGooglePlacesApiKeyConfigured } from './places-env';
 import { toPlaceSearchQuery, type PlacesSearchInput } from './places-search-input';
 import {
   createDisabledPlacesResult,
@@ -24,15 +23,8 @@ export async function searchPlacesSafe(
   }
 
   if (mode === 'google') {
-    if (!isGooglePlacesApiKeyConfigured()) {
-      return createPlacesErrorResult({
-        provider: 'google_places',
-        errorCode: 'missing_api_key',
-        warning:
-          'Google Places mode is enabled but GOOGLE_PLACES_API_KEY is not configured. No request was sent.',
-      });
-    }
-
+    // APIキーの有無はクライアントでは判定しない（GOOGLE_PLACES_API_KEY はサーバー専用 env のため
+    // ブラウザ bundle では常に未設定扱いになる）。/api/places-search 側で検証し、失敗時は [] を返す。
     try {
       const provider = getPlacesProvider({ mode: 'google' });
       const candidates = await provider.searchPlaces(toPlaceSearchQuery(input));

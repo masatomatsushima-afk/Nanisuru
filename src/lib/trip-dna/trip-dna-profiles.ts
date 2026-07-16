@@ -1,0 +1,208 @@
+/**
+ * Trip DNA Engine — 設定ファイル（データのみ・ロジックは書かない）。
+ *
+ * 新しい旅行スタイルを追加したいときは、この配列に `TripDnaProfile` を1件追加するだけでよい。
+ * `trip-dna-engine.ts` 側のコードは一切変更不要（if文の追加は禁止・設定追加のみで対応する）。
+ *
+ * 配列の並び順が `resolveTripDna()` の優先順位（先に定義したDNAが優先）。
+ */
+
+import type { TripDnaProfile } from './trip-dna-types';
+
+export const TRIP_DNA_PROFILES: readonly TripDnaProfile[] = [
+  {
+    id: 'gourmet',
+    label: 'Gourmet',
+    matcher: {
+      personalityMatch: ['グルメ'],
+      keywordPattern: /グルメ|食べ歩き|フード|food|gourmet|レストラン巡/i,
+    },
+    activityWeights: { food: 0.7, sightseeing: 0.15, shopping: 0.1, activity: 0.05 },
+    placesCategories: ['food', 'cafe', 'sightseeing', 'shopping'],
+    categoryPriority: ['food', 'cafe', 'sightseeing', 'shopping', 'activity'],
+    forbiddenCategories: [],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['food', 'cafe'], forbiddenCategories: ['nightlife'] },
+      { slot: 'midday', preferredCategories: ['food'], forbiddenCategories: ['nightlife'] },
+      { slot: 'afternoon', preferredCategories: ['cafe', 'food'] },
+      { slot: 'evening', preferredCategories: ['food'] },
+      { slot: 'night', preferredCategories: ['food'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.6, maxAbstractItems: 1 },
+    fallbackRule: { degradeCategoryOrder: ['food', 'cafe', 'sightseeing', 'activity'], genericAreaPhraseStyle: 'culinary' },
+    dominantCategory: 'food',
+  },
+  {
+    id: 'sightseeing',
+    label: 'Sightseeing',
+    matcher: {
+      keywordPattern: /観光|名所巡り|ランドマーク|世界遺産|sightseeing|tourist spot/i,
+    },
+    activityWeights: { sightseeing: 0.7, food: 0.15, shopping: 0.1, activity: 0.05 },
+    placesCategories: ['sightseeing', 'food', 'shopping', 'activity'],
+    categoryPriority: ['sightseeing', 'food', 'activity', 'shopping'],
+    forbiddenCategories: ['nightlife'],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'midday', preferredCategories: ['food', 'sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'afternoon', preferredCategories: ['sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'evening', preferredCategories: ['sightseeing', 'food'], forbiddenCategories: ['nightlife'] },
+      { slot: 'night', preferredCategories: ['sightseeing'], forbiddenCategories: ['nightlife'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.55, maxAbstractItems: 1 },
+    fallbackRule: { degradeCategoryOrder: ['sightseeing', 'activity', 'food'], genericAreaPhraseStyle: 'scenic' },
+    dominantCategory: 'sightseeing',
+  },
+  {
+    id: 'shopping',
+    label: 'Shopping',
+    matcher: {
+      keywordPattern: /ショッピング|お土産巡り|買い物三昧|shopping spree/i,
+    },
+    activityWeights: { shopping: 0.6, food: 0.2, cafe: 0.15, activity: 0.05 },
+    placesCategories: ['shopping', 'food', 'cafe'],
+    categoryPriority: ['shopping', 'food', 'cafe', 'activity'],
+    forbiddenCategories: ['nightlife'],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['shopping'], forbiddenCategories: ['nightlife'] },
+      { slot: 'midday', preferredCategories: ['food', 'shopping'], forbiddenCategories: ['nightlife'] },
+      { slot: 'afternoon', preferredCategories: ['shopping', 'cafe'], forbiddenCategories: ['nightlife'] },
+      { slot: 'evening', preferredCategories: ['food'], forbiddenCategories: ['nightlife'] },
+      { slot: 'night', preferredCategories: ['food'], forbiddenCategories: ['nightlife'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.5, maxAbstractItems: 1 },
+    fallbackRule: { degradeCategoryOrder: ['shopping', 'cafe', 'food'], genericAreaPhraseStyle: 'shopping' },
+    dominantCategory: 'shopping',
+  },
+  {
+    id: 'couple',
+    label: 'Couple',
+    matcher: {
+      companionMatch: ['カップル', '初デート'],
+      keywordPattern: /カップル旅行|デートスポット|恋人と|romantic getaway/i,
+    },
+    activityWeights: { food: 0.3, sightseeing: 0.3, cafe: 0.2, nightlife: 0.2 },
+    placesCategories: ['food', 'sightseeing', 'cafe', 'nightlife'],
+    categoryPriority: ['sightseeing', 'food', 'cafe', 'nightlife'],
+    forbiddenCategories: [],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['cafe', 'sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'midday', preferredCategories: ['food', 'sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'afternoon', preferredCategories: ['sightseeing', 'cafe'], forbiddenCategories: ['nightlife'] },
+      { slot: 'evening', preferredCategories: ['food'] },
+      { slot: 'night', preferredCategories: ['nightlife', 'sightseeing'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.25, maxAbstractItems: 1 },
+    fallbackRule: { degradeCategoryOrder: ['food', 'sightseeing', 'cafe'], genericAreaPhraseStyle: 'leisure' },
+    dominantCategory: 'food',
+  },
+  {
+    id: 'family',
+    label: 'Family',
+    matcher: {
+      companionMatch: ['家族'],
+      keywordPattern: /子連れ|子供と一緒|キッズ向け|ファミリー向け|kids friendly/i,
+    },
+    activityWeights: { activity: 0.4, sightseeing: 0.3, food: 0.2, cafe: 0.1 },
+    placesCategories: ['activity', 'sightseeing', 'food', 'cafe'],
+    categoryPriority: ['activity', 'sightseeing', 'food', 'cafe'],
+    forbiddenCategories: ['nightlife'],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['activity', 'sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'midday', preferredCategories: ['food'], forbiddenCategories: ['nightlife'] },
+      { slot: 'afternoon', preferredCategories: ['activity', 'sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'evening', preferredCategories: ['food'], forbiddenCategories: ['nightlife'] },
+      { slot: 'night', preferredCategories: [], forbiddenCategories: ['nightlife'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.35, maxAbstractItems: 2 },
+    fallbackRule: { degradeCategoryOrder: ['activity', 'sightseeing', 'food'], genericAreaPhraseStyle: 'leisure' },
+    dominantCategory: 'activity',
+  },
+  {
+    id: 'solo',
+    label: 'Solo',
+    matcher: {
+      companionMatch: ['一人'],
+      keywordPattern: /一人旅|ソロ旅行|solo trip/i,
+    },
+    activityWeights: { sightseeing: 0.35, food: 0.3, cafe: 0.2, activity: 0.15 },
+    placesCategories: ['sightseeing', 'food', 'cafe', 'activity'],
+    categoryPriority: ['sightseeing', 'food', 'cafe', 'activity'],
+    forbiddenCategories: [],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['cafe', 'sightseeing'] },
+      { slot: 'midday', preferredCategories: ['food', 'sightseeing'] },
+      { slot: 'afternoon', preferredCategories: ['sightseeing', 'activity'] },
+      { slot: 'evening', preferredCategories: ['food'] },
+      { slot: 'night', preferredCategories: ['cafe'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.3, maxAbstractItems: 1 },
+    fallbackRule: { degradeCategoryOrder: ['sightseeing', 'food', 'activity'], genericAreaPhraseStyle: 'neutral' },
+    dominantCategory: 'sightseeing',
+  },
+  {
+    id: 'relax',
+    label: 'Relax',
+    matcher: {
+      personalityMatch: ['のんびり'],
+      keywordPattern: /のんびり過ごし|リラックス旅行|癒し旅|スパ巡り|温泉巡り|relaxing trip|spa retreat/i,
+    },
+    activityWeights: { cafe: 0.35, activity: 0.3, food: 0.25, sightseeing: 0.1 },
+    placesCategories: ['cafe', 'activity', 'food', 'sightseeing'],
+    categoryPriority: ['cafe', 'activity', 'food', 'sightseeing'],
+    forbiddenCategories: ['nightlife'],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['cafe'], forbiddenCategories: ['nightlife'] },
+      { slot: 'midday', preferredCategories: ['food', 'cafe'], forbiddenCategories: ['nightlife'] },
+      { slot: 'afternoon', preferredCategories: ['activity', 'cafe'], forbiddenCategories: ['nightlife'] },
+      { slot: 'evening', preferredCategories: ['food'], forbiddenCategories: ['nightlife'] },
+      { slot: 'night', preferredCategories: [], forbiddenCategories: ['nightlife'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.3, maxAbstractItems: 2 },
+    fallbackRule: { degradeCategoryOrder: ['cafe', 'activity', 'food'], genericAreaPhraseStyle: 'leisure' },
+    dominantCategory: 'cafe',
+  },
+  {
+    id: 'adventure',
+    label: 'Adventure',
+    matcher: {
+      personalityMatch: ['冒険家'],
+      keywordPattern: /冒険|アドベンチャー|ハイキング|トレッキング|絶景|秘境|大自然|adventure|hiking|trekking/i,
+    },
+    activityWeights: { activity: 0.5, sightseeing: 0.35, food: 0.1, cafe: 0.05 },
+    placesCategories: ['activity', 'sightseeing', 'food'],
+    categoryPriority: ['activity', 'sightseeing', 'food', 'cafe'],
+    forbiddenCategories: ['nightlife'],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['activity'], forbiddenCategories: ['nightlife'] },
+      { slot: 'midday', preferredCategories: ['activity', 'food'], forbiddenCategories: ['nightlife'] },
+      { slot: 'afternoon', preferredCategories: ['activity', 'sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'evening', preferredCategories: ['food'], forbiddenCategories: ['nightlife'] },
+      { slot: 'night', preferredCategories: [], forbiddenCategories: ['nightlife'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.45, maxAbstractItems: 1 },
+    fallbackRule: { degradeCategoryOrder: ['activity', 'sightseeing', 'food'], genericAreaPhraseStyle: 'scenic' },
+    dominantCategory: 'activity',
+  },
+  {
+    id: 'nightlife',
+    label: 'Nightlife',
+    matcher: {
+      keywordPattern: /ナイトライフ|夜遊び|バー巡り|クラブ巡り|nightlife|bar hopping/i,
+    },
+    activityWeights: { nightlife: 0.55, food: 0.25, cafe: 0.1, activity: 0.1 },
+    placesCategories: ['nightlife', 'food', 'cafe'],
+    categoryPriority: ['nightlife', 'food', 'cafe', 'activity'],
+    forbiddenCategories: [],
+    timeOfDayRules: [
+      { slot: 'morning', preferredCategories: ['cafe'] },
+      { slot: 'midday', preferredCategories: ['food'] },
+      { slot: 'afternoon', preferredCategories: ['cafe', 'sightseeing'] },
+      { slot: 'evening', preferredCategories: ['food', 'nightlife'] },
+      { slot: 'night', preferredCategories: ['nightlife'] },
+    ],
+    validationRules: { minDominantCategoryRatio: 0.45, maxAbstractItems: 1 },
+    fallbackRule: { degradeCategoryOrder: ['nightlife', 'food', 'cafe'], genericAreaPhraseStyle: 'nightlife' },
+    dominantCategory: 'nightlife',
+  },
+] as const;

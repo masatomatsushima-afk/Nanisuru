@@ -13,6 +13,24 @@ const GOOGLE_PLACES_KEY_PLACEHOLDERS = new Set([
 
 const REQUEST_TIMEOUT_MS = 8_000;
 
+/** Dev-only diagnostic logging (no secrets — never logs the API key or full response body). */
+const IS_DEV_RUNTIME = process.env.NODE_ENV !== 'production';
+
+function classifyGoogleHttpStatus(status: number): string {
+  switch (status) {
+    case 400:
+      return 'bad_request (fieldmask/body invalid?)';
+    case 401:
+      return 'unauthorized (invalid API key?)';
+    case 403:
+      return 'permission_denied (API not enabled / billing off / key restricted?)';
+    case 429:
+      return 'quota_exceeded (rate limit)';
+    default:
+      return 'unknown';
+  }
+}
+
 function getServerGooglePlacesApiKey(): string | undefined {
   const key = process.env.GOOGLE_PLACES_API_KEY?.trim();
   if (!key || GOOGLE_PLACES_KEY_PLACEHOLDERS.has(key)) return undefined;
@@ -62,6 +80,9 @@ export async function POST(request: Request): Promise<Response> {
   const apiKey = getServerGooglePlacesApiKey();
   if (!apiKey) {
     // Automatic fallback — no key configured, no external call, no crash.
+    if (IS_DEV_RUNTIME) {
+      console.warn('[api/places-search] missing_api_key — GOOGLE_PLACES_API_KEY not set on server');
+    }
     return safeErrorResponse('missing_api_key');
   }
 
@@ -88,9 +109,12 @@ export async function POST(request: Request): Promise<Response> {
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': apiKey,
+        // Note: currentOpeningHours is requested as a whole object (not the
+        // ".openNow" sub-path) — Places API (New) field masks are documented against
+        // top-level Place field names, so this avoids any risk of an invalid-fieldmask 400.
         'X-Goog-FieldMask':
           'places.id,places.displayName,places.rating,places.userRatingCount,' +
-          'places.formattedAddress,places.location,places.currentOpeningHours.openNow,' +
+          'places.formattedAddress,places.location,places.currentOpeningHours,' +
           'places.primaryType,places.photos',
       },
       body: JSON.stringify({ textQuery: query, maxResultCount }),
@@ -99,9 +123,17 @@ export async function POST(request: Request): Promise<Response> {
 
     const text = await response.text();
 
+    if (IS_DEV_RUNTIME) {
+      console.log('[api/places-search] Google Places response', {
+        httpStatus: response.status,
+        ok: response.ok,
+      });
+    }
+
     if (!response.ok) {
       console.warn('[api/places-search] Google Places request failed', {
         status: response.status,
+        classification: classifyGoogleHttpStatus(response.status),
         body: text.slice(0, 500),
       });
       return safeErrorResponse('search_failed', `Google Places ${response.status}`);
@@ -132,6 +164,10 @@ export async function POST(request: Request): Promise<Response> {
         primaryType: place.primaryType?.trim() || null,
         photoRef: place.photos?.[0]?.name?.trim() || null,
       }));
+
+    if (IS_DEV_RUNTIME) {
+      console.log('[api/places-search] candidates parsed', { count: candidates.length });
+    }
 
     return Response.json({ ok: true, candidates }, { status: 200 });
   } catch (error) {

@@ -133,10 +133,14 @@ const styles = StyleSheet.create({
   },
   card: {
     marginBottom: Spacing.four,
+    paddingTop: Spacing.four,
+    paddingBottom: Spacing.four,
+    paddingHorizontal: Spacing.four,
   },
   cardTitle: {
     color: NS.colors.text,
     ...NS.typography.titleSm,
+    marginTop: Spacing.one,
     marginBottom: Spacing.three,
   },
   list: {
@@ -146,6 +150,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
+    paddingVertical: Spacing.one,
+    minHeight: 28,
   },
   listIcon: {
     fontSize: 18,
@@ -157,20 +163,26 @@ const styles = StyleSheet.create({
   },
   noticeCard: {
     marginBottom: Spacing.five,
+    paddingVertical: Spacing.four,
+    paddingHorizontal: Spacing.three,
   },
   noticeText: {
     color: NS.colors.textMuted,
     ...NS.typography.bodySm,
     textAlign: 'center',
+    lineHeight: 22,
+    paddingVertical: Spacing.one,
   },
   buttonWrap: {
-    marginTop: Spacing.two,
-    gap: Spacing.two,
+    marginTop: Spacing.three,
+    gap: Spacing.three,
   },
   buttonHint: {
     color: NS.colors.textMuted,
     fontSize: 12,
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: 20,
+    paddingHorizontal: Spacing.two,
+    paddingTop: Spacing.one,
   },
 });

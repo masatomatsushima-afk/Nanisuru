@@ -43,6 +43,7 @@ import {
 } from './trip-type-copy';
 import type { BudgetBreakdown, ItineraryDay, ItineraryItem } from '@/types/plan';
 import type { SpotCandidate } from '@/types/spot-candidate';
+import type { PlaceCandidate } from '@/types/place-candidate';
 
 export { DEV_FALLBACK_PLAN_NOTICE };
 
@@ -53,6 +54,14 @@ export const PLAN_DETAIL_FALLBACK_NOTICE =
 /** Shown when the AI response mixed in out-of-destination spots and was replaced with a safe plan. */
 export const DESTINATION_SAFETY_FALLBACK_NOTICE =
   '目的地外のスポットが検出されたため、安全なテスト用プランを表示しています';
+
+/**
+ * Shown when OpenAI timed out/failed but Google Places candidates were already fetched
+ * successfully — the resulting plan uses real, Google-confirmed places (not the seed/generic
+ * dev fallback), so the notice must not say "テスト用" / "サンプル".
+ */
+export const GOOGLE_PLACES_FALLBACK_NOTICE =
+  'AIの応答に時間がかかったため、Google Places候補から自動でプランを作成しました';
 
 type SpotTemplate = {
   activity: string;
@@ -66,6 +75,13 @@ type SpotTemplate = {
   popularityType: PopularityType;
   confidence: 'high' | 'medium' | 'low';
   source?: ItineraryItem['source'];
+  /** Google Places candidate only — null/undefined for seed or generic-area spots. */
+  placeId?: string | null;
+  rating?: number | null;
+  reviewCount?: number | null;
+  /** Per-spot reason override. Falls back to the shared "テスト用" wording when absent, so the
+   * existing seed-based fallback (`buildDevFallbackTravelPlan`) is unaffected. */
+  reason?: string;
 };
 
 type DayTemplate = {
@@ -92,6 +108,10 @@ function buildFallbackItem(params: {
   confidence: 'high' | 'medium' | 'low';
   source?: ItineraryItem['source'];
   spotCandidates?: SpotCandidate[];
+  /** Google Places candidate only — always null for seed/generic-area spots. */
+  placeId?: string | null;
+  rating?: number | null;
+  reviewCount?: number | null;
 }): ItineraryItem {
   return {
     time: formatMinutesAsTime(params.timeMinutes),
@@ -113,9 +133,9 @@ function buildFallbackItem(params: {
     confidence: params.confidence,
     source: params.source,
     spotCandidates: params.spotCandidates,
-    placeId: null,
-    rating: null,
-    reviewCount: null,
+    placeId: params.placeId ?? null,
+    rating: params.rating ?? null,
+    reviewCount: params.reviewCount ?? null,
     priceLevel: null,
   };
 }
@@ -290,6 +310,144 @@ function buildDefaultDayTemplates(
   return [buildArrival(), ...middles, buildLast()];
 }
 
+/**
+ * Same day/slot shape as `buildDefaultDayTemplates`, but spots are filled from real Google
+ * Places candidates (already ranked, already deduplicated) instead of the curated safe-area /
+ * Seoul-seed lists. Each candidate is used at most once across the whole trip (removed from the
+ * pool once assigned). If the pool runs out before all slots are filled, remaining slots fall
+ * back to the same generic, destination-scoped phrasing used elsewhere (never an invented name).
+ */
+function buildGooglePlacesDayTemplates(
+  candidatesInput: readonly PlaceCandidate[],
+  normalized: NormalizedDestination,
+  purpose: string,
+  companion: string,
+  dayCount: number,
+  hub?: { baseArea?: string; arrivalPoint?: string; accommodation?: string },
+): DayTemplate[] {
+  const pool: PlaceCandidate[] = [...candidatesInput];
+
+  const takeCandidateForCategory = (category: PlaceCategory): PlaceCandidate | null => {
+    const idx = pool.findIndex((candidate) => candidate.category === category);
+    if (idx >= 0) return pool.splice(idx, 1)[0];
+    return pool.length > 0 ? pool.splice(0, 1)[0] : null;
+  };
+
+  const googleReason = (placeName: string) =>
+    `${companion}との${purpose}に合うGoogle Places実在候補「${placeName}」です。`;
+  const fallbackReason = '該当するGoogle Places候補が無かったため、エリア案内に切り替えています。';
+
+  const spot = (
+    kind: GenericAreaPhraseKind,
+    labelToActivity: (name: string) => string,
+  ): ReturnType<typeof resolveSpot> & Pick<SpotTemplate, 'placeId' | 'rating' | 'reviewCount' | 'reason'> => {
+    const category = categoryForGenericKind(kind);
+    const candidate = takeCandidateForCategory(category);
+
+    if (candidate) {
+      const mapsQuery = `${candidate.placeName} ${normalized.destinationLabel}`.trim();
+      return {
+        activity: labelToActivity(candidate.placeName),
+        mapsQuery,
+        isSpecificPlace: true,
+        placeName: candidate.placeName,
+        placeType: candidate.category ?? category,
+        popularityType: candidate.rating != null && candidate.rating >= 4.3 ? 'popular' : 'classic',
+        confidence: 'high',
+        source: 'google_places',
+        placeId: candidate.placeId,
+        rating: candidate.rating ?? null,
+        reviewCount: candidate.reviewCount ?? null,
+        reason: googleReason(candidate.placeName),
+      };
+    }
+
+    return {
+      activity: genericAreaPhrase(normalized.destinationLabel, kind),
+      mapsQuery: genericMapsQuery(normalized, kind),
+      isSpecificPlace: false,
+      placeType: category,
+      popularityType: 'fallback',
+      confidence: 'low',
+      source: 'fallback',
+      placeId: null,
+      rating: null,
+      reviewCount: null,
+      reason: fallbackReason,
+    };
+  };
+
+  const transitMapsQuery = buildDestinationMapsSuffix(normalized);
+  const transitSpot = {
+    mapsQuery: transitMapsQuery,
+    isSpecificPlace: false,
+    placeType: 'activity' as PlaceCategory,
+    popularityType: 'fallback' as PopularityType,
+    confidence: 'low' as const,
+    reason: '移動・ロジスティクスのため候補選定の対象外です。',
+  };
+
+  const hubLabel = hub?.baseArea || hub?.accommodation || normalized.destinationLabel;
+  const location = normalized.destinationLabel;
+
+  const buildArrival = (): DayTemplate => {
+    // Phrasing deliberately avoids the "で" + genre-word patterns that `isAbstractItineraryItem`
+    // (spot-specificity.ts) treats as vague/genre-only text — those trigger a downgrade that
+    // would strip this real candidate's placeName/placeId back out again.
+    const lunch = spot('lunch', (name) => `${name}で人気のランチを味わう`);
+    const stroll = spot('stroll', (name) => `${name}に立ち寄る`);
+    const dinner = spot('dinner', (name) => `${name}で人気のディナーを味わう`);
+    const arrivalActivity = hub?.arrivalPoint
+      ? `${hub.arrivalPoint}到着・${hubLabel}へ移動`
+      : `${location}到着・チェックイン`;
+    return {
+      theme: hub?.baseArea ? `到着・${hub.baseArea}周辺` : `到着・${purpose}`,
+      spots: [
+        { category: '移動', note: '到着後の移動・荷物整理', costShare: 0, activity: arrivalActivity, ...transitSpot },
+        { category: '食事', note: '', costShare: 0.15, ...lunch },
+        { category: '散歩', note: '', costShare: 0.05, ...stroll },
+        { category: '食事', note: '', costShare: 0.15, ...dinner },
+      ],
+    };
+  };
+  const buildMiddle = (): DayTemplate => {
+    const cafe = spot('cafe', (name) => `${name}で休憩`);
+    const food = spot('market', (name) => `${name}で人気グルメを味わう`);
+    const culture = spot('culture', (name) => `${name}を観光`);
+    const night = spot('night', (name) => `${name}で夜を楽しむ`);
+    return {
+      theme: 'カフェ・グルメ・観光',
+      spots: [
+        { category: 'カフェ', note: '', costShare: 0.05, ...cafe },
+        { category: '食事', note: '', costShare: 0.15, ...food },
+        { category: '文化', note: '', costShare: 0.1, ...culture },
+        { category: '夜景', note: '', costShare: 0.05, ...night },
+      ],
+    };
+  };
+  const buildLast = (): DayTemplate => {
+    const shopping = spot('shopping', (name) => `${name}でお土産・ショッピング`);
+    const lunch = spot('lunch', (name) => `${name}で軽めランチ`);
+    return {
+      theme: 'お土産・軽めランチ・帰宅',
+      spots: [
+        { category: '買い物', note: '', costShare: 0.1, ...shopping },
+        { category: '食事', note: '', costShare: 0.1, ...lunch },
+        { category: '移動', note: '出発時刻に合わせて移動', costShare: 0, activity: 'ホテルチェックアウト・移動', ...transitSpot },
+      ],
+    };
+  };
+
+  if (dayCount <= 1) {
+    const arrival = buildArrival();
+    return [{ ...arrival, spots: arrival.spots.slice(0, 3) }];
+  }
+  if (dayCount === 2) return [buildArrival(), buildLast()];
+
+  const middles = Array.from({ length: dayCount - 2 }, () => buildMiddle());
+  return [buildArrival(), ...middles, buildLast()];
+}
+
 /** Evenly spaced start times for a day, honoring an optional earliest/latest bound. */
 function buildDaySlotMinutes(params: {
   spotCount: number;
@@ -403,7 +561,9 @@ export function buildDevFallbackTravelPlan(input: PlanInput) {
         timeMinutes,
         activity: spot.activity,
         category: spot.category,
-        reason: `${companion}との${purpose}に合うテスト用スポット（${location}）。UI確認用のサンプルです。`,
+        reason:
+          spot.reason ??
+          `${companion}との${purpose}に合うテスト用スポット（${location}）。UI確認用のサンプルです。`,
         estimatedCost:
           spot.costShare > 0
             ? `${symbol}${Math.round(budgetAmount * spot.costShare || 10000).toLocaleString()}`
@@ -415,6 +575,9 @@ export function buildDevFallbackTravelPlan(input: PlanInput) {
         placeType: spot.placeType,
         popularityType: spot.popularityType,
         confidence: spot.confidence,
+        placeId: spot.placeId,
+        rating: spot.rating,
+        reviewCount: spot.reviewCount,
       });
     });
 
@@ -518,6 +681,234 @@ export function buildDevFallbackTravelPlan(input: PlanInput) {
     items: flattenItineraryDays(days),
     details,
     devFallbackNotice: DEV_FALLBACK_PLAN_NOTICE,
+  };
+}
+
+/**
+ * Same safety-net purpose as `buildDevFallbackTravelPlan` (used when OpenAI times out/fails in
+ * dev), but built from real, already-fetched Google Places candidates instead of the seed /
+ * generic-area templates. Only call this when `candidates.length > 0` — with zero candidates the
+ * caller should use `buildDevFallbackTravelPlan` instead (see `generatePlanWithAi`).
+ *
+ * Guarantees kept from the Google Places integration rules even in this fallback path:
+ * - Only places from `candidates` are used — no invented store names.
+ * - Each `placeId` is used at most once across the whole trip (candidates are consumed from a
+ *   shared pool as they're assigned to slots).
+ * - `source: 'google_places'` + `placeId` are set on every real-candidate item, so Maps deeplinks
+ *   (`getPlaceMapsUrl`) resolve via `placeId`, not a text search.
+ */
+export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates: readonly PlaceCandidate[]) {
+  const destinationDetails = resolveDestinationDetailsFromPlanInput(input);
+  const location = destinationDetails.effectiveLocation.trim() || input.location.trim() || '目的地';
+  const durationConfig = resolveDurationConfig(input.tripDuration, input.customDuration);
+  const { symbol } = getCurrency(input.currency);
+  const people = input.people.trim() || '2';
+  const companion = input.companion;
+  const purpose =
+    input.travelPurpose?.trim() ||
+    input.customPreferences?.customTravelIntent?.trim() ||
+    input.mood?.trim() ||
+    'グルメ';
+  const durationLabel = input.durationLabel ?? durationConfig.label;
+
+  const normalizedDestination = normalizeDestinationFromDetails(destinationDetails);
+  const destinationLabel = normalizedDestination.destinationLabel || location;
+  const title = `${destinationLabel}${durationLabel}${purpose}旅行`;
+
+  const dayCount = Math.max(1, durationConfig.dayCount);
+  const accommodationFields = normalizeAccommodationFields(
+    input.accommodation ?? input.accommodationArea ?? input.accommodationName,
+  );
+  const templates = buildGooglePlacesDayTemplates(candidates, normalizedDestination, purpose, companion, dayCount, {
+    baseArea: destinationDetails.baseArea,
+    arrivalPoint: destinationDetails.arrivalPoint,
+    accommodation: accommodationFields.accommodation,
+  });
+  const timing = input.travelTiming;
+  const earliestStartMinutes = getEarliestActivityStartMinutes(timing);
+  const latestEndMinutes = getLatestActivityEndMinutes(timing);
+
+  const budgetAmount = formatBudgetAmount(input.budget);
+  const budgetDisplay = formatBudgetDisplay(budgetAmount, input.currency);
+
+  const usedPlaceIds = new Set<string>();
+
+  const scheduled = validateAndFixItinerarySchedule({
+    days: enforceSpecificityOnDays(
+      templates.map((template, index) => {
+        const dayNumber = index + 1;
+        const isFirstDay = index === 0;
+        const isLastDay = index === templates.length - 1;
+        const slots = buildDaySlotMinutes({
+          spotCount: template.spots.length,
+          isFirstDay,
+          isLastDay,
+          earliestStartMinutes,
+          latestEndMinutes,
+        });
+
+        const items = template.spots.map((spot, spotIndex) => {
+          let timeMinutes = slots[spotIndex];
+          if (
+            spot.placeType === 'nightlife' ||
+            spot.category === '夜景' ||
+            /夜景|night/i.test(spot.activity)
+          ) {
+            timeMinutes = Math.max(timeMinutes, 19 * 60 + 30);
+          }
+          if (isLastDay && latestEndMinutes != null) {
+            timeMinutes = Math.min(timeMinutes, Math.max(7 * 60 + 30, latestEndMinutes - 90));
+          }
+
+          // Defense in depth: even though buildGooglePlacesDayTemplates already consumes each
+          // candidate from a shared pool, guard here too in case a future caller reuses templates.
+          if (spot.placeId && usedPlaceIds.has(spot.placeId)) {
+            return buildFallbackItem({
+              timeMinutes,
+              activity: genericAreaPhrase(normalizedDestination.destinationLabel, 'stroll'),
+              category: spot.category,
+              reason: '同じ候補が旅行中に重複したため、エリア案内に切り替えています。',
+              estimatedCost:
+                spot.costShare > 0
+                  ? `${symbol}${Math.round(budgetAmount * spot.costShare || 10000).toLocaleString()}`
+                  : `${symbol}0`,
+              note: spot.note,
+              mapsQuery: genericMapsQuery(normalizedDestination, 'stroll'),
+              isSpecificPlace: false,
+              placeType: spot.placeType,
+              popularityType: 'fallback',
+              confidence: 'low',
+              source: 'fallback',
+              placeId: null,
+              rating: null,
+              reviewCount: null,
+            });
+          }
+          if (spot.placeId) usedPlaceIds.add(spot.placeId);
+
+          return buildFallbackItem({
+            timeMinutes,
+            activity: spot.activity,
+            category: spot.category,
+            reason: spot.reason ?? `${companion}との${purpose}に合うおすすめスポットです。`,
+            estimatedCost:
+              spot.costShare > 0
+                ? `${symbol}${Math.round(budgetAmount * spot.costShare || 10000).toLocaleString()}`
+                : `${symbol}0`,
+            note: spot.note,
+            mapsQuery: spot.mapsQuery,
+            isSpecificPlace: spot.isSpecificPlace,
+            placeName: spot.placeName,
+            placeType: spot.placeType,
+            popularityType: spot.popularityType,
+            confidence: spot.confidence,
+            source: spot.source,
+            placeId: spot.placeId,
+            rating: spot.rating,
+            reviewCount: spot.reviewCount,
+          });
+        });
+
+        const timeWindow = `${formatMinutesAsTime(slots[0])}〜${formatMinutesAsTime(
+          slots[slots.length - 1] + 60,
+        )}`;
+
+        return {
+          dayNumber,
+          label: `${dayNumber}日目`,
+          theme: template.theme,
+          timeWindow,
+          items,
+        };
+      }),
+      location,
+    ),
+    rawLocation: location,
+    travelTiming: timing,
+    destinationDetails,
+  });
+  const tripAudience = resolveTripAudience({
+    companion: input.companion,
+    planCreationType: input.planCreationType ?? input.planType,
+  });
+  const tripCopy = sanitizeItineraryTripCopy(scheduled.days, tripAudience);
+  const days: ItineraryDay[] = tripCopy.days;
+
+  const budgetBreakdown = buildBudgetBreakdown(budgetAmount, symbol, dayCount);
+  const weatherOrSeasonNote =
+    input.weather?.summary?.trim() ||
+    input.weather?.seasonalContext?.guidance ||
+    `${destinationLabel}の季節に合わせ、屋内・屋外をバランスよく組んでいます。`;
+
+  const outfitAdvice = generateOutfitPackingAdvice({
+    days,
+    weather: input.weather,
+    location,
+    planType: input.planCreationType ?? input.planType,
+    companion: input.companion,
+    outfitStyleMode: input.outfitStyleMode,
+    dayCount,
+    tripDate: input.tripDate,
+  });
+
+  const summary = `${destinationLabel}${durationLabel}の${purpose}旅行プランです（${companion}・${people}人・予算${budgetDisplay}目安）。Google Places実在候補から作成しています。`;
+
+  const tips = [
+    `${destinationLabel}では移動カードを事前準備すると便利です`,
+    '人気店は事前予約または早めの時間帯がおすすめ',
+    'AIの応答待ちの間、Google Places候補から自動でプランを作成しています',
+  ];
+
+  const destinationPayload = destinationDetailsToPayload(destinationDetails);
+
+  const { details } = sanitizePlanDetailsTripCopy(
+    {
+      plannerMessage: summary,
+      planTitle: title,
+      summary,
+      isFallback: true,
+      totalBudget: budgetDisplay,
+      budgetBreakdown,
+      duration: durationLabel,
+      tripDuration: input.tripDuration,
+      tripDate: input.tripDate,
+      tripEndDate: input.tripEndDate,
+      customDuration: input.customDuration,
+      weather: input.weather,
+      outfitAdvice,
+      highlights: [
+        title,
+        days.map((day) => `${day.label}: ${day.theme}`).join(' / '),
+        ...tips.slice(0, 2),
+      ],
+      rainyDayAlternatives: [
+        `${location}の屋内カフェ`,
+        `${location}のショッピングモール`,
+        `${location}の美術館・ギャラリー`,
+      ],
+      conciergeAnalysis: {
+        userPreferences: `${companion}・${purpose}向けのプランです（Google Places実在候補ベース）。`,
+        weather: weatherOrSeasonNote,
+        budget: `予算 ${budgetDisplay}（${people}人）を目安にしています。`,
+        tripDuration: durationLabel,
+        travelStyle: input.personality,
+        overallStrategy: accommodationFields.accommodation
+          ? `宿泊先（${accommodationFields.accommodation}）を起点に、日々の開始・終了が戻りやすいエリアになるよう組んでいます。`
+          : destinationDetails.baseArea
+            ? `拠点（${destinationDetails.baseArea}）を中心に、近いエリアをまとめた行程です。`
+            : 'Google Places候補から、日別の流れを自動的に組んでいます。',
+      },
+      ...accommodationFields,
+      ...destinationPayload,
+    },
+    tripAudience,
+  );
+
+  return {
+    days,
+    items: flattenItineraryDays(days),
+    details,
+    devFallbackNotice: GOOGLE_PLACES_FALLBACK_NOTICE,
   };
 }
 

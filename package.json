@@ -52,7 +52,10 @@
     "lint": "expo lint",
     "verify:places-ranking": "npx --yes tsx scripts/verify-place-candidate-ranking.ts",
     "verify:places-provider": "npx --yes tsx scripts/verify-places-provider.ts",
-    "verify:places-enforcement": "npx --yes tsx scripts/verify-place-candidate-enforcement.ts"
+    "verify:places-enforcement": "npx --yes tsx scripts/verify-place-candidate-enforcement.ts",
+    "verify:google-places-live": "npx --yes tsx scripts/verify-google-places-live.ts",
+    "verify:purpose-composition": "npx --yes tsx scripts/verify-purpose-composition.ts",
+    "verify:trip-dna-engine": "npx --yes tsx scripts/verify-trip-dna-engine.ts"
   },
   "private": true
 }

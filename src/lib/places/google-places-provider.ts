@@ -83,7 +83,13 @@ function mapPrimaryTypeToCategory(primaryType: string | null): PlaceCategory | u
 function buildTextQuery(query: PlaceSearchQuery): string {
   const destinationSuffix = [query.city, query.country].filter(Boolean).join(' ').trim();
 
-  const leadParts = [query.keyword, query.categories?.[0], query.baseArea]
+  // categories が単一の明確な絞り込み（例: ['food']）のときだけクエリに含める。
+  // generate-plan からは食事・カフェ・観光・ショッピング等を広く候補に含めたいため
+  // 全カテゴリ配列を渡しており、その場合に categories[0]（常に 'food'）を紛れ込ませると
+  // 毎回「food ...」で検索してしまい候補が飲食店に偏る — ここでは絞り込みなしにする。
+  const categoryHint = query.categories?.length === 1 ? query.categories[0] : undefined;
+
+  const leadParts = [query.keyword, categoryHint, query.baseArea]
     .map((part) => part?.trim())
     .filter((part): part is string => Boolean(part));
 
@@ -126,10 +132,23 @@ export class GooglePlacesProvider implements PlacesProvider {
       const data = (await response.json()) as PlacesSearchApiResponse;
 
       if (!data.ok || !data.candidates?.length) {
-        if (data.warning) {
-          console.warn('[GooglePlacesProvider] no candidates:', data.errorCode, data.warning);
+        if (__DEV__) {
+          // Dev-only diagnostic (no secrets): errorCode/warning here surface Google's HTTP
+          // status (e.g. "Google Places 403") set by /api/places-search — never the key itself.
+          console.warn('[GooglePlacesProvider] no candidates:', {
+            httpStatus: response.status,
+            errorCode: data.errorCode,
+            warning: data.warning,
+          });
         }
         return [];
+      }
+
+      if (__DEV__) {
+        console.log('[GooglePlacesProvider] candidates received', {
+          httpStatus: response.status,
+          count: data.candidates.length,
+        });
       }
 
       return data.candidates.map((candidate): PlaceCandidate => ({
