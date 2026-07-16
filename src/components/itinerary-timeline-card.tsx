@@ -91,7 +91,11 @@ export function ItineraryTimelineCard({
             </View>
           </View>
 
-          <Text style={styles.activityName}>{item.activity}</Text>
+          <Text style={styles.activityName}>{item.placeName?.trim() || item.activity}</Text>
+
+          {item.placeName?.trim() && item.placeName.trim() !== item.activity ? (
+            <Text style={styles.activitySubText}>{item.activity}</Text>
+          ) : null}
 
           {item.placeAddress ? <Text style={styles.areaText}>📍 {item.placeAddress}</Text> : null}
 
@@ -272,6 +276,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.3,
     lineHeight: 28,
+  },
+  activitySubText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    marginTop: 2,
   },
   areaText: {
     color: NS.colors.textMuted,

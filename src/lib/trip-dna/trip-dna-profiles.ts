@@ -206,3 +206,29 @@ export const TRIP_DNA_PROFILES: readonly TripDnaProfile[] = [
     dominantCategory: 'nightlife',
   },
 ] as const;
+
+/**
+ * personality/companion/mood のどれにも一致しない（resolveTripDna が null を返す）ときに使う、
+ * カテゴリを絞らないニュートラルな既定プロファイル。`TRIP_DNA_PROFILES` には入れない
+ * （マッチング対象にはしない — 明示的なフォールバック専用値）。検索意図生成など、DNAが
+ * 必ず1件必要な共通エンジンに「未指定時の既存動作（全カテゴリ横断）」を保たせるためのもの。
+ */
+export const DEFAULT_TRIP_DNA_PROFILE: TripDnaProfile = {
+  id: 'default',
+  label: 'Default',
+  matcher: {},
+  activityWeights: { food: 0.3, sightseeing: 0.3, cafe: 0.15, shopping: 0.15, activity: 0.1 },
+  placesCategories: ['sightseeing', 'food', 'cafe', 'shopping', 'activity'],
+  categoryPriority: ['sightseeing', 'food', 'cafe', 'shopping', 'activity', 'nightlife'],
+  forbiddenCategories: [],
+  timeOfDayRules: [
+    { slot: 'morning', preferredCategories: ['sightseeing', 'cafe'] },
+    { slot: 'midday', preferredCategories: ['food'] },
+    { slot: 'afternoon', preferredCategories: ['sightseeing', 'shopping'] },
+    { slot: 'evening', preferredCategories: ['food'] },
+    { slot: 'night', preferredCategories: [] },
+  ],
+  validationRules: { minDominantCategoryRatio: 0, maxAbstractItems: 2 },
+  fallbackRule: { degradeCategoryOrder: ['sightseeing', 'food', 'cafe', 'shopping', 'activity'], genericAreaPhraseStyle: 'neutral' },
+  dominantCategory: 'sightseeing',
+};

@@ -21,7 +21,7 @@
  */
 
 import type { PlaceCategory } from '@/lib/destination-safety';
-import { TRIP_DNA_PROFILES } from './trip-dna-profiles';
+import { DEFAULT_TRIP_DNA_PROFILE, TRIP_DNA_PROFILES } from './trip-dna-profiles';
 import type {
   TimeOfDaySlot,
   TripDnaFallbackRule,
@@ -59,6 +59,14 @@ export function resolveTripDna(input: TripDnaMatchInput): TripDnaProfile | null 
   }
 
   return null;
+}
+
+/**
+ * `resolveTripDna` が null（どのDNAにも一致しない）のときに、カテゴリを絞らないニュートラルな
+ * `DEFAULT_TRIP_DNA_PROFILE` を返す。検索意図生成など「DNAが必ず1件必要」な共通エンジン向け。
+ */
+export function resolveTripDnaOrDefault(input: TripDnaMatchInput): TripDnaProfile {
+  return resolveTripDna(input) ?? DEFAULT_TRIP_DNA_PROFILE;
 }
 
 /** Trip DNA → Google Places検索カテゴリ。 */

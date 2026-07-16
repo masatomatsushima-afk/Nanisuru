@@ -41,6 +41,8 @@ import {
   sanitizeItineraryTripCopy,
   sanitizePlanDetailsTripCopy,
 } from './trip-type-copy';
+import { resolveTripDnaOrDefault } from './trip-dna/trip-dna-engine';
+import type { TimeOfDaySlot, TripDnaProfile } from './trip-dna/trip-dna-types';
 import type { BudgetBreakdown, ItineraryDay, ItineraryItem } from '@/types/plan';
 import type { SpotCandidate } from '@/types/spot-candidate';
 import type { PlaceCandidate } from '@/types/place-candidate';
@@ -310,12 +312,55 @@ function buildDefaultDayTemplates(
   return [buildArrival(), ...middles, buildLast()];
 }
 
+/** slot × category → 安全なフレーズ（isAbstractItineraryItem の「で」+ジャンル語パターンを踏まない表現）。 */
+const GOOGLE_PLACES_ACTIVITY_PHRASE: Record<PlaceCategory, (placeName: string) => string> = {
+  food: (name) => `${name}で人気のグルメを味わう`,
+  cafe: (name) => `${name}で休憩`,
+  sightseeing: (name) => `${name}を観光`,
+  shopping: (name) => `${name}でお土産・ショッピングを楽しむ`,
+  nightlife: (name) => `${name}で夜を楽しむ`,
+  activity: (name) => `${name}を体験`,
+};
+
+/** カテゴリ → 日本語の activityCategory ラベル（UIのカテゴリバッジ表示用・enum制約なし）。 */
+const ACTIVITY_CATEGORY_LABEL_JA: Record<PlaceCategory, string> = {
+  food: '食事',
+  cafe: 'カフェ',
+  sightseeing: '文化',
+  shopping: '買い物',
+  nightlife: '夜景',
+  activity: '体験',
+};
+
+/**
+ * Trip DNA の `timeOfDayRules` から、その時間帯スロットで最も優先すべきカテゴリを1つ返す
+ * （`forbiddenCategories` は除外）。各ルールの `preferredCategories` は既にスロットにとって
+ * 自然な順（例: 午後なら "カフェ→食事"）で書かれているため、その並び順の先頭をそのまま使う
+ * （`categoryPriority` で上書きしない — そうすると food が常に全スロットを奪ってしまう）。
+ * 該当カテゴリが無いスロット（例: family/relaxのnight）は null — 呼び出し側はそのスロット自体を省く。
+ */
+function pickCategoryForSlot(dna: TripDnaProfile, slot: TimeOfDaySlot): PlaceCategory | null {
+  const forbidden = new Set(dna.forbiddenCategories);
+  const rule = dna.timeOfDayRules.find((entry) => entry.slot === slot);
+  const preferred = (rule?.preferredCategories ?? []).filter((category) => !forbidden.has(category));
+  return preferred[0] ?? null;
+}
+
 /**
  * Same day/slot shape as `buildDefaultDayTemplates`, but spots are filled from real Google
  * Places candidates (already ranked, already deduplicated) instead of the curated safe-area /
  * Seoul-seed lists. Each candidate is used at most once across the whole trip (removed from the
- * pool once assigned). If the pool runs out before all slots are filled, remaining slots fall
- * back to the same generic, destination-scoped phrasing used elsewhere (never an invented name).
+ * shared pool once assigned).
+ *
+ * Which category each time-of-day slot wants is driven entirely by the resolved Trip DNA
+ * (`dna.timeOfDayRules` / `dna.categoryPriority` / `dna.forbiddenCategories`) — this function has
+ * no gourmet-specific (or any other DNA-specific) branching; a new DNA only needs a new config
+ * entry in `trip-dna-profiles.ts`.
+ *
+ * If the candidate pool has nothing left for a slot's category, that slot is simply omitted
+ * (shorter day) instead of falling back to an invented store, a mismatched-category candidate, or
+ * an abstract "◯◯エリアを散策"-style filler — per product requirement, a shorter, all-real
+ * itinerary is preferred over padding with fake/abstract content.
  */
 function buildGooglePlacesDayTemplates(
   candidatesInput: readonly PlaceCandidate[],
@@ -323,57 +368,46 @@ function buildGooglePlacesDayTemplates(
   purpose: string,
   companion: string,
   dayCount: number,
+  dna: TripDnaProfile,
   hub?: { baseArea?: string; arrivalPoint?: string; accommodation?: string },
 ): DayTemplate[] {
   const pool: PlaceCandidate[] = [...candidatesInput];
 
   const takeCandidateForCategory = (category: PlaceCategory): PlaceCandidate | null => {
     const idx = pool.findIndex((candidate) => candidate.category === category);
-    if (idx >= 0) return pool.splice(idx, 1)[0];
-    return pool.length > 0 ? pool.splice(0, 1)[0] : null;
+    if (idx < 0) return null;
+    return pool.splice(idx, 1)[0];
   };
 
   const googleReason = (placeName: string) =>
     `${companion}との${purpose}に合うGoogle Places実在候補「${placeName}」です。`;
-  const fallbackReason = '該当するGoogle Places候補が無かったため、エリア案内に切り替えています。';
 
-  const spot = (
-    kind: GenericAreaPhraseKind,
-    labelToActivity: (name: string) => string,
-  ): ReturnType<typeof resolveSpot> & Pick<SpotTemplate, 'placeId' | 'rating' | 'reviewCount' | 'reason'> => {
-    const category = categoryForGenericKind(kind);
+  /**
+   * その時間帯スロットにDNAが望むカテゴリの候補を1件だけ割り当てる。候補が無ければ null を返し、
+   * 呼び出し側でスロットそのものを省く（架空店舗・カテゴリ不一致・技術的な「切り替え」文言は出さない）。
+   */
+  const spotForSlot = (
+    slot: TimeOfDaySlot,
+  ): (Pick<SpotTemplate, 'activity' | 'mapsQuery' | 'isSpecificPlace' | 'placeName' | 'placeType' | 'popularityType' | 'confidence' | 'source' | 'placeId' | 'rating' | 'reviewCount' | 'reason'>) | null => {
+    const category = pickCategoryForSlot(dna, slot);
+    if (!category) return null;
     const candidate = takeCandidateForCategory(category);
+    if (!candidate) return null;
 
-    if (candidate) {
-      const mapsQuery = `${candidate.placeName} ${normalized.destinationLabel}`.trim();
-      return {
-        activity: labelToActivity(candidate.placeName),
-        mapsQuery,
-        isSpecificPlace: true,
-        placeName: candidate.placeName,
-        placeType: candidate.category ?? category,
-        popularityType: candidate.rating != null && candidate.rating >= 4.3 ? 'popular' : 'classic',
-        confidence: 'high',
-        source: 'google_places',
-        placeId: candidate.placeId,
-        rating: candidate.rating ?? null,
-        reviewCount: candidate.reviewCount ?? null,
-        reason: googleReason(candidate.placeName),
-      };
-    }
-
+    const mapsQuery = `${candidate.placeName} ${normalized.destinationLabel}`.trim();
     return {
-      activity: genericAreaPhrase(normalized.destinationLabel, kind),
-      mapsQuery: genericMapsQuery(normalized, kind),
-      isSpecificPlace: false,
-      placeType: category,
-      popularityType: 'fallback',
-      confidence: 'low',
-      source: 'fallback',
-      placeId: null,
-      rating: null,
-      reviewCount: null,
-      reason: fallbackReason,
+      activity: GOOGLE_PLACES_ACTIVITY_PHRASE[category](candidate.placeName),
+      mapsQuery,
+      isSpecificPlace: true,
+      placeName: candidate.placeName,
+      placeType: candidate.category ?? category,
+      popularityType: candidate.rating != null && candidate.rating >= 4.3 ? 'popular' : 'classic',
+      confidence: 'high',
+      source: 'google_places',
+      placeId: candidate.placeId,
+      rating: candidate.rating ?? null,
+      reviewCount: candidate.reviewCount ?? null,
+      reason: googleReason(candidate.placeName),
     };
   };
 
@@ -390,62 +424,92 @@ function buildGooglePlacesDayTemplates(
   const hubLabel = hub?.baseArea || hub?.accommodation || normalized.destinationLabel;
   const location = normalized.destinationLabel;
 
+  const buildDaySpots = (slots: readonly TimeOfDaySlot[]): SpotTemplate[] => {
+    const spots: SpotTemplate[] = [];
+    for (const slot of slots) {
+      const resolved = spotForSlot(slot);
+      if (!resolved) continue;
+      spots.push({
+        category: ACTIVITY_CATEGORY_LABEL_JA[resolved.placeType] ?? '体験',
+        note: '',
+        costShare: 0.15,
+        ...resolved,
+      });
+    }
+    return spots;
+  };
+
   const buildArrival = (): DayTemplate => {
-    // Phrasing deliberately avoids the "で" + genre-word patterns that `isAbstractItineraryItem`
-    // (spot-specificity.ts) treats as vague/genre-only text — those trigger a downgrade that
-    // would strip this real candidate's placeName/placeId back out again.
-    const lunch = spot('lunch', (name) => `${name}で人気のランチを味わう`);
-    const stroll = spot('stroll', (name) => `${name}に立ち寄る`);
-    const dinner = spot('dinner', (name) => `${name}で人気のディナーを味わう`);
     const arrivalActivity = hub?.arrivalPoint
       ? `${hub.arrivalPoint}到着・${hubLabel}へ移動`
       : `${location}到着・チェックイン`;
+    const transit: SpotTemplate = {
+      category: '移動',
+      note: '到着後の移動・荷物整理',
+      costShare: 0,
+      activity: arrivalActivity,
+      ...transitSpot,
+    };
     return {
       theme: hub?.baseArea ? `到着・${hub.baseArea}周辺` : `到着・${purpose}`,
-      spots: [
-        { category: '移動', note: '到着後の移動・荷物整理', costShare: 0, activity: arrivalActivity, ...transitSpot },
-        { category: '食事', note: '', costShare: 0.15, ...lunch },
-        { category: '散歩', note: '', costShare: 0.05, ...stroll },
-        { category: '食事', note: '', costShare: 0.15, ...dinner },
-      ],
+      spots: [transit, ...buildDaySpots(['midday', 'afternoon', 'evening'])],
     };
   };
-  const buildMiddle = (): DayTemplate => {
-    const cafe = spot('cafe', (name) => `${name}で休憩`);
-    const food = spot('market', (name) => `${name}で人気グルメを味わう`);
-    const culture = spot('culture', (name) => `${name}を観光`);
-    const night = spot('night', (name) => `${name}で夜を楽しむ`);
-    return {
-      theme: 'カフェ・グルメ・観光',
-      spots: [
-        { category: 'カフェ', note: '', costShare: 0.05, ...cafe },
-        { category: '食事', note: '', costShare: 0.15, ...food },
-        { category: '文化', note: '', costShare: 0.1, ...culture },
-        { category: '夜景', note: '', costShare: 0.05, ...night },
-      ],
-    };
-  };
+  const buildMiddle = (): DayTemplate => ({
+    theme: `${dna.label}を楽しむ1日`,
+    spots: buildDaySpots(['morning', 'midday', 'afternoon', 'evening']),
+  });
   const buildLast = (): DayTemplate => {
-    const shopping = spot('shopping', (name) => `${name}でお土産・ショッピング`);
-    const lunch = spot('lunch', (name) => `${name}で軽めランチ`);
+    const transit: SpotTemplate = {
+      category: '移動',
+      note: '出発時刻に合わせて移動',
+      costShare: 0,
+      activity: 'ホテルチェックアウト・移動',
+      ...transitSpot,
+    };
     return {
       theme: 'お土産・軽めランチ・帰宅',
-      spots: [
-        { category: '買い物', note: '', costShare: 0.1, ...shopping },
-        { category: '食事', note: '', costShare: 0.1, ...lunch },
-        { category: '移動', note: '出発時刻に合わせて移動', costShare: 0, activity: 'ホテルチェックアウト・移動', ...transitSpot },
-      ],
+      spots: [...buildDaySpots(['morning', 'midday']), transit],
     };
   };
 
-  if (dayCount <= 1) {
-    const arrival = buildArrival();
-    return [{ ...arrival, spots: arrival.spots.slice(0, 3) }];
-  }
-  if (dayCount === 2) return [buildArrival(), buildLast()];
+  const templates = (() => {
+    if (dayCount <= 1) {
+      const arrival = buildArrival();
+      return [{ ...arrival, spots: arrival.spots.slice(0, 4) }];
+    }
+    if (dayCount === 2) return [buildArrival(), buildLast()];
+    return [buildArrival(), ...Array.from({ length: dayCount - 2 }, () => buildMiddle()), buildLast()];
+  })();
 
-  const middles = Array.from({ length: dayCount - 2 }, () => buildMiddle());
-  return [buildArrival(), ...middles, buildLast()];
+  // 候補が本当に不足していて、ある日が丸ごと空（移動アイテムのみ）になったときだけ、
+  // 空白のカードを避けるための自然な1文を最後の保険として入れる（技術的な文言・散策の穴埋めはしない）。
+  return templates.map((template) => {
+    const hasRealSpot = template.spots.some((spot) => spot.isSpecificPlace);
+    if (hasRealSpot) return template;
+    return {
+      ...template,
+      spots: [
+        ...template.spots,
+        {
+          category: '体験',
+          note: '',
+          costShare: 0.05,
+          activity: `${location}を自由に楽しむ`,
+          mapsQuery: genericMapsQuery(normalized, 'stroll'),
+          isSpecificPlace: false,
+          placeType: 'activity' as PlaceCategory,
+          popularityType: 'fallback' as PopularityType,
+          confidence: 'low' as const,
+          source: 'fallback' as ItineraryItem['source'],
+          placeId: null,
+          rating: null,
+          reviewCount: null,
+          reason: `${location}を思い思いに過ごす時間です。`,
+        },
+      ],
+    };
+  });
 }
 
 /** Evenly spaced start times for a day, honoring an optional earliest/latest bound. */
@@ -719,7 +783,14 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
   const accommodationFields = normalizeAccommodationFields(
     input.accommodation ?? input.accommodationArea ?? input.accommodationName,
   );
-  const templates = buildGooglePlacesDayTemplates(candidates, normalizedDestination, purpose, companion, dayCount, {
+  const dna = resolveTripDnaOrDefault({
+    personality: input.personality,
+    companion: input.companion,
+    mood: input.mood,
+    travelIntent: input.travelIntent,
+    customPreferences: input.customPreferences,
+  });
+  const templates = buildGooglePlacesDayTemplates(candidates, normalizedDestination, purpose, companion, dayCount, dna, {
     baseArea: destinationDetails.baseArea,
     arrivalPoint: destinationDetails.arrivalPoint,
     accommodation: accommodationFields.accommodation,
@@ -739,15 +810,25 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
         const dayNumber = index + 1;
         const isFirstDay = index === 0;
         const isLastDay = index === templates.length - 1;
+
+        // Defense in depth: even though buildGooglePlacesDayTemplates already consumes each
+        // candidate from a shared pool, drop any spot here too in case a future caller reuses
+        // templates. A duplicate is dropped entirely (shorter day) — never replaced with an
+        // abstract "散策" filler or a technical "切り替えました" reason.
+        const dedupedSpots = template.spots.filter((spot) => !(spot.placeId && usedPlaceIds.has(spot.placeId)));
+        for (const spot of dedupedSpots) {
+          if (spot.placeId) usedPlaceIds.add(spot.placeId);
+        }
+
         const slots = buildDaySlotMinutes({
-          spotCount: template.spots.length,
+          spotCount: dedupedSpots.length,
           isFirstDay,
           isLastDay,
           earliestStartMinutes,
           latestEndMinutes,
         });
 
-        const items = template.spots.map((spot, spotIndex) => {
+        const items = dedupedSpots.map((spot, spotIndex) => {
           let timeMinutes = slots[spotIndex];
           if (
             spot.placeType === 'nightlife' ||
@@ -759,32 +840,6 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
           if (isLastDay && latestEndMinutes != null) {
             timeMinutes = Math.min(timeMinutes, Math.max(7 * 60 + 30, latestEndMinutes - 90));
           }
-
-          // Defense in depth: even though buildGooglePlacesDayTemplates already consumes each
-          // candidate from a shared pool, guard here too in case a future caller reuses templates.
-          if (spot.placeId && usedPlaceIds.has(spot.placeId)) {
-            return buildFallbackItem({
-              timeMinutes,
-              activity: genericAreaPhrase(normalizedDestination.destinationLabel, 'stroll'),
-              category: spot.category,
-              reason: '同じ候補が旅行中に重複したため、エリア案内に切り替えています。',
-              estimatedCost:
-                spot.costShare > 0
-                  ? `${symbol}${Math.round(budgetAmount * spot.costShare || 10000).toLocaleString()}`
-                  : `${symbol}0`,
-              note: spot.note,
-              mapsQuery: genericMapsQuery(normalizedDestination, 'stroll'),
-              isSpecificPlace: false,
-              placeType: spot.placeType,
-              popularityType: 'fallback',
-              confidence: 'low',
-              source: 'fallback',
-              placeId: null,
-              rating: null,
-              reviewCount: null,
-            });
-          }
-          if (spot.placeId) usedPlaceIds.add(spot.placeId);
 
           return buildFallbackItem({
             timeMinutes,
@@ -912,10 +967,41 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
   };
 }
 
+export type DevFallbackSelection = {
+  plan: ReturnType<typeof buildDevFallbackTravelPlan>;
+  fallbackType: 'google_places' | 'seed';
+};
+
+/**
+ * Single decision point for every "AI failed, build a safe plan instead" path in dev
+ * (retry-exhausted timeout, server-proxy dev-fallback marker, destination-mismatch guard, etc.).
+ * Always prefers the real, already-fetched Google Places candidates over the seed/mock template
+ * — the seed template ("テスト用スポット" / placeId: null) must only ever be used when
+ * `candidates` is genuinely empty (Places disabled, unconfigured, or the request itself found 0
+ * results).
+ */
+export function selectDevFallbackPlan(
+  input: PlanInput,
+  candidates: readonly PlaceCandidate[],
+  noticeOverride?: string,
+): DevFallbackSelection {
+  const fallbackType: 'google_places' | 'seed' = candidates.length > 0 ? 'google_places' : 'seed';
+  const plan =
+    fallbackType === 'google_places'
+      ? buildGooglePlacesFallbackTravelPlan(input, candidates)
+      : buildDevFallbackTravelPlan(input);
+
+  return {
+    plan: noticeOverride ? { ...plan, devFallbackNotice: noticeOverride } : plan,
+    fallbackType,
+  };
+}
+
 export function parseDevFallbackTravelPlanFromApiResponse(
   data: unknown,
   input: PlanInput,
-): ReturnType<typeof buildDevFallbackTravelPlan> | null {
+  candidates: readonly PlaceCandidate[] = [],
+): DevFallbackSelection | null {
   if (
     !data ||
     typeof data !== 'object' ||
@@ -929,8 +1015,5 @@ export function parseDevFallbackTravelPlanFromApiResponse(
       ? (data as { devFallbackNotice: string }).devFallbackNotice
       : DEV_FALLBACK_PLAN_NOTICE;
 
-  return {
-    ...buildDevFallbackTravelPlan(input),
-    devFallbackNotice: notice,
-  };
+  return selectDevFallbackPlan(input, candidates, notice);
 }

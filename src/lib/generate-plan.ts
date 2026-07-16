@@ -107,10 +107,9 @@ import {
   extractPlanGenerationDevMeta,
 } from './plan-generation-dev-meta';
 import {
-  buildDevFallbackTravelPlan,
-  buildGooglePlacesFallbackTravelPlan,
   DESTINATION_SAFETY_FALLBACK_NOTICE,
   parseDevFallbackTravelPlanFromApiResponse,
+  selectDevFallbackPlan,
 } from './travel-plan-dev-fallback';
 import { isLightweightMvp, lightweightMvpLog } from './lightweight-mvp';
 import {
@@ -556,8 +555,8 @@ const MVP_ITEM_SCHEMA = {
     },
     source: {
       type: 'string',
-      enum: ['seed', 'openai', 'google_places_later', 'fallback'],
-      description: 'このスポット名の由来。通常は openai。',
+      enum: ['seed', 'openai', 'google_places', 'google_places_later', 'fallback'],
+      description: 'このスポット名の由来。候補リストから選んだ場合は google_places、それ以外は通常 openai。',
     },
     placeId: {
       type: 'string',
@@ -768,7 +767,7 @@ type MvpAiPlanResponse = {
 const VALID_ITEM_CATEGORIES = new Set(['food', 'cafe', 'sightseeing', 'shopping', 'nightlife', 'activity']);
 const VALID_POPULARITY_TYPES = new Set(['popular', 'hidden_gem', 'local', 'classic', 'fallback']);
 const VALID_CONFIDENCE_LEVELS = new Set(['high', 'medium', 'low']);
-const VALID_SPOT_SOURCES = new Set(['seed', 'openai', 'google_places_later', 'fallback']);
+const VALID_SPOT_SOURCES = new Set(['seed', 'openai', 'google_places', 'google_places_later', 'fallback']);
 
 function parseMvpAiResponse(
   raw: unknown,
@@ -1413,10 +1412,20 @@ async function executePlanFromAiRequest(params: {
   }
 
   const data = await response.json();
-  const devFallbackPlan = parseDevFallbackTravelPlanFromApiResponse(data, params.fallbackPlanInput);
-  if (devFallbackPlan) {
-    console.warn('[AI] using dev fallback plan from API response');
-    return devFallbackPlan;
+  const devFallbackSelection = parseDevFallbackTravelPlanFromApiResponse(
+    data,
+    params.fallbackPlanInput,
+    params.placeCandidates ?? [],
+  );
+  if (devFallbackSelection) {
+    // Dev-only diagnostic (no secrets): the server proxy substitutes this marker response when
+    // OpenAI itself failed/timed out — must still prefer already-fetched Google candidates over
+    // the seed template, exactly like the retry-exhausted fallback below.
+    console.warn('[AI] using dev fallback plan from API response', {
+      fallbackType: devFallbackSelection.fallbackType,
+      placesCandidateCount: params.placeCandidates?.length ?? 0,
+    });
+    return devFallbackSelection.plan;
   }
 
   try {
@@ -1440,10 +1449,20 @@ async function executePlanFromAiRequest(params: {
         params.placeCandidates ?? [],
         params.fallbackPlanInput.location,
       );
-      if (__DEV__ && candidateEnforcement.fixesApplied.length > 0) {
-        console.warn('[Places] candidate selection enforcement applied fixes', {
-          fixes: candidateEnforcement.fixesApplied.slice(0, 8),
+      if (__DEV__) {
+        const selectedGooglePlaceCount = candidateEnforcement.days
+          .flatMap((day) => day.items)
+          .filter((item) => item.source === 'google_places').length;
+        console.log('[Places] candidate selection enforcement result', {
+          candidatesPassedToOpenAI: params.placeCandidates?.length ?? 0,
+          selectedGooglePlaceCount,
+          fixesAppliedCount: candidateEnforcement.fixesApplied.length,
         });
+        if (candidateEnforcement.fixesApplied.length > 0) {
+          console.warn('[Places] candidate selection enforcement applied fixes', {
+            fixes: candidateEnforcement.fixesApplied.slice(0, 8),
+          });
+        }
       }
 
       const sanitized = sanitizeItineraryForDestination(
@@ -1452,13 +1471,17 @@ async function executePlanFromAiRequest(params: {
       );
 
       if (sanitized.needsFullFallback) {
+        const destinationFallback = selectDevFallbackPlan(
+          params.fallbackPlanInput,
+          params.placeCandidates ?? [],
+          DESTINATION_SAFETY_FALLBACK_NOTICE,
+        );
         console.warn('[AI] destination mismatch detected in AI response, using safe fallback plan', {
           destination: params.fallbackPlanInput.location,
+          fallbackType: destinationFallback.fallbackType,
+          placesCandidateCount: params.placeCandidates?.length ?? 0,
         });
-        return {
-          ...buildDevFallbackTravelPlan(params.fallbackPlanInput),
-          devFallbackNotice: DESTINATION_SAFETY_FALLBACK_NOTICE,
-        };
+        return destinationFallback.plan;
       }
 
       if (sanitized.wasModified) {
@@ -1980,10 +2003,14 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   const placesCandidateCount = placeCandidatesResult?.candidates.length ?? 0;
   if (__DEV__ && lightweight) {
     // Dev-only diagnostic (no secrets): confirms whether Google Places candidates actually
-    // reached the prompt, and how much latency this step added before the OpenAI call starts.
+    // reached the prompt, how many distinct search intents ran, and how much latency this step
+    // added before the OpenAI call starts. Detailed per-intent counts are already logged inside
+    // fetchPlaceCandidatesForPlanPrompt — this just adds the elapsed time + final summary.
     console.log('[Places] candidates for prompt', {
       placesCandidateCount,
       candidatesPassedToPrompt: Boolean(placeCandidatesResult?.promptSection),
+      searchIntentCount: placeCandidatesResult?.diagnostics?.searchIntentCount ?? 0,
+      apiCallCount: placeCandidatesResult?.diagnostics?.apiCallCount ?? 0,
       elapsedMs: Date.now() - placesFetchStartedAt,
     });
   }
@@ -2006,24 +2033,21 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   } catch (err) {
     if (__DEV__ && isDevFallbackEligibleError(err)) {
       const googleCandidates = placeCandidatesResult?.candidates ?? [];
-      const fallbackType: 'google_places' | 'seed' = googleCandidates.length > 0 ? 'google_places' : 'seed';
+      const devFallback = selectDevFallbackPlan(enrichedInput, googleCandidates);
       // Dev-only diagnostic: elapsed time helps distinguish a genuine timeout (~20s per
       // attempt in lightweight mode) from an immediate network/parse failure. No secrets logged.
       console.warn('[AI] using dev fallback plan after retries exhausted', {
         errorName: err instanceof Error ? err.name : typeof err,
         errorMessage: err instanceof Error ? err.message : String(err),
         elapsedMs: Date.now() - aiRequestStartedAt,
-        fallbackType,
+        fallbackType: devFallback.fallbackType,
         placesCandidateCount,
       });
-      plan =
-        fallbackType === 'google_places'
-          ? buildGooglePlacesFallbackTravelPlan(enrichedInput, googleCandidates)
-          : buildDevFallbackTravelPlan(enrichedInput);
+      plan = devFallback.plan;
       if (__DEV__) {
         const finalGoogleItems = plan.items?.filter((item) => item.source === 'google_places') ?? [];
         console.log('[AI] fallback plan built', {
-          fallbackType,
+          fallbackType: devFallback.fallbackType,
           finalGooglePlaceCount: finalGoogleItems.length,
           selectedPlaceIds: finalGoogleItems.map((item) => item.placeId).filter(Boolean),
         });
@@ -2031,6 +2055,16 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     } else {
       throw err;
     }
+  }
+
+  if (__DEV__ && lightweight) {
+    const finalGoogleItems = plan.items?.filter((item) => item.source === 'google_places') ?? [];
+    console.log('[Places] final plan Google Places usage', {
+      fallbackType: plan.devFallbackNotice ? undefined : 'none',
+      finalGooglePlaceCount: finalGoogleItems.length,
+      selectedPlaceIds: finalGoogleItems.map((item) => item.placeId).filter(Boolean),
+      placesCandidateCount,
+    });
   }
 
   if (realPlaces) {

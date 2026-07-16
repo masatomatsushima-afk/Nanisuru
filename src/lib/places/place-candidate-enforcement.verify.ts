@@ -150,7 +150,24 @@ export function runPlaceCandidateEnforcementVerification(): VerificationReport {
     ),
   );
 
-  // 6. 例外を投げない（不正な入力でも best-effort でフォールバック）。
+  // 6. AIがplaceIdを省略/改変したがplaceNameは候補と一致 → 名前一致で救済し、placeIdも候補の値へ補正。
+  const missingPlaceIdInput = buildDays([
+    baseItem({ activity: '景福宮で観光', placeName: '景福宮', placeId: '' }),
+  ]);
+  const missingPlaceIdResult = enforcePlaceCandidateSelection(missingPlaceIdInput, CANDIDATES, 'Seoul, Korea');
+  const nameMatchedItem = missingPlaceIdResult.days[0]?.items[0];
+  cases.push(
+    assert(
+      'name_match_recovers_missing_place_id',
+      nameMatchedItem?.placeId === 'places/valid-2' &&
+        nameMatchedItem?.isSpecificPlace === true &&
+        nameMatchedItem?.source === 'google_places' &&
+        missingPlaceIdResult.fixesApplied.length === 0,
+      `recovered placeId=${nameMatchedItem?.placeId}, source=${nameMatchedItem?.source}`,
+    ),
+  );
+
+  // 7. 例外を投げない(不正な入力でも best-effort でフォールバック)。
   let threw = false;
   try {
     enforcePlaceCandidateSelection(

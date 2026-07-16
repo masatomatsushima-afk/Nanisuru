@@ -106,6 +106,13 @@ export function enforcePlaceCandidateSelection(
 
   try {
     const candidateMap = new Map(candidates.map((candidate) => [candidate.placeId, candidate]));
+    // AI models reliably copy human-readable names but sometimes drop/garble the opaque
+    // place_id string even while correctly picking a real candidate. Falling back to an exact
+    // name match (still 100% within the provided candidate list — never an invented store)
+    // avoids losing placeName/placeId/rating/source for those items.
+    const candidateByName = new Map(
+      candidates.map((candidate) => [candidate.placeName.trim().toLowerCase(), candidate]),
+    );
     const usedPlaceIds = new Set<string>();
     const normalized = normalizeDestination(rawLocation);
     const fixesApplied: string[] = [];
@@ -114,22 +121,26 @@ export function enforcePlaceCandidateSelection(
       ...day,
       items: day.items.map((item: ItineraryItem): ItineraryItem => {
         const placeId = item.placeId?.trim() || null;
-        const candidate = placeId ? candidateMap.get(placeId) : undefined;
+        const nameKey = item.placeName?.trim().toLowerCase();
+        const candidate =
+          (placeId ? candidateMap.get(placeId) : undefined) ??
+          (nameKey ? candidateByName.get(nameKey) : undefined);
+        const resolvedPlaceId = candidate?.placeId ?? placeId;
 
-        if (candidate && placeId && !usedPlaceIds.has(placeId)) {
-          usedPlaceIds.add(placeId);
+        if (candidate && resolvedPlaceId && !usedPlaceIds.has(resolvedPlaceId)) {
+          usedPlaceIds.add(resolvedPlaceId);
           return applyValidCandidate(item, candidate);
         }
 
         const claimsSpecificPlace = item.isSpecificPlace !== false && Boolean(item.placeName?.trim());
         if (placeId || claimsSpecificPlace) {
           const reason =
-            placeId && !candidate
-              ? 'invalid_place_id'
-              : placeId && usedPlaceIds.has(placeId)
-                ? 'duplicate_place_id'
+            candidate && resolvedPlaceId && usedPlaceIds.has(resolvedPlaceId)
+              ? 'duplicate_place_id'
+              : placeId && !candidate
+                ? 'invalid_place_id'
                 : 'specific_claim_without_valid_candidate';
-          fixesApplied.push(`${reason}: "${item.activity}" (placeId=${placeId ?? 'none'})`);
+          fixesApplied.push(`${reason}: "${item.activity}" (placeId=${resolvedPlaceId ?? 'none'})`);
           return downgradeToGenericItem(item, normalized);
         }
 
