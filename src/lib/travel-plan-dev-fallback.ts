@@ -29,6 +29,13 @@ import {
   getLatestActivityEndMinutes,
 } from './itinerary-quality';
 import {
+  DEFAULT_DAY_WINDOW_END_MINUTES,
+  DEFAULT_DAY_WINDOW_START_MINUTES,
+  resolveTargetItemCountForDay,
+} from './day-availability';
+import { resolvePurposeProfile, type PurposeProfile } from './purpose-profiles';
+import type { TravelTimingSettings } from '@/types/travel-timing';
+import {
   buildSeoulSeedMapsQuery,
   isSeoulDestination,
   pickSeoulSeedForKind,
@@ -36,13 +43,12 @@ import {
 } from './seoul-spot-seeds';
 import { enforceSpecificityOnDays } from './spot-specificity';
 import { validateAndFixItinerarySchedule } from './itinerary-schedule-validation';
+import { enforcePurposeComposition } from './purpose-composition-enforcement';
 import {
   resolveTripAudience,
   sanitizeItineraryTripCopy,
   sanitizePlanDetailsTripCopy,
 } from './trip-type-copy';
-import { resolveTripDnaOrDefault } from './trip-dna/trip-dna-engine';
-import type { TimeOfDaySlot, TripDnaProfile } from './trip-dna/trip-dna-types';
 import type { BudgetBreakdown, ItineraryDay, ItineraryItem } from '@/types/plan';
 import type { SpotCandidate } from '@/types/spot-candidate';
 import type { PlaceCandidate } from '@/types/place-candidate';
@@ -312,55 +318,17 @@ function buildDefaultDayTemplates(
   return [buildArrival(), ...middles, buildLast()];
 }
 
-/** slot × category → 安全なフレーズ（isAbstractItineraryItem の「で」+ジャンル語パターンを踏まない表現）。 */
-const GOOGLE_PLACES_ACTIVITY_PHRASE: Record<PlaceCategory, (placeName: string) => string> = {
-  food: (name) => `${name}で人気のグルメを味わう`,
-  cafe: (name) => `${name}で休憩`,
-  sightseeing: (name) => `${name}を観光`,
-  shopping: (name) => `${name}でお土産・ショッピングを楽しむ`,
-  nightlife: (name) => `${name}で夜を楽しむ`,
-  activity: (name) => `${name}を体験`,
-};
-
-/** カテゴリ → 日本語の activityCategory ラベル（UIのカテゴリバッジ表示用・enum制約なし）。 */
-const ACTIVITY_CATEGORY_LABEL_JA: Record<PlaceCategory, string> = {
-  food: '食事',
-  cafe: 'カフェ',
-  sightseeing: '文化',
-  shopping: '買い物',
-  nightlife: '夜景',
-  activity: '体験',
-};
-
-/**
- * Trip DNA の `timeOfDayRules` から、その時間帯スロットで最も優先すべきカテゴリを1つ返す
- * （`forbiddenCategories` は除外）。各ルールの `preferredCategories` は既にスロットにとって
- * 自然な順（例: 午後なら "カフェ→食事"）で書かれているため、その並び順の先頭をそのまま使う
- * （`categoryPriority` で上書きしない — そうすると food が常に全スロットを奪ってしまう）。
- * 該当カテゴリが無いスロット（例: family/relaxのnight）は null — 呼び出し側はそのスロット自体を省く。
- */
-function pickCategoryForSlot(dna: TripDnaProfile, slot: TimeOfDaySlot): PlaceCategory | null {
-  const forbidden = new Set(dna.forbiddenCategories);
-  const rule = dna.timeOfDayRules.find((entry) => entry.slot === slot);
-  const preferred = (rule?.preferredCategories ?? []).filter((category) => !forbidden.has(category));
-  return preferred[0] ?? null;
-}
-
 /**
  * Same day/slot shape as `buildDefaultDayTemplates`, but spots are filled from real Google
  * Places candidates (already ranked, already deduplicated) instead of the curated safe-area /
  * Seoul-seed lists. Each candidate is used at most once across the whole trip (removed from the
- * shared pool once assigned).
+ * pool once assigned). If the pool runs out before all slots are filled, remaining slots fall
+ * back to the same generic, destination-scoped phrasing used elsewhere (never an invented name).
  *
- * Which category each time-of-day slot wants is driven entirely by the resolved Trip DNA
- * (`dna.timeOfDayRules` / `dna.categoryPriority` / `dna.forbiddenCategories`) — this function has
- * no gourmet-specific (or any other DNA-specific) branching; a new DNA only needs a new config
- * entry in `trip-dna-profiles.ts`.
- *
- * If the candidate pool has nothing left for a slot's category, that slot is simply omitted
- * (shorter day) instead of falling back to an invented store, a mismatched-category candidate, or
- * an abstract "◯◯エリアを散策"-style filler — per product requirement, a shorter, all-real
- * itinerary is preferred over padding with fake/abstract content.
+ * Day sizing is driven by `resolveTargetItemCountForDay` (arrival/departure available minutes) —
+ * never the old hard-coded buildLast of 2 spots that collapsed evening-departure day 3 to one
+ * 17:00 item. Category mix follows PurposeProfile.allocation when available (config-driven —
+ * no gourmet-specific ifs). Independent stroll/walk cards are never emitted.
  */
 function buildGooglePlacesDayTemplates(
   candidatesInput: readonly PlaceCandidate[],
@@ -368,148 +336,199 @@ function buildGooglePlacesDayTemplates(
   purpose: string,
   companion: string,
   dayCount: number,
-  dna: TripDnaProfile,
   hub?: { baseArea?: string; arrivalPoint?: string; accommodation?: string },
+  travelTiming?: TravelTimingSettings | null,
+  purposeProfile?: PurposeProfile | null,
 ): DayTemplate[] {
   const pool: PlaceCandidate[] = [...candidatesInput];
 
   const takeCandidateForCategory = (category: PlaceCategory): PlaceCandidate | null => {
     const idx = pool.findIndex((candidate) => candidate.category === category);
-    if (idx < 0) return null;
-    return pool.splice(idx, 1)[0];
+    if (idx >= 0) return pool.splice(idx, 1)[0];
+    return pool.length > 0 ? pool.splice(0, 1)[0] : null;
   };
 
   const googleReason = (placeName: string) =>
     `${companion}との${purpose}に合うGoogle Places実在候補「${placeName}」です。`;
+  const fallbackReason = '該当するGoogle Places候補が無かったため、エリア案内に切り替えています。';
 
-  /**
-   * その時間帯スロットにDNAが望むカテゴリの候補を1件だけ割り当てる。候補が無ければ null を返し、
-   * 呼び出し側でスロットそのものを省く（架空店舗・カテゴリ不一致・技術的な「切り替え」文言は出さない）。
-   */
-  const spotForSlot = (
-    slot: TimeOfDaySlot,
-  ): (Pick<SpotTemplate, 'activity' | 'mapsQuery' | 'isSpecificPlace' | 'placeName' | 'placeType' | 'popularityType' | 'confidence' | 'source' | 'placeId' | 'rating' | 'reviewCount' | 'reason'>) | null => {
-    const category = pickCategoryForSlot(dna, slot);
-    if (!category) return null;
+  const PLACE_CATEGORY_TO_KIND: Record<PlaceCategory, GenericAreaPhraseKind> = {
+    food: 'market',
+    cafe: 'cafe',
+    sightseeing: 'culture',
+    shopping: 'shopping',
+    nightlife: 'night',
+    activity: 'culture',
+  };
+  const PLACE_CATEGORY_TO_ACTIVITY_CATEGORY: Record<PlaceCategory, string> = {
+    food: '食事',
+    cafe: 'カフェ',
+    sightseeing: '文化',
+    shopping: '買い物',
+    nightlife: '夜景',
+    activity: '体験',
+  };
+  const CATEGORY_ACTIVITY: Record<PlaceCategory, (name: string) => string> = {
+    food: (name) => `${name}で人気のグルメを味わう`,
+    cafe: (name) => `${name}でカフェ休憩を楽しむ`,
+    sightseeing: (name) => `${name}を訪れる`,
+    shopping: (name) => `${name}でお土産を探す`,
+    nightlife: (name) => `${name}で夜を楽しむ`,
+    activity: (name) => `${name}で体験を楽しむ`,
+  };
+
+  const allocationEntries = purposeProfile
+    ? (Object.entries(purposeProfile.allocation) as Array<[PlaceCategory, number]>)
+        .filter(([, weight]) => (weight ?? 0) > 0)
+        .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
+    : ([
+        ['food', 0.35],
+        ['sightseeing', 0.3],
+        ['cafe', 0.2],
+        ['shopping', 0.15],
+      ] as Array<[PlaceCategory, number]>);
+
+  /** Round-robin categories by allocation weight — no independent stroll/walk cards. */
+  const pickCategoriesForCount = (count: number): PlaceCategory[] => {
+    if (count <= 0) return [];
+    const picked: PlaceCategory[] = [];
+    const counters = new Map<PlaceCategory, number>();
+    for (let i = 0; i < count; i += 1) {
+      let best: PlaceCategory | null = null;
+      let bestScore = -Infinity;
+      for (const [category, weight] of allocationEntries) {
+        const used = counters.get(category) ?? 0;
+        const score = (weight ?? 0) / (used + 1);
+        if (score > bestScore) {
+          bestScore = score;
+          best = category;
+        }
+      }
+      if (!best) break;
+      // Soft daily food/cafe caps so fallback stays edible even when allocation favors food.
+      const foodSoFar = picked.filter((c) => c === 'food').length;
+      const cafeSoFar = picked.filter((c) => c === 'cafe').length;
+      if (best === 'food' && foodSoFar >= 2) {
+        best = allocationEntries.find(([c]) => c !== 'food' && c !== 'cafe')?.[0] ?? 'sightseeing';
+      } else if (best === 'cafe' && cafeSoFar >= 2) {
+        best = allocationEntries.find(([c]) => c !== 'cafe')?.[0] ?? 'sightseeing';
+      }
+      counters.set(best, (counters.get(best) ?? 0) + 1);
+      picked.push(best);
+    }
+    return picked;
+  };
+
+  const spotFromCategory = (category: PlaceCategory): SpotTemplate => {
+    const kind = PLACE_CATEGORY_TO_KIND[category];
     const candidate = takeCandidateForCategory(category);
-    if (!candidate) return null;
+    if (candidate) {
+      const mapsQuery = `${candidate.placeName} ${normalized.destinationLabel}`.trim();
+      const resolvedCategory = candidate.category ?? category;
+      return {
+        activity: CATEGORY_ACTIVITY[resolvedCategory](candidate.placeName),
+        category: PLACE_CATEGORY_TO_ACTIVITY_CATEGORY[resolvedCategory],
+        note: '',
+        costShare: resolvedCategory === 'food' ? 0.15 : 0.08,
+        mapsQuery,
+        isSpecificPlace: true,
+        placeName: candidate.placeName,
+        placeType: resolvedCategory,
+        popularityType: candidate.rating != null && candidate.rating >= 4.3 ? 'popular' : 'classic',
+        confidence: 'high',
+        source: 'google_places',
+        placeId: candidate.placeId,
+        rating: candidate.rating ?? null,
+        reviewCount: candidate.reviewCount ?? null,
+        reason: googleReason(candidate.placeName),
+      };
+    }
 
-    const mapsQuery = `${candidate.placeName} ${normalized.destinationLabel}`.trim();
     return {
-      activity: GOOGLE_PLACES_ACTIVITY_PHRASE[category](candidate.placeName),
-      mapsQuery,
-      isSpecificPlace: true,
-      placeName: candidate.placeName,
-      placeType: candidate.category ?? category,
-      popularityType: candidate.rating != null && candidate.rating >= 4.3 ? 'popular' : 'classic',
-      confidence: 'high',
-      source: 'google_places',
-      placeId: candidate.placeId,
-      rating: candidate.rating ?? null,
-      reviewCount: candidate.reviewCount ?? null,
-      reason: googleReason(candidate.placeName),
+      activity: genericAreaPhrase(normalized.destinationLabel, kind),
+      category: PLACE_CATEGORY_TO_ACTIVITY_CATEGORY[category],
+      note: '',
+      costShare: 0.05,
+      mapsQuery: genericMapsQuery(normalized, kind),
+      isSpecificPlace: false,
+      placeType: category,
+      popularityType: 'fallback',
+      confidence: 'low',
+      source: 'fallback',
+      placeId: null,
+      rating: null,
+      reviewCount: null,
+      reason: fallbackReason,
     };
   };
 
   const transitMapsQuery = buildDestinationMapsSuffix(normalized);
-  const transitSpot = {
+  const transitSpot: SpotTemplate = {
+    activity: 'ホテルチェックアウト・移動',
+    category: '移動',
+    note: '出発時刻に合わせて移動',
+    costShare: 0,
     mapsQuery: transitMapsQuery,
     isSpecificPlace: false,
-    placeType: 'activity' as PlaceCategory,
-    popularityType: 'fallback' as PopularityType,
-    confidence: 'low' as const,
+    placeType: 'activity',
+    popularityType: 'fallback',
+    confidence: 'low',
     reason: '移動・ロジスティクスのため候補選定の対象外です。',
   };
 
   const hubLabel = hub?.baseArea || hub?.accommodation || normalized.destinationLabel;
   const location = normalized.destinationLabel;
 
-  const buildDaySpots = (slots: readonly TimeOfDaySlot[]): SpotTemplate[] => {
+  const templates: DayTemplate[] = [];
+  for (let dayIndex = 0; dayIndex < dayCount; dayIndex += 1) {
+    const isFirstDay = dayIndex === 0;
+    const isLastDay = dayIndex === dayCount - 1;
+    const { targetItemCount } = resolveTargetItemCountForDay({
+      dayIndex,
+      totalDays: dayCount,
+      travelTiming,
+    });
+
     const spots: SpotTemplate[] = [];
-    for (const slot of slots) {
-      const resolved = spotForSlot(slot);
-      if (!resolved) continue;
+
+    if (isFirstDay) {
+      const arrivalActivity = hub?.arrivalPoint
+        ? `${hub.arrivalPoint}到着・${hubLabel}へ移動`
+        : `${location}到着・チェックイン`;
       spots.push({
-        category: ACTIVITY_CATEGORY_LABEL_JA[resolved.placeType] ?? '体験',
-        note: '',
-        costShare: 0.15,
-        ...resolved,
+        ...transitSpot,
+        activity: arrivalActivity,
+        note: '到着後の移動・荷物整理',
       });
     }
-    return spots;
-  };
 
-  const buildArrival = (): DayTemplate => {
-    const arrivalActivity = hub?.arrivalPoint
-      ? `${hub.arrivalPoint}到着・${hubLabel}へ移動`
-      : `${location}到着・チェックイン`;
-    const transit: SpotTemplate = {
-      category: '移動',
-      note: '到着後の移動・荷物整理',
-      costShare: 0,
-      activity: arrivalActivity,
-      ...transitSpot,
-    };
-    return {
-      theme: hub?.baseArea ? `到着・${hub.baseArea}周辺` : `到着・${purpose}`,
-      spots: [transit, ...buildDaySpots(['midday', 'afternoon', 'evening'])],
-    };
-  };
-  const buildMiddle = (): DayTemplate => ({
-    theme: `${dna.label}を楽しむ1日`,
-    spots: buildDaySpots(['morning', 'midday', 'afternoon', 'evening']),
-  });
-  const buildLast = (): DayTemplate => {
-    const transit: SpotTemplate = {
-      category: '移動',
-      note: '出発時刻に合わせて移動',
-      costShare: 0,
-      activity: 'ホテルチェックアウト・移動',
-      ...transitSpot,
-    };
-    return {
-      theme: 'お土産・軽めランチ・帰宅',
-      spots: [...buildDaySpots(['morning', 'midday']), transit],
-    };
-  };
-
-  const templates = (() => {
-    if (dayCount <= 1) {
-      const arrival = buildArrival();
-      return [{ ...arrival, spots: arrival.spots.slice(0, 4) }];
+    // target 0 (e.g. midday airport departure) → transit/checkout only, no cram.
+    const activityCount = Math.max(0, targetItemCount);
+    const categories = pickCategoriesForCount(activityCount);
+    for (const category of categories) {
+      spots.push(spotFromCategory(category));
     }
-    if (dayCount === 2) return [buildArrival(), buildLast()];
-    return [buildArrival(), ...Array.from({ length: dayCount - 2 }, () => buildMiddle()), buildLast()];
-  })();
 
-  // 候補が本当に不足していて、ある日が丸ごと空（移動アイテムのみ）になったときだけ、
-  // 空白のカードを避けるための自然な1文を最後の保険として入れる（技術的な文言・散策の穴埋めはしない）。
-  return templates.map((template) => {
-    const hasRealSpot = template.spots.some((spot) => spot.isSpecificPlace);
-    if (hasRealSpot) return template;
-    return {
-      ...template,
-      spots: [
-        ...template.spots,
-        {
-          category: '体験',
-          note: '',
-          costShare: 0.05,
-          activity: `${location}を自由に楽しむ`,
-          mapsQuery: genericMapsQuery(normalized, 'stroll'),
-          isSpecificPlace: false,
-          placeType: 'activity' as PlaceCategory,
-          popularityType: 'fallback' as PopularityType,
-          confidence: 'low' as const,
-          source: 'fallback' as ItineraryItem['source'],
-          placeId: null,
-          rating: null,
-          reviewCount: null,
-          reason: `${location}を思い思いに過ごす時間です。`,
-        },
-      ],
-    };
-  });
+    if (isLastDay) {
+      spots.push({ ...transitSpot });
+    }
+
+    const theme = isFirstDay
+      ? hub?.baseArea
+        ? `到着・${hub.baseArea}周辺`
+        : `到着・${purpose}`
+      : isLastDay
+        ? activityCount <= 1
+          ? '出発・移動'
+          : 'お土産・軽めの予定・帰宅'
+        : purposeProfile?.label
+          ? `${purposeProfile.label}・観光`
+          : 'カフェ・グルメ・観光';
+
+    templates.push({ theme, spots });
+  }
+
+  return templates;
 }
 
 /** Evenly spaced start times for a day, honoring an optional earliest/latest bound. */
@@ -521,21 +540,42 @@ function buildDaySlotMinutes(params: {
   latestEndMinutes: number | null;
 }): number[] {
   const { spotCount, isFirstDay, isLastDay, earliestStartMinutes, latestEndMinutes } = params;
+  if (spotCount <= 0) return [];
 
-  if (isLastDay && latestEndMinutes != null) {
-    const lastItemStart = Math.max(
-      8 * 60,
-      latestEndMinutes - DEFAULT_LAST_ITEM_END_BUFFER_MINUTES,
-    );
-    const firstItemStart = Math.max(8 * 60, lastItemStart - (spotCount - 1) * DAY_SPACING_MINUTES);
+  const windowStart =
+    isFirstDay && earliestStartMinutes != null
+      ? Math.max(DEFAULT_DAY_WINDOW_START_MINUTES, earliestStartMinutes)
+      : DEFAULT_DAY_START_MINUTES;
+  const windowEnd =
+    isLastDay && latestEndMinutes != null
+      ? Math.min(DEFAULT_DAY_WINDOW_END_MINUTES, latestEndMinutes - DEFAULT_LAST_ITEM_END_BUFFER_MINUTES)
+      : DEFAULT_DAY_WINDOW_END_MINUTES;
+
+  const available = Math.max(0, windowEnd - windowStart);
+
+  // Short last-day window: pack toward the end so the final activity finishes before departure.
+  // Long window (typical evening departure): schedule forward from morning so the day is filled
+  // — the old end-packing path always landed the last slot at ~17:00 and caused the "1 item at
+  // 17:00" collapse when combined with the hard max-2 final-day validator.
+  if (isLastDay && latestEndMinutes != null && available < 5 * 60 && spotCount <= 2) {
+    const lastItemStart = Math.max(windowStart, windowEnd);
+    const firstItemStart = Math.max(windowStart, lastItemStart - (spotCount - 1) * DAY_SPACING_MINUTES);
     return Array.from({ length: spotCount }, (_, i) =>
       Math.min(lastItemStart, firstItemStart + i * DAY_SPACING_MINUTES),
     );
   }
 
-  const startMinutes =
-    isFirstDay && earliestStartMinutes != null ? earliestStartMinutes : DEFAULT_DAY_START_MINUTES;
-  return Array.from({ length: spotCount }, (_, i) => startMinutes + i * DAY_SPACING_MINUTES);
+  const spacing =
+    spotCount <= 1
+      ? 0
+      : Math.max(
+          DAY_SPACING_MINUTES,
+          Math.floor(Math.max(available, DAY_SPACING_MINUTES) / Math.max(1, spotCount - 1)),
+        );
+  return Array.from({ length: spotCount }, (_, i) => {
+    const raw = windowStart + i * spacing;
+    return Math.min(raw, Math.max(windowStart, windowEnd));
+  });
 }
 
 function buildBudgetBreakdown(
@@ -617,8 +657,12 @@ export function buildDevFallbackTravelPlan(input: PlanInput) {
       ) {
         timeMinutes = Math.max(timeMinutes, 19 * 60 + 30);
       }
-      if (isLastDay && latestEndMinutes != null) {
-        timeMinutes = Math.min(timeMinutes, Math.max(7 * 60 + 30, latestEndMinutes - 90));
+      // Only clamp last-day overruns — do not pull every slot to cutoff-90.
+      if (isLastDay && latestEndMinutes != null && timeMinutes > latestEndMinutes - 30) {
+        timeMinutes = Math.max(
+          slots[0] ?? DEFAULT_DAY_START_MINUTES,
+          latestEndMinutes - DEFAULT_LAST_ITEM_END_BUFFER_MINUTES,
+        );
       }
 
       return buildFallbackItem({
@@ -783,18 +827,27 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
   const accommodationFields = normalizeAccommodationFields(
     input.accommodation ?? input.accommodationArea ?? input.accommodationName,
   );
-  const dna = resolveTripDnaOrDefault({
+  const purposeProfile = resolvePurposeProfile({
     personality: input.personality,
     companion: input.companion,
     mood: input.mood,
     travelIntent: input.travelIntent,
     customPreferences: input.customPreferences,
   });
-  const templates = buildGooglePlacesDayTemplates(candidates, normalizedDestination, purpose, companion, dayCount, dna, {
-    baseArea: destinationDetails.baseArea,
-    arrivalPoint: destinationDetails.arrivalPoint,
-    accommodation: accommodationFields.accommodation,
-  });
+  const templates = buildGooglePlacesDayTemplates(
+    candidates,
+    normalizedDestination,
+    purpose,
+    companion,
+    dayCount,
+    {
+      baseArea: destinationDetails.baseArea,
+      arrivalPoint: destinationDetails.arrivalPoint,
+      accommodation: accommodationFields.accommodation,
+    },
+    input.travelTiming,
+    purposeProfile,
+  );
   const timing = input.travelTiming;
   const earliestStartMinutes = getEarliestActivityStartMinutes(timing);
   const latestEndMinutes = getLatestActivityEndMinutes(timing);
@@ -810,25 +863,15 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
         const dayNumber = index + 1;
         const isFirstDay = index === 0;
         const isLastDay = index === templates.length - 1;
-
-        // Defense in depth: even though buildGooglePlacesDayTemplates already consumes each
-        // candidate from a shared pool, drop any spot here too in case a future caller reuses
-        // templates. A duplicate is dropped entirely (shorter day) — never replaced with an
-        // abstract "散策" filler or a technical "切り替えました" reason.
-        const dedupedSpots = template.spots.filter((spot) => !(spot.placeId && usedPlaceIds.has(spot.placeId)));
-        for (const spot of dedupedSpots) {
-          if (spot.placeId) usedPlaceIds.add(spot.placeId);
-        }
-
         const slots = buildDaySlotMinutes({
-          spotCount: dedupedSpots.length,
+          spotCount: template.spots.length,
           isFirstDay,
           isLastDay,
           earliestStartMinutes,
           latestEndMinutes,
         });
 
-        const items = dedupedSpots.map((spot, spotIndex) => {
+        const items = template.spots.map((spot, spotIndex) => {
           let timeMinutes = slots[spotIndex];
           if (
             spot.placeType === 'nightlife' ||
@@ -837,9 +880,40 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
           ) {
             timeMinutes = Math.max(timeMinutes, 19 * 60 + 30);
           }
-          if (isLastDay && latestEndMinutes != null) {
-            timeMinutes = Math.min(timeMinutes, Math.max(7 * 60 + 30, latestEndMinutes - 90));
+          // Only clamp last-day times that actually overrun the cutoff — do NOT pull every
+          // slot back to cutoff-90 (that was the "everything lands at 17:00" bug).
+          if (isLastDay && latestEndMinutes != null && timeMinutes > latestEndMinutes - 30) {
+            timeMinutes = Math.max(
+              slots[0] ?? DEFAULT_DAY_START_MINUTES,
+              latestEndMinutes - DEFAULT_LAST_ITEM_END_BUFFER_MINUTES,
+            );
           }
+
+          // Defense in depth: even though buildGooglePlacesDayTemplates already consumes each
+          // candidate from a shared pool, guard here too in case a future caller reuses templates.
+          if (spot.placeId && usedPlaceIds.has(spot.placeId)) {
+            return buildFallbackItem({
+              timeMinutes,
+              activity: genericAreaPhrase(normalizedDestination.destinationLabel, 'culture'),
+              category: spot.category,
+              reason: '同じ候補が旅行中に重複したため、エリア案内に切り替えています。',
+              estimatedCost:
+                spot.costShare > 0
+                  ? `${symbol}${Math.round(budgetAmount * spot.costShare || 10000).toLocaleString()}`
+                  : `${symbol}0`,
+              note: spot.note,
+              mapsQuery: genericMapsQuery(normalizedDestination, 'culture'),
+              isSpecificPlace: false,
+              placeType: spot.placeType,
+              popularityType: 'fallback',
+              confidence: 'low',
+              source: 'fallback',
+              placeId: null,
+              rating: null,
+              reviewCount: null,
+            });
+          }
+          if (spot.placeId) usedPlaceIds.add(spot.placeId);
 
           return buildFallbackItem({
             timeMinutes,
@@ -864,9 +938,10 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
           });
         });
 
-        const timeWindow = `${formatMinutesAsTime(slots[0])}〜${formatMinutesAsTime(
-          slots[slots.length - 1] + 60,
-        )}`;
+        const timeWindow =
+          slots.length > 0
+            ? `${formatMinutesAsTime(slots[0])}〜${formatMinutesAsTime(slots[slots.length - 1] + 60)}`
+            : undefined;
 
         return {
           dayNumber,
@@ -882,11 +957,43 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
     travelTiming: timing,
     destinationDetails,
   });
+
+  const purposeComposition = enforcePurposeComposition(scheduled.days, {
+    profile: purposeProfile,
+    selectedMood: input.mood,
+    candidates,
+    rawLocation: location,
+  });
+
+  if (__DEV__) {
+    const foodItems = purposeComposition.days
+      .flatMap((day) => day.items)
+      .filter((item) => item.category === 'food' || item.category === 'cafe');
+    const totalNonTransit = purposeComposition.days
+      .flatMap((day) => day.items)
+      .filter((item) => item.activityCategory !== '移動');
+    console.log('[Places] google fallback day allocation', {
+      fallbackType: 'google_places',
+      foodRatio: purposeComposition.foodRatio,
+      itemsRemovedByFinalDayValidation: scheduled.itemsRemovedByFinalDayValidation,
+      dayAvailableMinutes: scheduled.dayDiagnostics.map((d) => d.dayAvailableMinutes),
+      targetItemCountPerDay: scheduled.dayDiagnostics.map((d) => d.targetItemCountPerDay),
+      actualItemCountPerDay: scheduled.dayDiagnostics.map((d) => d.actualItemCountPerDay),
+      foodItemCountPerDay: scheduled.dayDiagnostics.map((d) => d.foodItemCountPerDay),
+      finalDayCutoffTime: scheduled.dayDiagnostics[scheduled.dayDiagnostics.length - 1]?.finalDayCutoffTime ?? null,
+      selectedPlaceIdsByDay: purposeComposition.days.map((day) =>
+        day.items.map((item) => item.placeId).filter(Boolean),
+      ),
+      foodItemCount: foodItems.length,
+      totalItemCount: totalNonTransit.length,
+    });
+  }
+
   const tripAudience = resolveTripAudience({
     companion: input.companion,
     planCreationType: input.planCreationType ?? input.planType,
   });
-  const tripCopy = sanitizeItineraryTripCopy(scheduled.days, tripAudience);
+  const tripCopy = sanitizeItineraryTripCopy(purposeComposition.days, tripAudience);
   const days: ItineraryDay[] = tripCopy.days;
 
   const budgetBreakdown = buildBudgetBreakdown(budgetAmount, symbol, dayCount);

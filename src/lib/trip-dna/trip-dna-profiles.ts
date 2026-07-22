@@ -17,19 +17,19 @@ export const TRIP_DNA_PROFILES: readonly TripDnaProfile[] = [
       personalityMatch: ['グルメ'],
       keywordPattern: /グルメ|食べ歩き|フード|food|gourmet|レストラン巡/i,
     },
-    activityWeights: { food: 0.7, sightseeing: 0.15, shopping: 0.1, activity: 0.05 },
+    activityWeights: { food: 0.35, cafe: 0.2, sightseeing: 0.3, shopping: 0.15 },
     placesCategories: ['food', 'cafe', 'sightseeing', 'shopping'],
     categoryPriority: ['food', 'cafe', 'sightseeing', 'shopping', 'activity'],
     forbiddenCategories: [],
     timeOfDayRules: [
-      { slot: 'morning', preferredCategories: ['food', 'cafe'], forbiddenCategories: ['nightlife'] },
-      { slot: 'midday', preferredCategories: ['food'], forbiddenCategories: ['nightlife'] },
-      { slot: 'afternoon', preferredCategories: ['cafe', 'food'] },
-      { slot: 'evening', preferredCategories: ['food'] },
+      { slot: 'morning', preferredCategories: ['food', 'cafe', 'sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'midday', preferredCategories: ['food', 'sightseeing'], forbiddenCategories: ['nightlife'] },
+      { slot: 'afternoon', preferredCategories: ['sightseeing', 'cafe', 'shopping'] },
+      { slot: 'evening', preferredCategories: ['food', 'sightseeing'] },
       { slot: 'night', preferredCategories: ['food'] },
     ],
-    validationRules: { minDominantCategoryRatio: 0.6, maxAbstractItems: 1 },
-    fallbackRule: { degradeCategoryOrder: ['food', 'cafe', 'sightseeing', 'activity'], genericAreaPhraseStyle: 'culinary' },
+    validationRules: { minDominantCategoryRatio: 0.45, maxAbstractItems: 0 },
+    fallbackRule: { degradeCategoryOrder: ['food', 'cafe', 'sightseeing', 'shopping', 'activity'], genericAreaPhraseStyle: 'culinary' },
     dominantCategory: 'food',
   },
   {
@@ -232,3 +232,4 @@ export const DEFAULT_TRIP_DNA_PROFILE: TripDnaProfile = {
   fallbackRule: { degradeCategoryOrder: ['sightseeing', 'food', 'cafe', 'shopping', 'activity'], genericAreaPhraseStyle: 'neutral' },
   dominantCategory: 'sightseeing',
 };
+

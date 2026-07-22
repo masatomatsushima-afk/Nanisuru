@@ -21,7 +21,7 @@ import {
   enforceDestinationScopedQuery,
   normalizeDestination,
 } from './destination-safety';
-import type { PurposeProfile } from './purpose-profiles';
+import { resolveDominantGroup, type PurposeProfile } from './purpose-profiles';
 import type { ItineraryDay, ItineraryItem } from '@/types/plan';
 import type { PlaceCategory } from '@/lib/destination-safety';
 import type { PlaceCandidate } from '@/types/place-candidate';
@@ -64,21 +64,25 @@ export type PurposeCompositionReport = {
   dominantCategoryItemCount: number;
   totalItemCount: number;
   dominantCategoryRatio: number;
+  /** food+cafe etc. when counted via dominantGroup — same as dominantCategoryRatio for single-category profiles. */
+  foodRatio: number;
   abstractWalkItemsRemoved: number;
   googlePlaceCount: number;
   fixesApplied: string[];
 };
 
-function countByCategory(
+function countByCategories(
   days: readonly ItineraryDay[],
-  category: PlaceCategory | null,
+  categories: readonly PlaceCategory[] | null,
 ): { matched: number; total: number } {
+  const categorySet = categories ? new Set(categories) : null;
   let matched = 0;
   let total = 0;
   for (const day of days) {
     for (const item of day.items) {
+      if (item.activityCategory === '移動') continue;
       total += 1;
-      if (category && item.category === category) matched += 1;
+      if (categorySet && item.category && categorySet.has(item.category)) matched += 1;
     }
   }
   return { matched, total };
@@ -89,16 +93,18 @@ function buildNoopReport(
   profile: PurposeProfile | null,
   selectedMood: string,
 ): PurposeCompositionReport {
-  const dominantCategory = profile?.dominantCategory ?? null;
-  const { matched, total } = countByCategory(days, dominantCategory);
+  const dominantGroup = profile ? resolveDominantGroup(profile) : null;
+  const { matched, total } = countByCategories(days, dominantGroup);
+  const ratio = total > 0 ? matched / total : 0;
   return {
     days: days as ItineraryDay[],
     purposeId: profile?.id ?? null,
     selectedMood,
-    dominantCategory,
+    dominantCategory: profile?.dominantCategory ?? null,
     dominantCategoryItemCount: matched,
     totalItemCount: total,
-    dominantCategoryRatio: total > 0 ? matched / total : 0,
+    dominantCategoryRatio: ratio,
+    foodRatio: ratio,
     abstractWalkItemsRemoved: 0,
     googlePlaceCount: 0,
     fixesApplied: [],
@@ -181,6 +187,11 @@ export function enforcePurposeComposition(
       };
     };
 
+    const dominantGroup = resolveDominantGroup(profile);
+    const dominantGroupSet = new Set(dominantGroup);
+    const isInDominantGroup = (item: ItineraryItem): boolean =>
+      Boolean(item.category && dominantGroupSet.has(item.category));
+
     // Step 1: independent, abstract "activity" filler items (店名を伴わない散策・移動)
     // are capped at maxAbstractWalkItems for the whole trip — extras are folded into an
     // adjacent item's note. Skipped entirely when 'activity' IS the dominant category
@@ -215,32 +226,29 @@ export function enforcePurposeComposition(
       });
     }
 
-    // Step 2: upgrade vague dominant-category items (structurally generic — no real venue
-    // attached) with a real candidate when one is available.
+    // Step 2: upgrade vague dominant-group items with a real candidate when one is available.
     nextDays = nextDays.map((day) => ({
       ...day,
       items: day.items.map((item) => {
-        if (!isGenericCategoryItem(item, profile.dominantCategory) || isLogisticsItem(item)) return item;
-        const candidate = takeNextCandidate(profile.dominantCategory);
+        if (!item.category || !dominantGroupSet.has(item.category)) return item;
+        if (!isGenericCategoryItem(item, item.category) || isLogisticsItem(item)) return item;
+        const candidate =
+          takeNextCandidate(item.category) ?? takeNextCandidate(profile.dominantCategory);
         if (!candidate) return item;
         fixesApplied.push(`vague_dominant_item_upgraded: "${item.activity}" -> "${candidate.placeName}"`);
         return applyCandidateToItem(item, candidate);
       }),
     }));
 
-    // Step 3: if the dominant-category ratio is still below target, upgrade remaining
-    // non-dominant, non-logistics, non-reserved-walk-budget items (in order) with unused
-    // candidates until the ratio is met or candidates run out. Never invents a store — if
-    // candidates are exhausted, the shortfall is left as-is and reported via
-    // dominantCategoryRatio/fixesApplied (explicit "insufficient candidates", not a fake name).
-    let { matched: dominantCount, total: totalCount } = countByCategory(nextDays, profile.dominantCategory);
+    // Step 3: if the dominant-group ratio is still below target, upgrade remaining
+    // non-dominant items with unused dominant-group candidates until the ratio is met.
+    let { matched: dominantCount, total: totalCount } = countByCategories(nextDays, dominantGroup);
     if (totalCount > 0 && dominantCount / totalCount < profile.minDominantRatio) {
       outer: for (const day of nextDays) {
         for (let i = 0; i < day.items.length; i += 1) {
           if (dominantCount / totalCount >= profile.minDominantRatio) break outer;
           const item = day.items[i];
-          if (item.category === profile.dominantCategory || isLogisticsItem(item)) continue;
-          // Leave the intentionally-kept "walk budget" item(s) alone (Step 1 already capped them).
+          if (isInDominantGroup(item) || isLogisticsItem(item)) continue;
           if (profile.dominantCategory !== 'activity' && isGenericCategoryItem(item, 'activity')) continue;
           const candidate = takeNextCandidate(profile.dominantCategory);
           if (!candidate) break outer;
@@ -251,11 +259,45 @@ export function enforcePurposeComposition(
       }
     }
 
-    const finalCounts = countByCategory(nextDays, profile.dominantCategory);
+    // Step 4: if above maxDominantRatio, replace excess dominant-group items with unused
+    // non-dominant candidates from the allocation (sightseeing/shopping/etc). Never invents names.
+    if (profile.maxDominantRatio != null && totalCount > 0) {
+      let { matched: currentDominant, total: currentTotal } = countByCategories(nextDays, dominantGroup);
+      if (currentTotal > 0 && currentDominant / currentTotal > profile.maxDominantRatio) {
+        const nonDominantCategories = (Object.keys(profile.allocation) as PlaceCategory[]).filter(
+          (category) => !dominantGroupSet.has(category),
+        );
+        excess: for (const day of nextDays) {
+          for (let i = day.items.length - 1; i >= 0; i -= 1) {
+            if (currentDominant / currentTotal <= profile.maxDominantRatio) break excess;
+            const item = day.items[i];
+            if (!isInDominantGroup(item) || isLogisticsItem(item)) continue;
+            let replacement: PlaceCandidate | null = null;
+            for (const category of nonDominantCategories) {
+              replacement = takeNextCandidate(category);
+              if (replacement) break;
+            }
+            if (!replacement) break excess;
+            day.items[i] = applyCandidateToItem(item, replacement);
+            currentDominant -= 1;
+            fixesApplied.push(
+              `dominant_item_downgraded_for_max_ratio: "${item.activity}" -> "${replacement.placeName}"`,
+            );
+          }
+        }
+      }
+    }
+
+    const finalCounts = countByCategories(nextDays, dominantGroup);
     const finalRatio = finalCounts.total > 0 ? finalCounts.matched / finalCounts.total : 0;
     if (finalRatio < profile.minDominantRatio) {
       fixesApplied.push(
         `dominant_ratio_below_target_insufficient_candidates: ratio=${Math.round(finalRatio * 100)}%`,
+      );
+    }
+    if (profile.maxDominantRatio != null && finalRatio > profile.maxDominantRatio) {
+      fixesApplied.push(
+        `dominant_ratio_above_max_insufficient_replacements: ratio=${Math.round(finalRatio * 100)}%`,
       );
     }
 
@@ -267,6 +309,7 @@ export function enforcePurposeComposition(
       dominantCategoryItemCount: finalCounts.matched,
       totalItemCount: finalCounts.total,
       dominantCategoryRatio: finalRatio,
+      foodRatio: finalRatio,
       abstractWalkItemsRemoved,
       googlePlaceCount,
       fixesApplied,

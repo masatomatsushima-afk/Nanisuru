@@ -20,6 +20,7 @@ import {
   normalizePlaceName,
   parseTimeToMinutes,
 } from './itinerary-quality';
+import { resolveTargetItemCountForDay } from './day-availability';
 import {
   buildSeoulSeedMapsQuery,
   isSeoulDestination,
@@ -52,6 +53,17 @@ export type ItineraryScheduleValidationReport = {
   issuesFound: string[];
   removedCount: number;
   replacedCount: number;
+  /** Non-transit items removed by final-day cutoff / count limits. */
+  itemsRemovedByFinalDayValidation: number;
+  /** Per-day diagnostics for safe dev logs (no secrets). */
+  dayDiagnostics: Array<{
+    dayIndex: number;
+    dayAvailableMinutes: number;
+    targetItemCountPerDay: number;
+    actualItemCountPerDay: number;
+    foodItemCountPerDay: number;
+    finalDayCutoffTime: string | null;
+  }>;
 };
 
 function cloneDays(days: ItineraryDay[]): ItineraryDay[] {
@@ -116,11 +128,18 @@ export function isTowerDaytimeViewItem(item: ItineraryItem): boolean {
   return TOWER_VIEW_PATTERN.test(haystack) && !NIGHT_VIEW_ACTIVITY_PATTERN.test(haystack);
 }
 
-function maxItemsForDay(dayIndex: number, totalDays: number): number {
-  if (totalDays <= 1) return 3;
-  if (dayIndex === 0) return 3;
-  if (dayIndex === totalDays - 1) return 2;
-  return 5;
+const MIN_MEAL_GAP_MINUTES = 150; // 2.5 hours between heavy meals
+const MAX_FOOD_PER_DAY = 3;
+const MAX_CAFE_PER_DAY = 2;
+
+function maxItemsForDay(
+  dayIndex: number,
+  totalDays: number,
+  travelTiming?: TravelTimingSettings | null,
+): number {
+  const { targetItemCount } = resolveTargetItemCountForDay({ dayIndex, totalDays, travelTiming });
+  // target 0 (e.g. midday airport departure) still allows a single light item before transit.
+  return Math.max(targetItemCount, targetItemCount === 0 ? 1 : targetItemCount);
 }
 
 function getDepartureArrivalTargetMinutes(
@@ -243,10 +262,11 @@ function relabelNightView(item: ItineraryItem): ItineraryItem {
 function applyDayItemCountLimits(
   days: ItineraryDay[],
   fixes: string[],
+  travelTiming?: TravelTimingSettings | null,
 ): ItineraryDay[] {
   const totalDays = days.length;
   return days.map((day, dayIndex) => {
-    const maxItems = maxItemsForDay(dayIndex, totalDays);
+    const maxItems = maxItemsForDay(dayIndex, totalDays, travelTiming);
     const transit = day.items.filter(isTransitItem);
     const activities = day.items.filter((item) => !isTransitItem(item));
     if (activities.length <= maxItems) return day;
@@ -354,21 +374,32 @@ function applyFinalDayDepartureRules(
   accommodation: string | undefined,
   fixes: string[],
   issues: string[],
-): ItineraryDay[] {
-  if (days.length === 0 || !timing?.departureTime?.trim()) return days;
+): { days: ItineraryDay[]; itemsRemoved: number; cutoffMinutes: number | null } {
+  if (days.length === 0 || !timing?.departureTime?.trim()) {
+    return { days, itemsRemoved: 0, cutoffMinutes: null };
+  }
 
   const airportArrivalTarget = getDepartureArrivalTargetMinutes(timing, arrivalPoint);
   const latestEnd = getLatestActivityEndMinutes(timing);
   const cutoff = airportArrivalTarget ?? latestEnd;
-  if (cutoff == null) return days;
+  if (cutoff == null) return { days, itemsRemoved: 0, cutoffMinutes: null };
 
   const lastIndex = days.length - 1;
   const lastDay = days[lastIndex];
   const hub = accommodation || baseArea || '宿泊先';
   const departurePlace = timing.departurePlace === '駅' ? '駅' : '空港';
+  const { targetItemCount } = resolveTargetItemCountForDay({
+    dayIndex: lastIndex,
+    totalDays: days.length,
+    travelTiming: timing,
+  });
+  // Available-minutes based cap — never the old hard-coded "max 2" that collapsed evening
+  // departures to a single 17:00 survivor. target 0 (midday flight) still allows 1 light item.
+  const maxNonTransit = Math.max(1, targetItemCount);
 
   const kept: ItineraryItem[] = [];
   let nonTransitCount = 0;
+  let itemsRemoved = 0;
 
   for (const item of sortItemsByTime(lastDay.items)) {
     const minutes = parseTimeToMinutes(item.time);
@@ -385,11 +416,13 @@ function applyFinalDayDepartureRules(
     if (minutes >= cutoff) {
       issues.push(`最終日の出発前に間に合わない予定: ${item.time} ${item.activity}`);
       fixes.push(`最終日「${item.activity}」を削除（${formatMinutesAsTime(cutoff)}以降は${departurePlace}移動優先）`);
+      itemsRemoved += 1;
       continue;
     }
 
-    if (nonTransitCount >= 2) {
-      fixes.push(`最終日の件数超過のため「${item.activity}」を削除`);
+    if (nonTransitCount >= maxNonTransit) {
+      fixes.push(`最終日の件数超過のため「${item.activity}」を削除（上限${maxNonTransit}件）`);
+      itemsRemoved += 1;
       continue;
     }
 
@@ -400,7 +433,7 @@ function applyFinalDayDepartureRules(
   const hasTransit = kept.some(isTransitItem);
   if (!hasTransit) {
     kept.push({
-      time: formatMinutesAsTime(Math.min(cutoff, cutoff - 30)),
+      time: formatMinutesAsTime(Math.max(6 * 60, cutoff - 30)),
       activity: `${hub}を出発`,
       activityCategory: '移動',
       note: `${departurePlace}へ向かいます`,
@@ -424,7 +457,70 @@ function applyFinalDayDepartureRules(
     theme: lastDay.theme?.trim() || '出発・移動',
     items: sortItemsByTime(kept),
   };
-  return nextDays;
+  return { days: nextDays, itemsRemoved, cutoffMinutes: cutoff };
+}
+
+function isFoodItem(item: ItineraryItem): boolean {
+  return item.category === 'food' || item.activityCategory === '食事';
+}
+
+function isCafeItem(item: ItineraryItem): boolean {
+  return item.category === 'cafe' || item.activityCategory === 'カフェ';
+}
+
+/**
+ * Caps heavy meals / cafes per day and enforces a minimum gap between consecutive food items.
+ * Config-agnostic (applies to every trip) — prevents the "eat all day" failure mode without a
+ * gourmet-specific if.
+ */
+function applyMealPacingRules(days: ItineraryDay[], fixes: string[]): ItineraryDay[] {
+  return days.map((day) => {
+    const sorted = sortItemsByTime(day.items);
+    const kept: ItineraryItem[] = [];
+    let foodCount = 0;
+    let cafeCount = 0;
+    let lastFoodMinutes: number | null = null;
+
+    for (const item of sorted) {
+      if (isTransitItem(item)) {
+        kept.push(item);
+        continue;
+      }
+
+      const minutes = parseTimeToMinutes(item.time);
+      const food = isFoodItem(item);
+      const cafe = isCafeItem(item);
+
+      if (food && foodCount >= MAX_FOOD_PER_DAY) {
+        fixes.push(`${day.label}の食事上限超過のため「${item.activity}」を削除`);
+        continue;
+      }
+      if (cafe && cafeCount >= MAX_CAFE_PER_DAY) {
+        fixes.push(`${day.label}のカフェ上限超過のため「${item.activity}」を削除`);
+        continue;
+      }
+      if (
+        food &&
+        lastFoodMinutes != null &&
+        minutes != null &&
+        minutes - lastFoodMinutes < MIN_MEAL_GAP_MINUTES
+      ) {
+        fixes.push(
+          `${day.label}の食事間隔不足のため「${item.activity}」を削除（前回食事から${MIN_MEAL_GAP_MINUTES}分未満）`,
+        );
+        continue;
+      }
+
+      if (food) {
+        foodCount += 1;
+        if (minutes != null) lastFoodMinutes = minutes;
+      }
+      if (cafe) cafeCount += 1;
+      kept.push(item);
+    }
+
+    return { ...day, items: kept };
+  });
 }
 
 function applyFirstDayArrivalRules(
@@ -549,14 +645,14 @@ export function validateAndFixItinerarySchedule(
 
   let days = cloneDays(options.days);
   days = applyDayThemes(days);
-  days = applyDayItemCountLimits(days, fixesApplied);
+  days = applyDayItemCountLimits(days, fixesApplied, options.travelTiming);
 
   const dedupeResult = applyDuplicateFixes(days, normalized, fixesApplied, issuesFound);
   days = dedupeResult.days;
 
   days = applyNightViewRules(days, fixesApplied, issuesFound);
   days = applyFirstDayArrivalRules(days, options.travelTiming, fixesApplied);
-  days = applyFinalDayDepartureRules(
+  const finalDayResult = applyFinalDayDepartureRules(
     days,
     options.travelTiming,
     options.destinationDetails?.arrivalPoint,
@@ -565,8 +661,30 @@ export function validateAndFixItinerarySchedule(
     fixesApplied,
     issuesFound,
   );
+  days = finalDayResult.days;
+  days = applyMealPacingRules(days, fixesApplied);
   days = applyMinimumTravelGaps(days, fixesApplied);
   days = stripInvalidMapsItems(days, normalized, fixesApplied, issuesFound);
+
+  const dayDiagnostics = days.map((day, dayIndex) => {
+    const { availableMinutes, targetItemCount } = resolveTargetItemCountForDay({
+      dayIndex,
+      totalDays: days.length,
+      travelTiming: options.travelTiming,
+    });
+    const nonTransit = day.items.filter((item) => !isTransitItem(item));
+    return {
+      dayIndex,
+      dayAvailableMinutes: availableMinutes,
+      targetItemCountPerDay: targetItemCount,
+      actualItemCountPerDay: nonTransit.length,
+      foodItemCountPerDay: nonTransit.filter((item) => isFoodItem(item) || isCafeItem(item)).length,
+      finalDayCutoffTime:
+        dayIndex === days.length - 1 && finalDayResult.cutoffMinutes != null
+          ? formatMinutesAsTime(finalDayResult.cutoffMinutes)
+          : null,
+    };
+  });
 
   return {
     days,
@@ -574,6 +692,8 @@ export function validateAndFixItinerarySchedule(
     issuesFound,
     removedCount: dedupeResult.removedCount,
     replacedCount: dedupeResult.replacedCount,
+    itemsRemovedByFinalDayValidation: finalDayResult.itemsRemoved,
+    dayDiagnostics,
   };
 }
 

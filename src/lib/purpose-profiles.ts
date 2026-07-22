@@ -34,13 +34,28 @@ export type PurposeProfile = {
   keywordPattern?: RegExp;
   /** カテゴリ別の目安配分。Google Places検索カテゴリの絞り込み・生成後の比率補正の両方に使う。 */
   allocation: PurposeAllocation;
-  /** 配分の中で最も重視するカテゴリ（比率補正の基準）。 */
+  /** 配分の中で最も重視するカテゴリ（比率補正の基準・候補置換の優先カテゴリ）。 */
   dominantCategory: PlaceCategory;
-  /** dominantCategory が全アイテムに占める最低比率。下回った場合に候補で補正する。 */
+  /**
+   * 比率カウント対象のカテゴリ群。未指定時は [dominantCategory] のみ。
+   * 例: グルメは food+cafe をまとめて 45〜60% のバンドで管理する。
+   */
+  dominantGroup?: readonly PlaceCategory[];
+  /** dominantGroup が全アイテムに占める最低比率。下回った場合に候補で補正する。 */
   minDominantRatio: number;
+  /**
+   * dominantGroup の上限比率（任意）。超過時は未使用の非dominant候補で差し替え、
+   * 候補が無ければ超過分をそのまま残す（架空店名は作らない）。
+   */
+  maxDominantRatio?: number;
   /** 店名を伴わない抽象的な散策・移動系の独立アイテムを、旅行全体で何件まで許容するか。 */
   maxAbstractWalkItems: number;
 };
+
+/** dominantGroup が未設定なら [dominantCategory] にフォールバック。 */
+export function resolveDominantGroup(profile: PurposeProfile): readonly PlaceCategory[] {
+  return profile.dominantGroup?.length ? profile.dominantGroup : [profile.dominantCategory];
+}
 
 export const PURPOSE_PROFILES: readonly PurposeProfile[] = [
   {
@@ -48,10 +63,13 @@ export const PURPOSE_PROFILES: readonly PurposeProfile[] = [
     label: 'グルメ',
     personalityMatch: ['グルメ'],
     keywordPattern: /グルメ|食べ歩き|フード|food|gourmet|レストラン巡/i,
-    allocation: { food: 0.7, sightseeing: 0.15, shopping: 0.1, activity: 0.05 },
+    // food+cafe ≈ 55% / sightseeing 30% / shopping 15% — 全件飲食にしない現実的な配分。
+    allocation: { food: 0.35, cafe: 0.2, sightseeing: 0.3, shopping: 0.15 },
     dominantCategory: 'food',
-    minDominantRatio: 0.6,
-    maxAbstractWalkItems: 1,
+    dominantGroup: ['food', 'cafe'],
+    minDominantRatio: 0.45,
+    maxDominantRatio: 0.6,
+    maxAbstractWalkItems: 0,
   },
   {
     id: 'sightseeing',
@@ -197,14 +215,31 @@ export function buildPurposeCompositionPromptSection(profile: PurposeProfile): s
     .sort((left, right) => (right[1] ?? 0) - (left[1] ?? 0))
     .map(([category, ratio]) => `${CATEGORY_LABEL_JA[category as PlaceCategory]}${Math.round((ratio ?? 0) * 100)}%`)
     .join(' / ');
-  const dominantLabel = CATEGORY_LABEL_JA[profile.dominantCategory];
+  const dominantGroup = resolveDominantGroup(profile);
+  const dominantGroupLabel = dominantGroup.map((c) => CATEGORY_LABEL_JA[c]).join('・');
   const minDominantPercent = Math.round(profile.minDominantRatio * 100);
+  const maxDominantPercent =
+    profile.maxDominantRatio != null ? Math.round(profile.maxDominantRatio * 100) : null;
+  const foodWeight = (profile.allocation.food ?? 0) + (profile.allocation.cafe ?? 0);
 
-  return [
+  const lines = [
     `【${profile.label}モード・最重要】ユーザーは「${profile.label}」を選んでいます。行程配分の目安は ${allocationLine} です。`,
-    `- 全アイテムのうち${minDominantPercent}%以上は具体的な店名・施設名を伴う category=${profile.dominantCategory}（${dominantLabel}）のアイテムにすること。`,
+    maxDominantPercent != null
+      ? `- 全アイテムのうち${dominantGroupLabel}は${minDominantPercent}〜${maxDominantPercent}%に収めること（下限${minDominantPercent}%・上限${maxDominantPercent}%）。上限を超えて飲食ばかりにしないこと。`
+      : `- 全アイテムのうち${minDominantPercent}%以上は具体的な店名・施設名を伴う ${dominantGroupLabel}（category=${dominantGroup.join('|')}）のアイテムにすること。`,
     `- 店名・施設名を伴わない抽象的な散策・移動だけの独立アイテム（例:「○○エリアを散策」「街歩き」）は旅行全体で最大${profile.maxAbstractWalkItems}件までにすること。可能な限り独立アイテムにせず、次の場所へ向かう移動としてnoteに一言含める程度にすること。`,
     '- 具体的な店名・施設名を伴わない曖昧な表現（ジャンル名だけの言い回し等）は禁止。必ず具体的なplaceNameを伴うアイテムにすること。',
+  ];
+
+  if (foodWeight >= 0.35) {
+    lines.push(
+      '- 食事ペース: 朝食・ランチ・ディナーは1日それぞれ最大1回。カフェ・スイーツは1日最大1〜2回。重い食事を短時間に連続させず、食事間隔は原則2.5〜3.5時間以上空けること。',
+    );
+  }
+
+  lines.push(
     'Google Places候補リストが提供されている場合は、上記配分に合うカテゴリの候補を優先して選ぶこと。',
-  ].join('\n');
+  );
+
+  return lines.join('\n');
 }

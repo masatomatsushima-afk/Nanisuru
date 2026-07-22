@@ -95,7 +95,7 @@ check('gourmet profile upgrades low food ratio with unused candidates', () => {
 // --- Test 3: abstract activity items are capped at maxAbstractWalkItems when activity != dominant ---
 check('caps abstract activity filler items at profile.maxAbstractWalkItems', () => {
   const gourmet = PURPOSE_PROFILES.find((profile) => profile.id === 'gourmet')!;
-  assert.strictEqual(gourmet.maxAbstractWalkItems, 1);
+  assert.strictEqual(gourmet.maxAbstractWalkItems, 0);
   const days = [
     day([
       item({ activity: 'エリアAを散策', category: 'activity', isSpecificPlace: false }),
@@ -113,8 +113,8 @@ check('caps abstract activity filler items at profile.maxAbstractWalkItems', () 
   const remainingAbstractActivity = report.days[0].items.filter(
     (it) => it.category === 'activity' && it.isSpecificPlace === false,
   );
-  assert.strictEqual(remainingAbstractActivity.length, 1, 'should keep only 1 abstract activity item');
-  assert.strictEqual(report.abstractWalkItemsRemoved, 2);
+  assert.strictEqual(remainingAbstractActivity.length, 0, 'should keep 0 abstract activity items');
+  assert.strictEqual(report.abstractWalkItemsRemoved, 3);
 });
 
 // --- Test 4: kids profile (dominantCategory='activity') never caps/folds activity items ---
@@ -203,6 +203,45 @@ check('resolvePurposeProfile matches personality/companion/keyword', () => {
     'sightseeing',
   );
   assert.strictEqual(resolvePurposeProfile({ personality: '冒険家', companion: '友達', mood: '普通の旅行' }), null);
+});
+
+// --- Test 8: gourmet config stays in the realistic food+cafe 45-60% band ---
+check('gourmet allocation is realistic (food+cafe 45-60%, not all-food)', () => {
+  const gourmet = PURPOSE_PROFILES.find((profile) => profile.id === 'gourmet')!;
+  const foodCafe = (gourmet.allocation.food ?? 0) + (gourmet.allocation.cafe ?? 0);
+  const sightseeing = gourmet.allocation.sightseeing ?? 0;
+  assert.ok(foodCafe >= 0.45 && foodCafe <= 0.6, `food+cafe=${foodCafe}`);
+  assert.ok(sightseeing >= 0.25 && sightseeing <= 0.35, `sightseeing=${sightseeing}`);
+  assert.strictEqual(gourmet.maxAbstractWalkItems, 0);
+  assert.ok(gourmet.maxDominantRatio != null && gourmet.maxDominantRatio <= 0.6);
+});
+
+// --- Test 9: maxDominantRatio downgrades excess food with sightseeing candidates ---
+check('maxDominantRatio replaces excess food with non-dominant candidates', () => {
+  const gourmet = PURPOSE_PROFILES.find((profile) => profile.id === 'gourmet')!;
+  const days = [
+    day([
+      item({ activity: 'A食堂', category: 'food', isSpecificPlace: true, placeName: 'A食堂', placeId: 'a' }),
+      item({ activity: 'B食堂', category: 'food', isSpecificPlace: true, placeName: 'B食堂', placeId: 'b' }),
+      item({ activity: 'C食堂', category: 'food', isSpecificPlace: true, placeName: 'C食堂', placeId: 'c' }),
+      item({ activity: 'D食堂', category: 'food', isSpecificPlace: true, placeName: 'D食堂', placeId: 'd' }),
+    ]),
+  ];
+  const candidates = [
+    candidate({ placeId: 's1', placeName: '景福宮', category: 'sightseeing', rating: 4.7 }),
+    candidate({ placeId: 's2', placeName: '南大門市場', category: 'shopping', rating: 4.4 }),
+  ];
+  const report = enforcePurposeComposition(days, {
+    profile: gourmet,
+    selectedMood: 'グルメ',
+    candidates,
+    rawLocation: 'ソウル',
+  });
+  assert.ok(
+    report.foodRatio <= (gourmet.maxDominantRatio ?? 1) + 0.01,
+    `foodRatio too high: ${report.foodRatio}`,
+  );
+  assert.ok(report.fixesApplied.some((fix) => fix.includes('downgraded_for_max_ratio')));
 });
 
 console.log(`\n[purpose-composition-enforcement.verify] ${passed} checks passed.`);

@@ -55,6 +55,7 @@
     "verify:places-enforcement": "npx --yes tsx scripts/verify-place-candidate-enforcement.ts",
     "verify:google-places-live": "npx --yes tsx scripts/verify-google-places-live.ts",
     "verify:purpose-composition": "npx --yes tsx scripts/verify-purpose-composition.ts",
+    "verify:day-availability": "npx --yes tsx scripts/verify-day-availability.ts",
     "verify:trip-dna-engine": "npx --yes tsx scripts/verify-trip-dna-engine.ts",
     "verify:place-search-intent": "npx --yes tsx scripts/verify-place-search-intent.ts",
     "verify:place-search-orchestrator": "npx --yes tsx scripts/verify-place-search-orchestrator.ts"

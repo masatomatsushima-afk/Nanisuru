@@ -60,6 +60,7 @@ import {
   shouldAttemptQualityFix,
   validateItineraryQuality,
 } from './itinerary-quality';
+import { resolveTargetItemCountForDay } from './day-availability';
 import { formatBudgetAmount, formatBudgetDisplay } from './format-budget';
 import { finalizeItineraryBeforeDisplay } from './finalize-itinerary';
 import { isAbortError } from './plan-generation-progress';
@@ -652,7 +653,7 @@ const MVP_SYSTEM_PROMPT =
   '【天気の扱い・重要】No real weather forecast is provided to you for this request. If weather data is unavailable, do not mention rain, snow, wind, or cold nights as facts (e.g. never write things like "雨の可能性があるため" or "夜は冷える可能性があります" without real weather data). Only mention rain gear (umbrella, waterproof shoes, etc.) when weather data explicitly indicates rain — otherwise omit it entirely. If weather is unavailable, base any seasonal remarks only on the season/month/destination (e.g. "7月後半の韓国は暑くなりやすい季節です"), never invent specific weather conditions.' +
   '【destinationLabel・最重要】When destinationLabel, city, or baseArea are provided in the user prompt, treat destinationLabel as the authoritative destination identity. Never default to country-only scope when a city is specified — lock all spots to that city. When baseArea is set, keep mornings and evenings easy to return to baseArea and cluster nearby neighborhoods on the same day. When accommodation is provided, use it as the daily start/end hub. When arrivalPoint is provided, order day-1 activities starting from arrivalPoint toward baseArea/accommodation. Minimize wasteful round trips. Every mapsQuery must include city/country/baseArea context — do not use country alone when city is known.' +
   '【宿泊先・重要】When accommodation is provided in the user prompt, treat it as the daily start/end hub (not the user\'s current GPS location). Begin mornings near the accommodation, end evenings where returning is easy, respect arrivalTime on day 1 and departureTime on the last day, and minimize wasteful round trips. Any mapsQuery for the accommodation must include destination city/country.' +
-  '【スケジュール現実性・最重要】Never repeat the same placeName, mapsQuery, or area+category across the whole trip. Night view / 夜景 / タワー夜景 / ライトアップ items must start at 18:30 or later — never schedule "夜景" at 15:00. Day 1 (arrival): max 2–3 light items near baseArea/accommodation after arrivalTime. Middle days: max 4–5 items. Final day: max 0–2 items before departure — if departureTime is set, assume airport/station arrival 2–3 hours before departure; no sightseeing or meals after that cutoff (e.g. 12:00 international flight → only light breakfast + hotel checkout + airport transfer). Leave 30–60 min travel/rest buffer between items. Do not repeat the same experience type across multiple days.' +
+  '【スケジュール現実性・最重要】Never repeat the same placeName, mapsQuery, or area+category across the whole trip. Night view / 夜景 / タワー夜景 / ライトアップ items must start at 18:30 or later — never schedule "夜景" at 15:00. Size each day by the usable time window derived from arrivalTime / departureTime / dailyStartTime / dailyEndTime — never a fixed count. Short usable days: 1–2 items. Half days: 2–3 items. Near-full days: 3–5 items. Final day MUST respect departureTime and the airport/station transfer buffer — midday departure may be breakfast + transfer only; evening departure must NOT collapse to a single 17:00 item (fill the morning–afternoon window with 2–4 items when time allows). Leave 30–60 min travel/rest buffer between items. Do not repeat the same experience type across multiple days. Breakfast/lunch/dinner at most once each per day; cafe/sweets at most 1–2 per day; keep heavy meals 2.5–3.5 hours apart. Do not use independent stroll/walk cards to pad the day — put walking notes into transportation/note between spots instead.' +
   '【tripType・重要】Recommendation reasons (description), highlights, and planner copy MUST match the selected companion/tripType. Do NOT mention dating/couples on family trips. Do NOT mention family/kids on solo trips. Do NOT mention first dates unless companion is 初デート or plan is デートプラン. Feedback-style wording must also match tripType.' +
   '【Google Places候補・絶対厳守】If the user prompt includes a "Google Places候補リスト" JSON array, you are ONLY allowed to name a specific real place (placeName + isSpecificPlace=true) if it is one of the candidates in that JSON array — copy its "name" into placeName exactly and copy its "place_id" into the placeId field exactly, unchanged. Inventing a place name that is not in that list is strictly forbidden when the list is provided. Each place_id may be used at most once across the entire trip — never reuse the same place_id in two different items. If none of the candidates fit an item, do not invent a name — use a generic area description instead (isSpecificPlace=false, placeName describing the area only, placeId as an empty string). When no such JSON list is provided in the user prompt, ignore this rule and follow the normal destination-lock rules above.' +
   '説明は短く簡潔にし、指定されたJSONスキーマの項目以外は出力しないこと。isFallbackは常にfalseにすること。';
@@ -699,6 +700,15 @@ function buildMvpUserPrompt(input: PlanInput, placeCandidatesSection?: string | 
     ? buildPurposeCompositionPromptSection(purposeProfile)
     : null;
 
+  const daySizingLines = Array.from({ length: durationConfig.dayCount }, (_, dayIndex) => {
+    const { availableMinutes, targetItemCount } = resolveTargetItemCountForDay({
+      dayIndex,
+      totalDays: durationConfig.dayCount,
+      travelTiming: timing,
+    });
+    return `  ${dayIndex + 1}日目: 利用可能 roughly ${availableMinutes}分 → 予定 ${targetItemCount}件前後（移動カードは別）`;
+  });
+
   const lines = [
     destinationDetails.destinationLabel
       ? `目的地（destinationLabel）: ${destinationDetails.destinationLabel}`
@@ -719,6 +729,8 @@ function buildMvpUserPrompt(input: PlanInput, placeCandidatesSection?: string | 
     latestEnd != null
       ? `→ 最終日は ${formatMinutesAsTime(latestEnd)} までに全アクティビティを終えること`
       : null,
+    '【日別の予定数・必須】到着/出発時刻から計算した利用可能時間に合わせて件数を決めること（固定件数で埋めない）:',
+    ...daySizingLines,
     `予算: ${input.budget || '未定'} ${input.currency ?? ''}`,
     `人数: ${input.people || '1'}人`,
     `同行者: ${input.companion}`,
@@ -1516,6 +1528,7 @@ async function executePlanFromAiRequest(params: {
           dominantCategoryItemCount: purposeComposition.dominantCategoryItemCount,
           totalItemCount: purposeComposition.totalItemCount,
           dominantCategoryRatio: Math.round(purposeComposition.dominantCategoryRatio * 100) / 100,
+          foodRatio: Math.round(purposeComposition.foodRatio * 100) / 100,
           abstractWalkItemsRemoved: purposeComposition.abstractWalkItemsRemoved,
           googlePlaceCount: purposeComposition.googlePlaceCount,
         });
@@ -1534,11 +1547,26 @@ async function executePlanFromAiRequest(params: {
         destinationDetails,
       });
 
-      if (__DEV__ && scheduled.fixesApplied.length > 0) {
-        console.warn('[Itinerary] schedule validation applied fixes', {
-          fixes: scheduled.fixesApplied.slice(0, 8),
-          issues: scheduled.issuesFound.slice(0, 8),
+      if (__DEV__) {
+        console.log('[Itinerary] day allocation', {
+          dayAvailableMinutes: scheduled.dayDiagnostics.map((d) => d.dayAvailableMinutes),
+          targetItemCountPerDay: scheduled.dayDiagnostics.map((d) => d.targetItemCountPerDay),
+          actualItemCountPerDay: scheduled.dayDiagnostics.map((d) => d.actualItemCountPerDay),
+          foodItemCountPerDay: scheduled.dayDiagnostics.map((d) => d.foodItemCountPerDay),
+          finalDayCutoffTime:
+            scheduled.dayDiagnostics[scheduled.dayDiagnostics.length - 1]?.finalDayCutoffTime ?? null,
+          itemsRemovedByFinalDayValidation: scheduled.itemsRemovedByFinalDayValidation,
+          selectedPlaceIdsByDay: scheduled.days.map((day) =>
+            day.items.map((item) => item.placeId).filter(Boolean),
+          ),
+          foodRatio: purposeComposition.foodRatio,
         });
+        if (scheduled.fixesApplied.length > 0) {
+          console.warn('[Itinerary] schedule validation applied fixes', {
+            fixes: scheduled.fixesApplied.slice(0, 8),
+            issues: scheduled.issuesFound.slice(0, 8),
+          });
+        }
       }
 
       const tripAudience = resolveTripAudience({
@@ -2003,14 +2031,10 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   const placesCandidateCount = placeCandidatesResult?.candidates.length ?? 0;
   if (__DEV__ && lightweight) {
     // Dev-only diagnostic (no secrets): confirms whether Google Places candidates actually
-    // reached the prompt, how many distinct search intents ran, and how much latency this step
-    // added before the OpenAI call starts. Detailed per-intent counts are already logged inside
-    // fetchPlaceCandidatesForPlanPrompt — this just adds the elapsed time + final summary.
+    // reached the prompt, and how much latency this step added before the OpenAI call starts.
     console.log('[Places] candidates for prompt', {
       placesCandidateCount,
       candidatesPassedToPrompt: Boolean(placeCandidatesResult?.promptSection),
-      searchIntentCount: placeCandidatesResult?.diagnostics?.searchIntentCount ?? 0,
-      apiCallCount: placeCandidatesResult?.diagnostics?.apiCallCount ?? 0,
       elapsedMs: Date.now() - placesFetchStartedAt,
     });
   }
@@ -2062,7 +2086,6 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
     console.log('[Places] final plan Google Places usage', {
       fallbackType: plan.devFallbackNotice ? undefined : 'none',
       finalGooglePlaceCount: finalGoogleItems.length,
-      selectedPlaceIds: finalGoogleItems.map((item) => item.placeId).filter(Boolean),
       placesCandidateCount,
     });
   }
