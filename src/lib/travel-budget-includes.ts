@@ -18,6 +18,10 @@ export type TravelBudgetIncludeCategory = Exclude<
   '現地費用のみ'
 >;
 
+/**
+ * Fallback categories used only when converting an empty selection for
+ * legacy budgetScope / plan payload compatibility — not UI defaults.
+ */
 export const DEFAULT_TRAVEL_BUDGET_INCLUDES: TravelBudgetIncludeCategory[] = [
   '食事',
   '交通費',
@@ -45,10 +49,11 @@ const SCOPE_TO_TRAVEL_INCLUDE: Partial<Record<BudgetScopeItem, TravelBudgetInclu
 };
 
 export function resolveTravelBudgetIncludes(
-  includes: TravelBudgetIncludeOption[],
+  includes: TravelBudgetIncludeOption[] | null | undefined,
 ): TravelBudgetIncludeCategory[] {
-  const hasLocalOnly = includes.includes('現地費用のみ');
-  let resolved = includes.filter(
+  const safe = Array.isArray(includes) ? includes : [];
+  const hasLocalOnly = safe.includes('現地費用のみ');
+  let resolved = safe.filter(
     (item): item is TravelBudgetIncludeCategory => item !== '現地費用のみ',
   );
 
@@ -56,6 +61,7 @@ export function resolveTravelBudgetIncludes(
     resolved = resolved.filter((item) => item !== '航空券' && item !== 'ホテル');
   }
 
+  // Empty selection → legacy fallback for plan/budgetScope payload only (not UI defaults).
   if (resolved.length === 0) {
     return [...DEFAULT_TRAVEL_BUDGET_INCLUDES];
   }
@@ -64,10 +70,11 @@ export function resolveTravelBudgetIncludes(
 }
 
 export function travelBudgetIncludesToBudgetScope(
-  includes: TravelBudgetIncludeOption[],
+  includes: TravelBudgetIncludeOption[] | null | undefined,
 ): BudgetScopeSettings {
-  const resolved = resolveTravelBudgetIncludes(includes);
-  const hasLocalOnly = includes.includes('現地費用のみ');
+  const safe = Array.isArray(includes) ? includes : [];
+  const resolved = resolveTravelBudgetIncludes(safe);
+  const hasLocalOnly = safe.includes('現地費用のみ');
   const includedItems = [
     ...new Set(
       resolved.map((item) => TRAVEL_INCLUDE_TO_SCOPE[item]).filter(Boolean),
@@ -93,49 +100,50 @@ export function travelBudgetIncludesToBudgetScope(
 export function budgetScopeToTravelBudgetIncludes(
   settings: BudgetScopeSettings,
 ): TravelBudgetIncludeOption[] {
-  const includes = settings.includedItems
+  if (settings?.localOnly) {
+    return ['現地費用のみ'];
+  }
+
+  const includedItems = Array.isArray(settings?.includedItems) ? settings.includedItems : [];
+  const includes = includedItems
     .map((item) => SCOPE_TO_TRAVEL_INCLUDE[item])
     .filter(Boolean) as TravelBudgetIncludeOption[];
 
-  if (settings.localOnly) {
-    return [...resolveTravelBudgetIncludes(includes), '現地費用のみ'];
-  }
-
-  return resolveTravelBudgetIncludes(includes);
+  // Preserve explicit category selections from saved scope; do not invent UI defaults here.
+  return [...new Set(includes)];
 }
 
 export function toggleTravelBudgetInclude(
   includes: TravelBudgetIncludeOption[],
   option: TravelBudgetIncludeOption,
 ): TravelBudgetIncludeOption[] {
+  const current = Array.isArray(includes) ? includes : [];
+
+  // 「現地費用のみ」は個別項目と排他。選ぶと他をすべて解除。
   if (option === '現地費用のみ') {
-    if (includes.includes('現地費用のみ')) {
-      return includes.filter((item) => item !== '現地費用のみ');
+    if (current.includes('現地費用のみ')) {
+      return current.filter((item) => item !== '現地費用のみ');
     }
-    return [
-      ...includes.filter((item) => item !== '航空券' && item !== 'ホテル'),
-      '現地費用のみ',
-    ];
+    return ['現地費用のみ'];
   }
 
-  let next = includes.includes(option)
-    ? includes.filter((item) => item !== option)
-    : [...includes, option];
-
-  if (option === '航空券' || option === 'ホテル') {
-    next = next.filter((item) => item !== '現地費用のみ');
+  // 個別項目を選んだら「現地費用のみ」を解除。
+  const withoutLocalOnly = current.filter((item) => item !== '現地費用のみ');
+  if (withoutLocalOnly.includes(option)) {
+    return withoutLocalOnly.filter((item) => item !== option);
   }
-
-  return next;
+  return [...withoutLocalOnly, option];
 }
 
 export function travelBudgetIncludesIncludeFlightsOrHotels(
   includes: TravelBudgetIncludeOption[],
 ): boolean {
-  const resolved = resolveTravelBudgetIncludes(includes);
-  return resolved.includes('航空券') || resolved.includes('ホテル');
+  const safe = Array.isArray(includes) ? includes : [];
+  // UI hint: use raw selection (do not invent defaults the user never picked).
+  return safe.includes('航空券') || safe.includes('ホテル');
 }
 
+/** Form initial state: nothing pre-selected. */
 export function createDefaultTravelBudgetIncludes(): TravelBudgetIncludeOption[] {
-  return [...DEFAULT_TRAVEL_BUDGET_INCLUDES];
+  return [];
 }

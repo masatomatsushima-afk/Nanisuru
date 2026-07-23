@@ -30,6 +30,10 @@ import type {
 } from './trip-dna-types';
 import type { ItineraryDay, ItineraryItem } from '@/types/plan';
 import type { PlaceCandidate } from '@/types/place-candidate';
+import {
+  PURPOSE_TO_TRIP_DNA_ID,
+  type SelectedPurpose,
+} from '@/lib/selected-purposes';
 
 function buildKeywordHaystack(input: TripDnaMatchInput): string {
   return [
@@ -61,12 +65,127 @@ export function resolveTripDna(input: TripDnaMatchInput): TripDnaProfile | null 
   return null;
 }
 
+function lookupTripDna(purposeId: string): TripDnaProfile | null {
+  const mapped = PURPOSE_TO_TRIP_DNA_ID[purposeId] ?? purposeId;
+  if (mapped === 'default') return DEFAULT_TRIP_DNA_PROFILE;
+  return TRIP_DNA_PROFILES.find((profile) => profile.id === mapped) ?? null;
+}
+
+function normalizeActivityWeights(
+  weights: TripDnaProfile['activityWeights'],
+): TripDnaProfile['activityWeights'] {
+  const entries = Object.entries(weights).filter(
+    (entry): entry is [PlaceCategory, number] =>
+      typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] > 0,
+  );
+  const sum = entries.reduce((acc, [, value]) => acc + value, 0);
+  if (sum <= 0) return {};
+  const normalized: TripDnaProfile['activityWeights'] = {};
+  for (const [category, value] of entries) {
+    normalized[category] = value / sum;
+  }
+  return normalized;
+}
+
+/**
+ * Blend Trip DNA profiles by selected purpose weights.
+ * Primary drives dominantCategory / timeOfDay / validation safety baselines;
+ * activityWeights and placesCategories are weight-mixed so secondary/tertiary are not ignored.
+ */
+export function blendTripDnaProfiles(
+  selected: readonly SelectedPurpose[],
+): TripDnaProfile | null {
+  const usable = selected.filter((item) => item.purpose && item.purpose !== 'ai');
+  if (usable.length === 0) return null;
+
+  const resolved = usable
+    .map((item) => {
+      const profile = lookupTripDna(item.purpose);
+      return profile ? { item, profile } : null;
+    })
+    .filter((entry): entry is { item: SelectedPurpose; profile: TripDnaProfile } => Boolean(entry));
+
+  if (resolved.length === 0) return null;
+  if (resolved.length === 1) return resolved[0].profile;
+
+  const weightSum = resolved.reduce((acc, entry) => acc + Math.max(0, entry.item.weight), 0) || 1;
+  const activityWeights: TripDnaProfile['activityWeights'] = {};
+  let minDominant = 0;
+  let maxAbstract = resolved[0].profile.validationRules.maxAbstractItems;
+
+  for (const { item, profile } of resolved) {
+    const w = Math.max(0, item.weight) / weightSum;
+    for (const [category, ratio] of Object.entries(profile.activityWeights)) {
+      if (typeof ratio !== 'number' || !Number.isFinite(ratio)) continue;
+      activityWeights[category as PlaceCategory] =
+        (activityWeights[category as PlaceCategory] ?? 0) + ratio * w;
+    }
+    minDominant += profile.validationRules.minDominantCategoryRatio * w;
+    // Stricter abstract-item cap wins (safety over taste weight).
+    maxAbstract = Math.min(maxAbstract, profile.validationRules.maxAbstractItems);
+  }
+
+  const primary = resolved[0].profile;
+  const placesCategories = [
+    ...new Set(resolved.flatMap(({ profile }) => profile.placesCategories)),
+  ];
+  const categoryPriority = [
+    ...new Set(resolved.flatMap(({ profile }) => profile.categoryPriority)),
+  ];
+  // Forbidden: keep primary (safety), then add categories forbidden by majority weight.
+  const forbiddenScores = new Map<PlaceCategory, number>();
+  for (const { item, profile } of resolved) {
+    const w = Math.max(0, item.weight) / weightSum;
+    for (const category of profile.forbiddenCategories) {
+      forbiddenScores.set(category, (forbiddenScores.get(category) ?? 0) + w);
+    }
+  }
+  const forbiddenCategories = [
+    ...new Set([
+      ...primary.forbiddenCategories,
+      ...[...forbiddenScores.entries()]
+        .filter(([, score]) => score >= 0.5)
+        .map(([category]) => category),
+    ]),
+  ];
+
+  return {
+    id: `blend:${resolved.map((entry) => entry.profile.id).join('+')}`,
+    label: resolved.map((entry) => entry.profile.label).join(' × '),
+    matcher: primary.matcher,
+    activityWeights: normalizeActivityWeights(activityWeights),
+    placesCategories,
+    categoryPriority,
+    forbiddenCategories,
+    // Time-of-day / meal-adjacent safety stays on primary.
+    timeOfDayRules: primary.timeOfDayRules,
+    validationRules: {
+      minDominantCategoryRatio: Math.max(0.15, Math.min(0.7, minDominant)),
+      maxAbstractItems: maxAbstract,
+    },
+    fallbackRule: primary.fallbackRule,
+    dominantCategory: primary.dominantCategory,
+  };
+}
+
+export function resolveTripDnaWithSelection(
+  input: TripDnaMatchInput & { selectedPurposes?: readonly SelectedPurpose[] | null },
+): TripDnaProfile | null {
+  if (input.selectedPurposes && input.selectedPurposes.length > 0) {
+    const blended = blendTripDnaProfiles(input.selectedPurposes);
+    if (blended) return blended;
+  }
+  return resolveTripDna(input);
+}
+
 /**
  * `resolveTripDna` が null（どのDNAにも一致しない）のときに、カテゴリを絞らないニュートラルな
  * `DEFAULT_TRIP_DNA_PROFILE` を返す。検索意図生成など「DNAが必ず1件必要」な共通エンジン向け。
  */
-export function resolveTripDnaOrDefault(input: TripDnaMatchInput): TripDnaProfile {
-  return resolveTripDna(input) ?? DEFAULT_TRIP_DNA_PROFILE;
+export function resolveTripDnaOrDefault(
+  input: TripDnaMatchInput & { selectedPurposes?: readonly SelectedPurpose[] | null },
+): TripDnaProfile {
+  return resolveTripDnaWithSelection(input) ?? DEFAULT_TRIP_DNA_PROFILE;
 }
 
 /** Trip DNA → Google Places検索カテゴリ。 */

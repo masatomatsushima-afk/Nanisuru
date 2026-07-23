@@ -124,6 +124,14 @@ export type PartialItineraryEditResult = {
   days: ItineraryDay[];
   details: PlanDetails;
   preview: ItineraryEditPreview;
+  /** Google Places replacement options (up to ~3). Empty when none found. */
+  replacementCandidates?: import('@/lib/itinerary-replacement-search').ItineraryReplacementCandidateView[];
+  /** Soft user-facing empty state — not a technical failure banner. */
+  emptyCandidatesMessage?: string | null;
+  /** Dev-safe diagnostics (no secrets / raw placeIds). */
+  replacementDiagnostics?: import('@/lib/itinerary-replacement-search').ReplacementSearchDiagnostics;
+  /** Future PreferenceSignal drafts — not persisted yet. */
+  preferenceSignalDrafts?: import('@/lib/itinerary-replacement-search').ReplacementPreferenceSignalDraft[];
 };
 
 export type ItineraryEditRecord = {

@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { DatePickerField } from '@/components/date-picker-field';
+import { PreferenceDiscoverySection } from '@/components/home/preference-discovery-section';
 import { TravelTimePickerField } from '@/components/home/travel-time-picker-field';
 import { PrimaryButton, SelectChip } from '@/components/ui/premium-card';
 import { AppErrorBanner } from '@/components/app-error-banner';
@@ -12,7 +13,7 @@ import {
   getCurrency,
   type CurrencyCode,
 } from '@/constants/currency';
-import { NS } from '@/constants/nanisuru-ui';
+import { NS, getChipPalette } from '@/constants/nanisuru-ui';
 import { MIN_TOUCH_TARGET } from '@/constants/mobile-layout';
 import { Spacing } from '@/constants/theme';
 import {
@@ -45,6 +46,10 @@ import {
   logTravelFormRestoreOnce,
   travelFormSectionAtLeast,
 } from '@/lib/travel-form-restore';
+import {
+  getPurposePriorityLabel,
+  MAX_SELECTED_PURPOSES,
+} from '@/lib/selected-purposes';
 import type { CompanionOption } from '@/types/plan';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
 import type { TravelIntentOption } from '@/types/plan-creation';
@@ -91,8 +96,11 @@ type TravelPlanSheetFormProps = {
   onTravelIntentChange: (value: TravelIntentOption | '') => void;
   customPreferences: PlanCustomPreferences;
   onCustomPreferencesChange: (value: PlanCustomPreferences) => void;
-  selectedPurposeId: string | null;
-  onPurposeSelect: (option: (typeof TRAVEL_SHEET_PURPOSE_OPTIONS)[number]) => void;
+  /** Ordered purpose chip ids (max 3). */
+  selectedPurposeIds: readonly string[];
+  onPurposeToggle: (option: (typeof TRAVEL_SHEET_PURPOSE_OPTIONS)[number]) => void;
+  /** Shown briefly when user tries to pick a 4th purpose. */
+  purposeMaxHint?: string | null;
   validationErrors: TravelPlanValidationErrors;
   showValidation: boolean;
   isLoading: boolean;
@@ -181,8 +189,9 @@ export function TravelPlanSheetForm({
   onPeopleChange,
   companion,
   onCompanionChange,
-  selectedPurposeId,
-  onPurposeSelect,
+  selectedPurposeIds,
+  onPurposeToggle,
+  purposeMaxHint = null,
   validationErrors,
   showValidation,
   isLoading,
@@ -518,18 +527,50 @@ export function TravelPlanSheetForm({
 
       {show('purpose') ? (
       <SheetField label="旅行の目的" optional>
+        <Text style={styles.purposeHint}>最大{MAX_SELECTED_PURPOSES}つまで。最初に選んだ目的を一番重視します</Text>
         <View style={styles.chipGrid}>
-          {TRAVEL_SHEET_PURPOSE_OPTIONS.map((option, index) => (
-            <SelectChip
-              key={safeChipKey('purpose', option, index)}
-              label={safeText(option.label)}
-              selected={selectedPurposeId === option.id}
-              onPress={() => onPurposeSelect(option)}
-              colorIndex={index}
-            />
-          ))}
+          {TRAVEL_SHEET_PURPOSE_OPTIONS.map((option, index) => {
+            const selectedIndex = selectedPurposeIds.indexOf(option.id);
+            const selected = selectedIndex >= 0;
+            const priority = selected ? ((selectedIndex + 1) as 1 | 2 | 3) : null;
+            const palette = getChipPalette(index);
+            return (
+              <Pressable
+                key={safeChipKey('purpose', option, index)}
+                style={({ pressed }) => [
+                  styles.purposeChip,
+                  selected && {
+                    backgroundColor: palette.bg,
+                    borderColor: palette.border,
+                    borderWidth: 2.5,
+                  },
+                  pressed && styles.purposeChipPressed,
+                ]}
+                onPress={() => onPurposeToggle(option)}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}>
+                {priority != null ? (
+                  <Text style={[styles.purposePriority, selected && { color: palette.text }]}>
+                    {safeText(getPurposePriorityLabel(priority))}
+                  </Text>
+                ) : null}
+                <Text
+                  style={[
+                    styles.purposeChipLabel,
+                    selected && { color: palette.text, fontWeight: '800' },
+                  ]}>
+                  {safeText(option.label)}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
+        {purposeMaxHint ? <Text style={styles.purposeMaxHint}>{safeText(purposeMaxHint)}</Text> : null}
       </SheetField>
+      ) : null}
+
+      {show('purpose') ? (
+        <PreferenceDiscoverySection selectedPurposeIds={selectedPurposeIds} />
       ) : null}
 
       {show('custom') ? (
@@ -742,6 +783,47 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: NS.layout.chipGap,
+  },
+  purposeHint: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 18,
+    marginBottom: Spacing.one,
+  },
+  purposeChip: {
+    width: '48%',
+    minHeight: MIN_TOUCH_TARGET,
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    backgroundColor: NS.colors.bgElevated,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.two,
+    justifyContent: 'center',
+    gap: 2,
+  },
+  purposeChipPressed: {
+    opacity: 0.88,
+  },
+  purposePriority: {
+    color: NS.colors.accent,
+    fontSize: 11,
+    fontWeight: '800',
+    lineHeight: 14,
+  },
+  purposeChipLabel: {
+    color: NS.colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  purposeMaxHint: {
+    color: NS.colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 18,
+    marginTop: Spacing.one,
   },
   generateWrap: {
     marginTop: Spacing.two,

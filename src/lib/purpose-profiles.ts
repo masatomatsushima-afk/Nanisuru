@@ -17,6 +17,10 @@
 import type { PlaceCategory } from '@/lib/destination-safety';
 import type { CompanionOption, PersonalityOption } from '@/types/plan';
 import type { PlanCustomPreferences } from '@/types/plan-preferences';
+import {
+  PURPOSE_TO_PURPOSE_PROFILE_ID,
+  type SelectedPurpose,
+} from '@/lib/selected-purposes';
 
 /** カテゴリ→目安比率（0〜1）。合計が1でなくても実行時に正規化される。 */
 export type PurposeAllocation = Partial<Record<PlaceCategory, number>>;
@@ -195,6 +199,102 @@ export function resolvePurposeProfile(input: PurposeProfileMatchInput): PurposeP
   }
 
   return null;
+}
+
+function normalizeAllocation(allocation: PurposeAllocation): PurposeAllocation {
+  const entries = Object.entries(allocation).filter(
+    (entry): entry is [PlaceCategory, number] =>
+      typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] > 0,
+  );
+  const sum = entries.reduce((acc, [, value]) => acc + value, 0);
+  if (sum <= 0) return {};
+  const normalized: PurposeAllocation = {};
+  for (const [category, value] of entries) {
+    normalized[category] = value / sum;
+  }
+  return normalized;
+}
+
+function lookupPurposeProfile(purposeId: string): PurposeProfile | null {
+  const mapped = PURPOSE_TO_PURPOSE_PROFILE_ID[purposeId] ?? purposeId;
+  return PURPOSE_PROFILES.find((profile) => profile.id === mapped) ?? null;
+}
+
+/**
+ * Blend Purpose Profiles by selected purpose weights.
+ * Primary dominates label/dominantCategory/safety-ish caps; allocations are weighted.
+ * Safety rules (meal pacing etc.) still read from the blended allocation food weight.
+ */
+export function blendPurposeProfiles(
+  selected: readonly SelectedPurpose[],
+): PurposeProfile | null {
+  const usable = selected.filter((item) => item.purpose && item.purpose !== 'ai');
+  if (usable.length === 0) return null;
+
+  const resolved = usable
+    .map((item) => {
+      const profile = lookupPurposeProfile(item.purpose);
+      return profile ? { item, profile } : null;
+    })
+    .filter((entry): entry is { item: SelectedPurpose; profile: PurposeProfile } => Boolean(entry));
+
+  if (resolved.length === 0) return null;
+  if (resolved.length === 1) return resolved[0].profile;
+
+  const weightSum = resolved.reduce((acc, entry) => acc + Math.max(0, entry.item.weight), 0) || 1;
+  const allocation: PurposeAllocation = {};
+  let minDominantRatio = 0;
+  let maxDominantRatioSum = 0;
+  let maxDominantRatioWeight = 0;
+  let maxAbstractWalkItems = resolved[0].profile.maxAbstractWalkItems;
+
+  for (const { item, profile } of resolved) {
+    const w = Math.max(0, item.weight) / weightSum;
+    for (const [category, ratio] of Object.entries(profile.allocation)) {
+      if (typeof ratio !== 'number' || !Number.isFinite(ratio)) continue;
+      allocation[category as PlaceCategory] =
+        (allocation[category as PlaceCategory] ?? 0) + ratio * w;
+    }
+    minDominantRatio += profile.minDominantRatio * w;
+    if (profile.maxDominantRatio != null) {
+      maxDominantRatioSum += profile.maxDominantRatio * w;
+      maxDominantRatioWeight += w;
+    }
+    // Keep abstract-walk cap on the stricter (lower) side — safety over taste weight.
+    maxAbstractWalkItems = Math.min(maxAbstractWalkItems, profile.maxAbstractWalkItems);
+  }
+
+  const primary = resolved[0].profile;
+  const dominantGroup = [
+    ...new Set(resolved.flatMap(({ profile }) => [...resolveDominantGroup(profile)])),
+  ];
+
+  return {
+    id: `blend:${resolved.map((entry) => entry.profile.id).join('+')}`,
+    label: resolved.map((entry) => entry.profile.label).join('×'),
+    allocation: normalizeAllocation(allocation),
+    dominantCategory: primary.dominantCategory,
+    dominantGroup,
+    minDominantRatio: Math.max(0.15, Math.min(0.7, minDominantRatio)),
+    maxDominantRatio:
+      maxDominantRatioWeight > 0
+        ? Math.max(0.2, Math.min(0.85, maxDominantRatioSum / maxDominantRatioWeight))
+        : primary.maxDominantRatio,
+    maxAbstractWalkItems,
+  };
+}
+
+/**
+ * Resolve a single profile (legacy) or a weight-blended profile when selectedPurposes is provided.
+ */
+export function resolvePurposeProfileWithSelection(
+  input: PurposeProfileMatchInput & { selectedPurposes?: readonly SelectedPurpose[] | null },
+): PurposeProfile | null {
+  if (input.selectedPurposes && input.selectedPurposes.length > 0) {
+    const blended = blendPurposeProfiles(input.selectedPurposes);
+    if (blended) return blended;
+  }
+  return resolvePurposeProfile(input);
 }
 
 const CATEGORY_LABEL_JA: Record<PlaceCategory, string> = {

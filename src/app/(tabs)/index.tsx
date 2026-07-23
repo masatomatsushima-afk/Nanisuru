@@ -169,6 +169,11 @@ import {
 import { safeKey, safeRouteParams } from '@/lib/safe-text';
 import { cleanSerializable, isJsonParseError, serializeRouteParamJson } from '@/lib/safe-json';
 import { resolveTravelPurposeValue } from '@/lib/travel-purpose';
+import {
+  buildSelectedPurposesFromSheetIds,
+  getPrimarySheetPurposeId,
+  toggleSheetPurposeSelection,
+} from '@/lib/selected-purposes';
 import { LOOP_TEST_RESTORE, loopTestLogOnce } from '@/lib/loop-test-config';
 import { shouldShowTravelPlanPlaceholder } from '@/lib/travel-form-restore';
 import {
@@ -864,7 +869,8 @@ export default function HomeScreen() {
   const [isMemoryLoading, setIsMemoryLoading] = useState(false);
   const [openedPlanMode, setOpenedPlanMode] = useState<HomePlanMode | null>(null);
   const [travelValidationAttempted, setTravelValidationAttempted] = useState(false);
-  const [selectedTravelPurposeId, setSelectedTravelPurposeId] = useState<string | null>(null);
+  const [selectedTravelPurposeIds, setSelectedTravelPurposeIds] = useState<string[]>([]);
+  const [purposeMaxHint, setPurposeMaxHint] = useState<string | null>(null);
   const [travelPurpose, setTravelPurpose] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   const generationInFlightRef = useRef(false);
@@ -1017,7 +1023,8 @@ export default function HomeScreen() {
           : 'travel plan form placeholder',
       );
       setTravelValidationAttempted(false);
-      setSelectedTravelPurposeId(null);
+      setSelectedTravelPurposeIds([]);
+      setPurposeMaxHint(null);
       setTravelPurpose(null);
       setTravelIntent('');
       setCustomPreferences((prev) => ({
@@ -1035,15 +1042,16 @@ export default function HomeScreen() {
     generationInFlightRef.current = false;
     setOpenedPlanMode(null);
     setTravelValidationAttempted(false);
-    setSelectedTravelPurposeId(null);
+    setSelectedTravelPurposeIds([]);
+    setPurposeMaxHint(null);
     setTravelPurpose(null);
   };
 
-  const handleTravelPurposeSelect = (option: (typeof TRAVEL_SHEET_PURPOSE_OPTIONS)[number]) => {
-    if (__DEV__) {
-      console.log('[TravelPlanForm] selected purpose', option.label);
+  const applyPrimaryPurposeFields = (option: (typeof TRAVEL_SHEET_PURPOSE_OPTIONS)[number] | null) => {
+    if (!option) {
+      setTravelPurpose(null);
+      return;
     }
-    setSelectedTravelPurposeId(option.id);
     setTravelPurpose(option.label);
     if (option.travelIntent) {
       setTravelIntent(option.travelIntent);
@@ -1055,6 +1063,23 @@ export default function HomeScreen() {
         customTravelIntent: option.purposeCustom,
       }));
     }
+  };
+
+  const handleTravelPurposeToggle = (option: (typeof TRAVEL_SHEET_PURPOSE_OPTIONS)[number]) => {
+    if (__DEV__) {
+      console.log('[TravelPlanForm] toggle purpose', option.label);
+    }
+    const result = toggleSheetPurposeSelection(selectedTravelPurposeIds, option.id);
+    setSelectedTravelPurposeIds(result.sheetIds);
+    if (result.rejectedMax) {
+      setPurposeMaxHint(`目的は最大${3}つまで選べます`);
+    } else {
+      setPurposeMaxHint(null);
+    }
+    const primaryId = getPrimarySheetPurposeId(result.sheetIds);
+    const primaryOption =
+      TRAVEL_SHEET_PURPOSE_OPTIONS.find((item) => item.id === primaryId) ?? null;
+    applyPrimaryPurposeFields(primaryOption);
     if (showItinerary) resetPlan();
   };
 
@@ -1130,6 +1155,7 @@ export default function HomeScreen() {
       mood: showsTravelIntentQuestion(planType) ? travelPurposeForGeneration : mood,
       travelIntent: showsTravelIntentQuestion(planType) ? effectiveTravelIntent : '',
       travelPurpose: travelPurposeForGeneration,
+      selectedPurposes: snap?.selectedPurposes,
       planCreationType: planType,
       planType,
       departureDate: effectiveResolvedSchedule.departureDate,
@@ -1596,8 +1622,9 @@ export default function HomeScreen() {
 
     let nextTravelIntent = travelIntent;
     let nextCustomPreferences = normalizedState.customPreferences;
-    let nextPurposeId = selectedTravelPurposeId;
+    let nextPurposeIds = [...selectedTravelPurposeIds];
     let nextTravelPurpose = travelPurpose ?? resolvedTravelPurpose;
+    let nextSelectedPurposes = buildSelectedPurposesFromSheetIds(nextPurposeIds);
 
     if (!travelPurpose && !formatCombinedTravelIntent(nextTravelIntent, nextCustomPreferences.customTravelIntent)) {
       nextTravelIntent = '';
@@ -1605,8 +1632,9 @@ export default function HomeScreen() {
         ...nextCustomPreferences,
         customTravelIntent: 'AIに任せる',
       };
-      nextPurposeId = 'ai';
+      nextPurposeIds = ['ai'];
       nextTravelPurpose = 'AIに任せる';
+      nextSelectedPurposes = buildSelectedPurposesFromSheetIds(nextPurposeIds);
     }
 
     const nextTravelTiming: TravelTimingSettings = {
@@ -1661,6 +1689,7 @@ export default function HomeScreen() {
       budgetScope: nextBudgetScope,
       budgetIncludes: travelBudgetIncludes,
       accommodation: normalizedState.accommodation,
+      selectedPurposes: nextSelectedPurposes,
     };
 
     logTravelPlanSubmitPayload(travelSubmitSnapshotRef.current);
@@ -1683,7 +1712,7 @@ export default function HomeScreen() {
     setTravelTiming(nextTravelTiming);
     setTravelIntent(nextTravelIntent);
     setCustomPreferences(nextCustomPreferences);
-    setSelectedTravelPurposeId(nextPurposeId);
+    setSelectedTravelPurposeIds(nextPurposeIds);
     setTravelPurpose(nextTravelPurpose);
     setError(null);
 
@@ -1747,8 +1776,9 @@ export default function HomeScreen() {
             onTravelIntentChange={setTravelIntent}
             customPreferences={customPreferences}
             onCustomPreferencesChange={setCustomPreferences}
-            selectedPurposeId={selectedTravelPurposeId}
-            onPurposeSelect={handleTravelPurposeSelect}
+            selectedPurposeIds={selectedTravelPurposeIds}
+            onPurposeToggle={handleTravelPurposeToggle}
+            purposeMaxHint={purposeMaxHint}
             validationErrors={travelValidationErrors}
             showValidation={travelValidationAttempted}
             isLoading={isLoading}

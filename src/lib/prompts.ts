@@ -98,6 +98,8 @@ export type PlanInput = {
   planCreationType?: PlanCreationType;
   travelIntent?: string;
   travelPurpose?: string;
+  /** Multi-purpose selection with priority/weight (optional; primary still in travelPurpose). */
+  selectedPurposes?: import('@/lib/selected-purposes').SelectedPurpose[];
   planType?: PlanCreationType;
   departureDate?: string;
   returnDate?: string;

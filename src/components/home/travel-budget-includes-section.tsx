@@ -32,7 +32,7 @@ export function TravelBudgetIncludesSection({
           <SelectChip
             key={safeChipKey('budget-include', { id: option, label: option }, index)}
             label={safeText(option)}
-            selected={value.includes(option)}
+            selected={Array.isArray(value) && value.includes(option)}
             onPress={() => onChange(toggleTravelBudgetInclude(value, option))}
             colorIndex={index}
           />

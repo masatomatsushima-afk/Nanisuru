@@ -1558,8 +1558,8 @@ export default function HomeScreen() {
             onTravelIntentChange={setTravelIntent}
             customPreferences={customPreferences}
             onCustomPreferencesChange={setCustomPreferences}
-            selectedPurposeId={selectedTravelPurposeId}
-            onPurposeSelect={handleTravelPurposeSelect}
+            selectedPurposeIds={selectedTravelPurposeId ? [selectedTravelPurposeId] : []}
+            onPurposeToggle={handleTravelPurposeSelect}
             validationErrors={travelValidationErrors}
             showValidation={travelValidationAttempted}
             isLoading={isLoading}

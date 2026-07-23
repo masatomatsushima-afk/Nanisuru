@@ -8,11 +8,20 @@ import {
   parseTimeToMinutes,
 } from '@/lib/itinerary-quality';
 import { runItineraryQualityCheck } from '@/lib/itinerary-quality-engine';
+import {
+  REPLACEMENT_NO_CANDIDATES_MESSAGE,
+  applyReplacementCandidateToItem,
+  buildReplacementPreferenceSignalDrafts,
+  fetchReplacementPlaceCandidates,
+  type ItineraryReplacementCandidateView,
+  type ReplacementSearchDiagnostics,
+} from '@/lib/itinerary-replacement-search';
 import { flattenItineraryDays } from '@/lib/trip-duration';
 import type {
   ItineraryEditAction,
   ItineraryEditPreview,
   ItineraryEditTarget,
+  ItinerarySingleEditPresetId,
   PartialItineraryEditResult,
 } from '@/types/itinerary-edit';
 import type { ItineraryDay, ItineraryItem, PlanDetails } from '@/types/plan';
@@ -337,6 +346,202 @@ async function fetchPartialDayFromAi(instruction: string): Promise<{
   return parsed;
 }
 
+function logReplacementDiagnostics(diagnostics: ReplacementSearchDiagnostics): void {
+  if (!__DEV__) return;
+  console.log('[ItineraryEdit] replacement diagnostics', {
+    replacementRequestType: diagnostics.replacementRequestType,
+    originalPlaceIdPresent: diagnostics.originalPlaceIdPresent,
+    replacementSearchIntent: diagnostics.replacementSearchIntent,
+    candidateCount: diagnostics.candidateCount,
+    uniqueCandidateCount: diagnostics.uniqueCandidateCount,
+    openAiUsed: diagnostics.openAiUsed,
+    fallbackType: diagnostics.fallbackType,
+    selectedReplacementPlaceIdPresent: diagnostics.selectedReplacementPlaceIdPresent,
+    replacementApplied: diagnostics.replacementApplied,
+  });
+}
+
+function replaceSingleItemInDay(
+  day: ItineraryDay,
+  itemIndex: number,
+  nextItem: ItineraryItem,
+): ItineraryDay {
+  return {
+    ...day,
+    items: day.items.map((item, index) => (index === itemIndex ? nextItem : item)),
+  };
+}
+
+/**
+ * Rebuild a preview result around a user-picked Google Places candidate.
+ * Only the targeted item changes; dayIndex/time stay put.
+ */
+export function applyReplacementCandidateSelection(params: {
+  payload: SavedTripPayload;
+  target: ItineraryEditTarget;
+  baseResult: PartialItineraryEditResult;
+  candidate: ItineraryReplacementCandidateView;
+}): PartialItineraryEditResult {
+  const { payload, target, baseResult, candidate } = params;
+  const beforeDay = payload.days[target.dayIndex];
+  if (!beforeDay) return baseResult;
+
+  const afterItem = applyReplacementCandidateToItem(
+    target.item,
+    candidate,
+    candidate.shortReason,
+  );
+  const afterDay = replaceSingleItemInDay(beforeDay, target.itemIndex, afterItem);
+  // Do not rewrite other days/items — only the selected slot changes.
+  const nextDays = mergeUpdatedDay(cloneDays(payload.days), target.dayIndex, afterDay);
+  const summary = `「${target.item.placeName?.trim() || target.item.activity}」を「${candidate.placeName}」に変更`;
+  const preview = buildPreview(beforeDay, afterDay, target, summary);
+
+  const diagnostics: ReplacementSearchDiagnostics = {
+    ...(baseResult.replacementDiagnostics ?? {
+      replacementRequestType: 'custom',
+      originalPlaceIdPresent: Boolean(target.item.placeId?.trim()),
+      replacementSearchIntent: '',
+      candidateCount: baseResult.replacementCandidates?.length ?? 0,
+      uniqueCandidateCount: baseResult.replacementCandidates?.length ?? 0,
+      openAiUsed: false,
+      fallbackType: 'places',
+      selectedReplacementPlaceIdPresent: false,
+      replacementApplied: false,
+    }),
+    selectedReplacementPlaceIdPresent: Boolean(candidate.placeId?.trim()),
+    replacementApplied: true,
+    openAiUsed: false,
+    fallbackType: 'places',
+  };
+  logReplacementDiagnostics(diagnostics);
+
+  return {
+    ...baseResult,
+    days: nextDays,
+    details: payload.details,
+    preview: {
+      ...preview,
+      reason: candidate.shortReason ?? preview.reason,
+    },
+    replacementCandidates: baseResult.replacementCandidates,
+    emptyCandidatesMessage: null,
+    replacementDiagnostics: diagnostics,
+    preferenceSignalDrafts: buildReplacementPreferenceSignalDrafts({
+      originalPlaceIdPresent: Boolean(target.item.placeId?.trim()),
+      selectedPlaceIdPresent: Boolean(candidate.placeId?.trim()),
+    }),
+  };
+}
+
+async function previewChangePlaceWithPlaces(params: {
+  payload: SavedTripPayload;
+  target: ItineraryEditTarget;
+  userRequest: string;
+  presetId?: ItinerarySingleEditPresetId;
+}): Promise<PartialItineraryEditResult> {
+  const { payload, target, userRequest, presetId } = params;
+  const beforeDay = payload.days[target.dayIndex];
+  if (!beforeDay) {
+    throw new AppError('編集対象の日が見つかりません', 'UNKNOWN');
+  }
+
+  const fetched = await fetchReplacementPlaceCandidates({
+    payload,
+    target,
+    userRequest,
+    presetId,
+  });
+
+  if (fetched.views.length === 0) {
+    const diagnostics: ReplacementSearchDiagnostics = {
+      ...fetched.diagnosticsBase,
+      openAiUsed: false,
+      fallbackType: 'none',
+      selectedReplacementPlaceIdPresent: false,
+      replacementApplied: false,
+    };
+    logReplacementDiagnostics(diagnostics);
+
+    return {
+      days: cloneDays(payload.days),
+      details: payload.details,
+      preview: {
+        beforeDay,
+        afterDay: beforeDay,
+        beforeItem: target.item,
+        afterItem: null,
+        summary: REPLACEMENT_NO_CANDIDATES_MESSAGE,
+        reason: undefined,
+      },
+      replacementCandidates: [],
+      emptyCandidatesMessage: REPLACEMENT_NO_CANDIDATES_MESSAGE,
+      replacementDiagnostics: diagnostics,
+      preferenceSignalDrafts: [],
+    };
+  }
+
+  // OpenAI is optional assist only — never required for showing candidates.
+  let openAiUsed = false;
+  let orderedViews = fetched.views;
+  try {
+    if (isOpenAiConfigured() && fetched.views.length > 1) {
+      // Lightweight pass: keep Places order (rating-based). A future ranking call can go here.
+      // Intentionally do not call OpenAI for the whole day rewrite anymore.
+      openAiUsed = false;
+    }
+  } catch {
+    openAiUsed = false;
+    orderedViews = fetched.views;
+  }
+
+  const selected = orderedViews[0];
+  const afterItem = applyReplacementCandidateToItem(
+    target.item,
+    selected,
+    selected.shortReason,
+  );
+  const afterDay = replaceSingleItemInDay(beforeDay, target.itemIndex, afterItem);
+  // Only the selected item is rewritten — keep the rest of the itinerary intact.
+  const nextDays = mergeUpdatedDay(cloneDays(payload.days), target.dayIndex, afterDay);
+  const summary = `「${target.item.placeName?.trim() || target.item.activity}」を「${selected.placeName}」に変更`;
+  const preview = buildPreview(beforeDay, afterDay, target, summary);
+
+  const diagnostics: ReplacementSearchDiagnostics = {
+    ...fetched.diagnosticsBase,
+    openAiUsed,
+    fallbackType: openAiUsed ? 'places_ranked' : 'places',
+    selectedReplacementPlaceIdPresent: Boolean(selected.placeId?.trim()),
+    replacementApplied: true,
+  };
+  logReplacementDiagnostics(diagnostics);
+
+  if (__DEV__) {
+    console.log('[ItineraryEdit] replacement result', {
+      summary: preview.summary,
+      beforeItem: preview.beforeItem?.activity,
+      afterItem: preview.afterItem?.activity,
+      candidateCount: orderedViews.length,
+    });
+  }
+
+  return {
+    days: nextDays,
+    details: payload.details,
+    preview: {
+      ...preview,
+      reason: selected.shortReason ?? preview.reason,
+    },
+    replacementCandidates: orderedViews,
+    emptyCandidatesMessage: null,
+    replacementDiagnostics: diagnostics,
+    preferenceSignalDrafts: buildReplacementPreferenceSignalDrafts({
+      originalPlaceIdPresent: Boolean(target.item.placeId?.trim()),
+      selectedPlaceIdPresent: Boolean(selected.placeId?.trim()),
+    }),
+  };
+}
+
 export async function previewPartialItineraryEdit(params: {
   payload: SavedTripPayload;
   target: ItineraryEditTarget;
@@ -345,15 +550,28 @@ export async function previewPartialItineraryEdit(params: {
   newTime?: string;
   reorderDirection?: 'up' | 'down';
   variationSeed?: number;
+  presetId?: ItinerarySingleEditPresetId;
 }): Promise<PartialItineraryEditResult> {
   const { payload, target, action, userRequest } = params;
   const editRequest = userRequest.trim();
 
-  console.log('[ItineraryEdit] edit request', editRequest);
+  if (__DEV__) {
+    console.log('[ItineraryEdit] edit request', editRequest.slice(0, 120));
+  }
 
   const beforeDay = payload.days[target.dayIndex];
   if (!beforeDay) {
     throw new AppError('編集対象の日が見つかりません', 'UNKNOWN');
+  }
+
+  // change_place / ai_consult: Google Places first — OpenAI must not be required.
+  if (action === 'change_place' || action === 'ai_consult') {
+    return previewChangePlaceWithPlaces({
+      payload,
+      target,
+      userRequest,
+      presetId: params.presetId,
+    });
   }
 
   let nextDetails = payload.details;
@@ -398,16 +616,6 @@ export async function previewPartialItineraryEdit(params: {
   const nextDays = mergeUpdatedDay(cloneDays(payload.days), target.dayIndex, afterDay);
   const processed = postProcessDays(nextDays, nextDetails, payload);
   const preview = buildPreview(beforeDay, processed.days[target.dayIndex], target, summary);
-
-  console.log('[ItineraryEdit] replacement result', {
-    summary: preview.summary,
-    beforeItem: preview.beforeItem?.activity,
-    afterItem: preview.afterItem?.activity,
-    reason: preview.reason,
-    movementFromPrev: preview.movementFromPrev,
-    movementToNext: preview.movementToNext,
-    budgetImpact: preview.budgetImpact,
-  });
 
   return {
     days: processed.days,

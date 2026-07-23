@@ -100,6 +100,8 @@ export type PreferenceQuestionChoice = {
   id: string;
   /** i18n / display key — Phase 1 stores the key, not UI strings. */
   labelKey: string;
+  /** Optional Japanese (or locale) label for Phase 2 chip UI. */
+  label?: string;
   value: PreferenceDimensionValue;
 };
 
@@ -111,7 +113,11 @@ export type PreferenceQuestion = {
   dimensionId: string;
   scope: TravelIntentId | 'universal';
   promptKey: string;
+  /** Optional display prompt for Phase 2 UI (falls back to promptKey). */
+  prompt?: string;
   choices: PreferenceQuestionChoice[];
+  /** When true, chips accumulate into a string[] value. Default: single select. */
+  multiSelect?: boolean;
   /** Base priority for information value (higher = ask sooner when confidence is low). */
   informationValueBase: number;
   /** Relative impact on plan quality / ranking (higher = prefer when uncertain). */

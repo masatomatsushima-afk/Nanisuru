@@ -17,6 +17,11 @@ import type {
   UniversalPreference,
 } from '@/types/preference-discovery';
 import { PREFERENCE_QUESTION_REGISTRY } from './preference-question-registry';
+import {
+  PREFERENCE_QUESTION_SLOT_QUOTAS,
+  buildSelectedPurposes,
+  type SelectedPurpose,
+} from '@/lib/selected-purposes';
 
 export const PREFERENCE_PROFILE_SCHEMA_VERSION = 1;
 
@@ -39,7 +44,6 @@ const EXPLICIT_SOURCES = new Set([
   'secretary_confirmation',
 ]);
 
-const DEFAULT_QUESTION_LIMIT_MIN = 2;
 const DEFAULT_QUESTION_LIMIT_MAX = 4;
 
 export type PreferenceProfileValidationIssue = {
@@ -485,13 +489,68 @@ function questionMatchesPurposes(
   return question.intentIds.some((intentId) => selectedPurposes.includes(intentId));
 }
 
+function normalizeSelectedPurposeInput(
+  selectedPurposes: readonly string[] | readonly SelectedPurpose[],
+): SelectedPurpose[] {
+  if (!selectedPurposes || selectedPurposes.length === 0) return [];
+  const first = selectedPurposes[0];
+  if (typeof first === 'string') {
+    return buildSelectedPurposes(selectedPurposes as readonly string[]);
+  }
+  return buildSelectedPurposes(
+    (selectedPurposes as readonly SelectedPurpose[]).map((item) => item.purpose),
+  );
+}
+
+function scorePreferenceQuestion(
+  question: PreferenceQuestion,
+  profile: PreferenceProfile,
+  weighted: readonly SelectedPurpose[],
+): { question: PreferenceQuestion; score: number; confidence: number; matchedPurpose?: string } {
+  const confidence = dimensionConfidence(profile, question.scope, question.dimensionId);
+  const uncertainty = 1 - confidence;
+  const purposeIds = weighted.map((item) => item.purpose);
+
+  let matched: SelectedPurpose | undefined;
+  for (const item of weighted) {
+    if (question.intentIds.includes(item.purpose as TravelIntentId)) {
+      matched = item;
+      break;
+    }
+  }
+
+  const isUniversal = question.intentIds.includes('universal');
+  const purposeBoost = matched
+    ? 1 + matched.weight
+    : isUniversal
+      ? 0.45
+      : purposeIds.length === 0
+        ? 0.55
+        : 0.15;
+
+  const score =
+    purposeBoost *
+    uncertainty *
+    (0.55 * question.informationValueBase + 0.45 * question.planImpact);
+
+  return {
+    question,
+    score,
+    confidence,
+    matchedPurpose: matched?.purpose,
+  };
+}
+
 /**
  * Pick the next onboarding questions (max 2–4).
- * Priority: related to selected purposes → low confidence → high planImpact / information value.
+ * Supports plain purpose id strings (legacy) or weighted SelectedPurpose entries.
+ *
+ * Multi-purpose quotas (config): primary ~2, secondary/tertiary ~1 each, total ≤ 4.
+ * Remaining slots filled by global score (incl. universal). No purpose-combination ifs.
  */
 export function selectNextPreferenceQuestions(
   profile: PreferenceProfile,
-  selectedPurposes: readonly string[],
+  selectedPurposes: readonly string[] | readonly SelectedPurpose[],
   limit: number = DEFAULT_QUESTION_LIMIT_MAX,
   registry: readonly PreferenceQuestion[] = PREFERENCE_QUESTION_REGISTRY,
 ): PreferenceQuestion[] {
@@ -505,40 +564,48 @@ export function selectNextPreferenceQuestions(
   if (safeLimit === 0) return [];
 
   const normalized = normalizePreferenceProfile(profile);
-  const purposes = selectedPurposes
-    .map((purpose) => purpose?.trim())
-    .filter((purpose): purpose is string => Boolean(purpose));
+  const weighted = normalizeSelectedPurposeInput(selectedPurposes);
+  const purposeIds = weighted.map((item) => item.purpose);
 
   const scored = registry
     .filter((question) => question.sensitivity !== 'high')
-    .filter((question) => questionMatchesPurposes(question, purposes))
-    .map((question) => {
-      const confidence = dimensionConfidence(normalized, question.scope, question.dimensionId);
-      const uncertainty = 1 - confidence;
-      // Prefer purpose-scoped questions over universal when purposes are known.
-      const purposeBoost =
-        purposes.length > 0 && question.intentIds.some((id) => purposes.includes(id as string))
-          ? 1.25
-          : question.intentIds.includes('universal')
-            ? 0.55
-            : 0.2;
-      const score =
-        purposeBoost *
-        uncertainty *
-        (0.55 * question.informationValueBase + 0.45 * question.planImpact);
-      return { question, score, confidence };
-    })
-    // Skip dimensions that are already fairly certain.
+    .filter((question) => questionMatchesPurposes(question, purposeIds))
+    .map((question) => scorePreferenceQuestion(question, normalized, weighted))
     .filter((entry) => entry.confidence < 0.7)
     .sort((left, right) => right.score - left.score);
 
-  const picked = scored.slice(0, safeLimit).map((entry) => entry.question);
-
-  // If caller asked for "at least 2" feel but only 1 exists, still return what we have.
-  if (picked.length >= DEFAULT_QUESTION_LIMIT_MIN || picked.length > 0) {
-    return picked.slice(0, Math.min(safeLimit, DEFAULT_QUESTION_LIMIT_MAX));
+  if (weighted.length <= 1) {
+    return scored.slice(0, safeLimit).map((entry) => entry.question);
   }
-  return picked;
+
+  const count = Math.min(3, weighted.length) as 1 | 2 | 3;
+  const quotas = PREFERENCE_QUESTION_SLOT_QUOTAS[count];
+  const picked: PreferenceQuestion[] = [];
+  const pickedIds = new Set<string>();
+
+  weighted.forEach((purpose, index) => {
+    if (picked.length >= safeLimit) return;
+    const quota = quotas[index] ?? 0;
+    if (quota <= 0) return;
+    let taken = 0;
+    for (const entry of scored) {
+      if (taken >= quota || picked.length >= safeLimit) break;
+      if (pickedIds.has(entry.question.id)) continue;
+      if (entry.matchedPurpose !== purpose.purpose) continue;
+      picked.push(entry.question);
+      pickedIds.add(entry.question.id);
+      taken += 1;
+    }
+  });
+
+  for (const entry of scored) {
+    if (picked.length >= safeLimit) break;
+    if (pickedIds.has(entry.question.id)) continue;
+    picked.push(entry.question);
+    pickedIds.add(entry.question.id);
+  }
+
+  return picked.slice(0, Math.min(safeLimit, DEFAULT_QUESTION_LIMIT_MAX));
 }
 
 export { PREFERENCE_QUESTION_REGISTRY, SOURCE_BASE_STRENGTH };

@@ -40,6 +40,8 @@ export type TravelPlanSubmitSnapshot = {
   budgetIncludes: TravelBudgetIncludeOption[];
   travelPurpose: string;
   accommodation?: string;
+  /** Multi-purpose selection (1–3) with priority/weight — optional for backward compat. */
+  selectedPurposes?: import('@/lib/selected-purposes').SelectedPurpose[];
 };
 
 export function snapshotToTravelPlanFormInput(

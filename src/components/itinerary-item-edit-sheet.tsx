@@ -15,7 +15,10 @@ import { PrimaryButton } from '@/components/ui/premium-card';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { getErrorMessage } from '@/lib/app-errors';
-import { previewPartialItineraryEdit } from '@/lib/itinerary-partial-edit';
+import {
+  applyReplacementCandidateSelection,
+  previewPartialItineraryEdit,
+} from '@/lib/itinerary-partial-edit';
 import type { ItineraryEditTarget, PartialItineraryEditResult } from '@/types/itinerary-edit';
 import {
   ITINERARY_EDIT_FREE_TEXT_PLACEHOLDER,
@@ -108,24 +111,31 @@ export function ItineraryItemEditSheet({
   const [presetId, setPresetId] = useState<ItinerarySingleEditPresetId>('similar_vibe');
   const [customText, setCustomText] = useState('');
   const [preview, setPreview] = useState<PartialItineraryEditResult | null>(null);
+  const [selectedCandidatePlaceId, setSelectedCandidatePlaceId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   const resetState = useCallback(() => {
     setPresetId('similar_vibe');
     setCustomText('');
     setPreview(null);
+    setSelectedCandidatePlaceId(null);
     setError(null);
+    setInfoMessage(null);
   }, []);
 
   useEffect(() => {
     if (visible && target) {
-      console.log('[ItineraryEdit] selected item', {
-        dayIndex: target.dayIndex,
-        itemIndex: target.itemIndex,
-        item: target.item,
-      });
+      if (__DEV__) {
+        console.log('[ItineraryEdit] selected item', {
+          dayIndex: target.dayIndex,
+          itemIndex: target.itemIndex,
+          activity: target.item.activity,
+          placeIdPresent: Boolean(target.item.placeId?.trim()),
+        });
+      }
       resetState();
     }
   }, [visible, target, resetState]);
@@ -141,6 +151,7 @@ export function ItineraryItemEditSheet({
 
     setIsGenerating(true);
     setError(null);
+    setInfoMessage(null);
 
     try {
       const result = await previewPartialItineraryEdit({
@@ -148,18 +159,53 @@ export function ItineraryItemEditSheet({
         target,
         action: 'change_place',
         userRequest: editRequest,
+        presetId,
       });
+
+      if (result.emptyCandidatesMessage) {
+        setPreview(result);
+        setSelectedCandidatePlaceId(null);
+        setInfoMessage(result.emptyCandidatesMessage);
+        setError(null);
+        return;
+      }
+
       setPreview(result);
+      setSelectedCandidatePlaceId(result.replacementCandidates?.[0]?.placeId ?? null);
+      setInfoMessage(null);
     } catch (err) {
-      setError(getErrorMessage(err));
+      // Soften OpenAI-era failures into a non-technical message when possible.
+      const message = getErrorMessage(err);
+      if (/プラン作成に失敗|OpenAI|timeout|Abort/i.test(message)) {
+        setError(null);
+        setInfoMessage('候補を取得できませんでした。別の変更内容をお試しください');
+      } else {
+        setError(message);
+      }
       setPreview(null);
+      setSelectedCandidatePlaceId(null);
     } finally {
       setIsGenerating(false);
     }
   }, [customText, payload, presetId, target]);
 
-  const handleApply = async () => {
+  const handleSelectCandidate = (placeId: string) => {
     if (!preview || !target) return;
+    const candidate = preview.replacementCandidates?.find((entry) => entry.placeId === placeId);
+    if (!candidate) return;
+    const next = applyReplacementCandidateSelection({
+      payload,
+      target,
+      baseResult: preview,
+      candidate,
+    });
+    setPreview(next);
+    setSelectedCandidatePlaceId(placeId);
+  };
+
+  const handleApply = async () => {
+    if (!preview || !target || preview.emptyCandidatesMessage) return;
+    if (!preview.preview.afterItem) return;
     setIsApplying(true);
     setError(null);
     try {
@@ -175,7 +221,9 @@ export function ItineraryItemEditSheet({
 
   const handleDismissPreview = () => {
     setPreview(null);
+    setSelectedCandidatePlaceId(null);
     setError(null);
+    setInfoMessage(null);
   };
 
   if (!target) return null;
@@ -241,24 +289,60 @@ export function ItineraryItemEditSheet({
               />
 
               {error ? <Text style={styles.errorText}>{error}</Text> : null}
+              {infoMessage && !preview ? <Text style={styles.infoText}>{infoMessage}</Text> : null}
             </>
           ) : (
             <View style={styles.previewSection}>
               <Text style={styles.sectionTitle}>変更案</Text>
               <Text style={styles.previewSummary}>{preview.preview.summary}</Text>
 
+              {preview.emptyCandidatesMessage ? (
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoText}>{preview.emptyCandidatesMessage}</Text>
+                </View>
+              ) : null}
+
+              {preview.replacementCandidates && preview.replacementCandidates.length > 0 ? (
+                <View style={styles.candidatesBlock}>
+                  <Text style={styles.detailLabel}>候補（タップで選択）</Text>
+                  {preview.replacementCandidates.map((candidate) => {
+                    const selected = selectedCandidatePlaceId === candidate.placeId;
+                    return (
+                      <Pressable
+                        key={candidate.placeId}
+                        style={({ pressed }) => [
+                          styles.candidateCard,
+                          selected && styles.candidateCardSelected,
+                          pressed && styles.candidateCardPressed,
+                        ]}
+                        onPress={() => handleSelectCandidate(candidate.placeId)}>
+                        <Text style={styles.candidateName}>{candidate.placeName}</Text>
+                        {candidate.address ? (
+                          <Text style={styles.candidateMeta}>{candidate.address}</Text>
+                        ) : null}
+                        <Text style={styles.candidateMeta}>
+                          {[
+                            candidate.category,
+                            candidate.rating != null ? `★${candidate.rating.toFixed(1)}` : null,
+                            candidate.reviewCount != null ? `${candidate.reviewCount}件` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </Text>
+                        {candidate.shortReason ? (
+                          <Text style={styles.candidateReason}>{candidate.shortReason}</Text>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+
               <View style={styles.previewRow}>
                 <PreviewCard label="変更前" item={preview.preview.beforeItem} />
                 <Text style={styles.previewArrow}>→</Text>
                 <PreviewCard label="変更後" item={preview.preview.afterItem} />
               </View>
-
-              {preview.preview.reason ? (
-                <View style={styles.detailBlock}>
-                  <Text style={styles.detailLabel}>選定理由</Text>
-                  <Text style={styles.detailText}>{preview.preview.reason}</Text>
-                </View>
-              ) : null}
 
               {preview.preview.movementFromPrev ? (
                 <View style={styles.detailBlock}>
@@ -284,7 +368,7 @@ export function ItineraryItemEditSheet({
               {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
               <View style={styles.applyRow}>
-                {isApplying ? (
+                {preview.emptyCandidatesMessage ? null : isApplying ? (
                   <View style={styles.applyingRow}>
                     <ActivityIndicator size="small" color={NS.colors.accent} />
                     <Text style={styles.applyingText}>反映中...</Text>
@@ -293,7 +377,7 @@ export function ItineraryItemEditSheet({
                   <PrimaryButton
                     label="この変更を反映"
                     onPress={() => void handleApply()}
-                    disabled={isGenerating}
+                    disabled={isGenerating || !preview.preview.afterItem}
                   />
                 )}
                 <Pressable
@@ -420,6 +504,53 @@ const styles = StyleSheet.create({
     color: NS.colors.danger,
     fontSize: 14,
     lineHeight: 20,
+  },
+  infoText: {
+    color: NS.colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
+  infoBox: {
+    backgroundColor: NS.colors.bgElevated,
+    borderRadius: NS.radius.sm,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    padding: Spacing.three,
+  },
+  candidatesBlock: {
+    gap: Spacing.two,
+  },
+  candidateCard: {
+    backgroundColor: NS.colors.bgCard,
+    borderRadius: NS.radius.md,
+    borderWidth: 1,
+    borderColor: NS.colors.border,
+    padding: Spacing.three,
+    gap: 4,
+  },
+  candidateCardSelected: {
+    borderColor: NS.colors.accentBorder,
+    backgroundColor: NS.colors.accentSoft,
+  },
+  candidateCardPressed: {
+    opacity: 0.9,
+  },
+  candidateName: {
+    color: NS.colors.text,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  candidateMeta: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  candidateReason: {
+    color: NS.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 2,
   },
   previewSection: {
     gap: Spacing.three,

@@ -33,7 +33,7 @@ import {
   DEFAULT_DAY_WINDOW_START_MINUTES,
   resolveTargetItemCountForDay,
 } from './day-availability';
-import { resolvePurposeProfile, type PurposeProfile } from './purpose-profiles';
+import { resolvePurposeProfileWithSelection, type PurposeProfile } from './purpose-profiles';
 import type { TravelTimingSettings } from '@/types/travel-timing';
 import {
   buildSeoulSeedMapsQuery,
@@ -827,12 +827,13 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
   const accommodationFields = normalizeAccommodationFields(
     input.accommodation ?? input.accommodationArea ?? input.accommodationName,
   );
-  const purposeProfile = resolvePurposeProfile({
+  const purposeProfile = resolvePurposeProfileWithSelection({
     personality: input.personality,
     companion: input.companion,
     mood: input.mood,
     travelIntent: input.travelIntent,
     customPreferences: input.customPreferences,
+    selectedPurposes: input.selectedPurposes,
   });
   const templates = buildGooglePlacesDayTemplates(
     candidates,

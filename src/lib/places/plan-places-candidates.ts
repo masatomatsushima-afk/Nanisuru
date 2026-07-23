@@ -129,6 +129,7 @@ export async function fetchPlaceCandidatesForPlanPrompt(
       mood: input.mood,
       travelIntent: input.travelIntent,
       customPreferences: input.customPreferences,
+      selectedPurposes: input.selectedPurposes,
     });
 
     const intents: PlaceSearchIntent[] = buildPlaceSearchIntents(dna, {

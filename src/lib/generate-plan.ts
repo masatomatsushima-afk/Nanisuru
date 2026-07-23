@@ -119,7 +119,7 @@ import {
 } from './places/plan-places-candidates';
 import { enforcePlaceCandidateSelection } from './places/place-candidate-enforcement';
 import { enforcePurposeComposition } from './purpose-composition-enforcement';
-import { buildPurposeCompositionPromptSection, resolvePurposeProfile } from './purpose-profiles';
+import { buildPurposeCompositionPromptSection, resolvePurposeProfileWithSelection } from './purpose-profiles';
 import type { PlaceCandidate } from '@/types/place-candidate';
 import { learnFromCustomPreferences } from './custom-preferences';
 import {
@@ -689,12 +689,13 @@ function buildMvpUserPrompt(input: PlanInput, placeCandidatesSection?: string | 
     planCreationType: input.planCreationType ?? input.planType,
   });
   const tripTypeSection = buildTripTypePromptSection(tripAudience, input.companion);
-  const purposeProfile = resolvePurposeProfile({
+  const purposeProfile = resolvePurposeProfileWithSelection({
     personality: input.personality,
     companion: input.companion,
     mood: input.mood,
     travelIntent: input.travelIntent,
     customPreferences: input.customPreferences,
+    selectedPurposes: input.selectedPurposes,
   });
   const purposeCompositionSection = purposeProfile
     ? buildPurposeCompositionPromptSection(purposeProfile)
@@ -1507,12 +1508,13 @@ async function executePlanFromAiRequest(params: {
         params.fallbackPlanInput.location,
       );
 
-      const purposeProfile = resolvePurposeProfile({
+      const purposeProfile = resolvePurposeProfileWithSelection({
         personality: params.fallbackPlanInput.personality,
         companion: params.fallbackPlanInput.companion,
         mood: params.fallbackPlanInput.mood,
         travelIntent: params.fallbackPlanInput.travelIntent,
         customPreferences: params.fallbackPlanInput.customPreferences,
+        selectedPurposes: params.fallbackPlanInput.selectedPurposes,
       });
       const purposeComposition = enforcePurposeComposition(finalDays, {
         profile: purposeProfile,

@@ -5,6 +5,7 @@ import { ItineraryTransportSection } from '@/components/itinerary-transport-sect
 import { PlaceAtmosphereLinks } from '@/components/place-atmosphere-links';
 import { Spacing } from '@/constants/theme';
 import { getCategoryStyle, NS } from '@/constants/nanisuru-ui';
+import { resolveItineraryRecommendationHighlight } from '@/lib/itinerary-recommendation-reason';
 import type { ItineraryItem } from '@/types/plan';
 import type { TransportGuidanceContext } from '@/types/transport-guidance';
 
@@ -62,6 +63,7 @@ export function ItineraryTimelineCard({
 }: ItineraryTimelineCardProps) {
   const showTimeline = variant === 'timeline';
   const categoryStyle = getCategoryStyle(item.activityCategory);
+  const recommendationHighlight = resolveItineraryRecommendationHighlight({ item });
   const showTransport = Boolean(
     nextItem &&
       nextItem.activityCategory !== '移動' &&
@@ -114,10 +116,10 @@ export function ItineraryTimelineCard({
             </View>
           ) : null}
 
-          {item.reason ? (
+          {recommendationHighlight ? (
             <View style={styles.reasonBox}>
-              <Text style={styles.reasonLabel}>選んだ理由</Text>
-              <Text style={styles.reasonText}>{item.reason}</Text>
+              <Text style={styles.reasonLabel}>おすすめポイント</Text>
+              <Text style={styles.reasonText}>{recommendationHighlight}</Text>
             </View>
           ) : null}
 
