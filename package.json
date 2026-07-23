@@ -61,7 +61,10 @@
     "verify:itinerary-replacement": "npx --yes tsx scripts/verify-itinerary-replacement.ts",
     "verify:trip-dna-engine": "npx --yes tsx scripts/verify-trip-dna-engine.ts",
     "verify:place-search-intent": "npx --yes tsx scripts/verify-place-search-intent.ts",
-    "verify:place-search-orchestrator": "npx --yes tsx scripts/verify-place-search-orchestrator.ts"
+    "verify:place-search-orchestrator": "npx --yes tsx scripts/verify-place-search-orchestrator.ts",
+    "verify:weather-context": "npx --yes tsx scripts/verify-weather-context.ts",
+    "verify:google-weather": "npx --yes tsx scripts/verify-google-weather.ts",
+    "verify:open-meteo-weather": "npx --yes tsx scripts/verify-open-meteo-weather.ts"
   },
   "private": true
 }
