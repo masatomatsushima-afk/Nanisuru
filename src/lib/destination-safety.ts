@@ -453,25 +453,49 @@ export function categoryForGenericKind(kind: GenericAreaPhraseKind): PlaceCatego
   }
 }
 
-/** Generic, destination-label-based phrases usable for ANY destination, known or not. */
+/** Short hub label for honest area phrases — never the long "日本・大阪（難波拠点）" title. */
+export function resolveAreaPhraseHub(
+  normalized: NormalizedDestination,
+  baseArea?: string | null,
+): string {
+  const hub = baseArea?.trim();
+  if (hub) return hub;
+
+  const city = normalized.city?.trim();
+  if (city && !/[（(].*拠点/.test(city) && city.length <= 20) return city;
+
+  const label = (normalized.destinationLabel ?? '')
+    .replace(/（[^）]*拠点）/g, '')
+    .replace(/\([^)]*base\)/gi, '')
+    .trim();
+  if (label.includes('・')) {
+    const after = label.split('・').slice(1).join('・').trim();
+    if (after) return after;
+  }
+  return label || city || '目的地';
+}
+
+/** Generic, destination-hub-based phrases usable for ANY destination, known or not. */
 export function genericAreaPhrase(destinationLabel: string, kind: GenericAreaPhraseKind): string {
+  // Prefer short hub — callers should pass resolveAreaPhraseHub(...) when possible.
+  const hub = destinationLabel.replace(/（[^）]*拠点）/g, '').trim() || destinationLabel;
   switch (kind) {
     case 'stroll':
-      return `${destinationLabel}中心部を散策`;
+      return `${hub}エリアで自由時間`;
     case 'cafe':
-      return `${destinationLabel}のローカルカフェで休憩`;
+      return `${hub}エリアでカフェ休憩`;
     case 'market':
-      return `${destinationLabel}の市場・商店街エリアを楽しむ`;
+      return `${hub}エリアで食事・散策`;
     case 'night':
-      return `${destinationLabel}の夜景・川沿い・メインエリアを散策`;
+      return `${hub}エリアで夜の自由時間`;
     case 'dinner':
-      return `${destinationLabel}らしい夕食を楽しむ`;
+      return `${hub}エリアで夕食`;
     case 'lunch':
-      return `${destinationLabel}らしいランチを楽しむ`;
+      return `${hub}エリアでランチ`;
     case 'shopping':
-      return `${destinationLabel}でお土産・ショッピングを楽しむ`;
+      return `${hub}エリアで自由時間`;
     case 'culture':
-      return `${destinationLabel}の文化・体験スポットを楽しむ`;
+      return `${hub}エリアで文化・散策`;
   }
 }
 
@@ -578,18 +602,19 @@ export function sanitizeItineraryForDestination<Day extends SanitizableDay>(
     }
 
     const mapsQuery = genericMapsQuery(normalized, kind);
+    const hub = resolveAreaPhraseHub(normalized);
     return {
       ...item,
-      activity: genericAreaPhrase(normalized.destinationLabel, kind),
-      placeAddress: normalized.destinationLabel,
+      activity: genericAreaPhrase(hub, kind),
+      placeAddress: hub,
       placeName: undefined,
       category,
-      popularityType: 'fallback',
+      isSpecificPlace: false,
       confidence: 'low',
-      reason: '目的地内の安全な内容に置き換えました。',
+      popularityType: 'fallback',
+      reason: '目的地内の一般エリア表現に置き換えました。',
       mapsQuery,
       socialQuery: mapsQuery,
-      isSpecificPlace: false,
     };
   };
 

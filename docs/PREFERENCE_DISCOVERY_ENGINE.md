@@ -14,6 +14,7 @@ Nanisuru の中核価値は「グルメ / 買い物 / 観光を選ぶだけ」�
 
 | ドキュメント / モジュール | 役割 |
 | --- | --- |
+| `docs/NANISURU_PRODUCT_BRAIN.md` | **ユーザー目線の絶対ルール（必読）** |
 | `docs/NANISURU_MVP_RULES.md` | 赤エラー禁止・画面破壊禁止・大規模リファクタ禁止 |
 | `docs/PLAN_GENERATION_RULES.md` | destination lock / 通貨 / 時間 / Maps・SNS |
 | `docs/GOOGLE_PLACES_INTEGRATION_PLAN.md` | Places 候補取得と AI スケジューラの流れ |

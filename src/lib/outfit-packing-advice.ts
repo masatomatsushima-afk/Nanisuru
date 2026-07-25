@@ -2,7 +2,12 @@ import type { CompanionOption, ItineraryDay, WeatherForecast } from '@/types/pla
 
 /** True only when a real per-day forecast exists — seasonal/unavailable modes return false. */
 export function isWeatherForecastAvailable(weather: WeatherForecast | undefined): boolean {
-  return Boolean(weather?.days?.length && weather.available !== false && weather.planningMode !== 'unavailable');
+  return Boolean(
+    weather?.days?.length &&
+      weather.available !== false &&
+      weather.planningMode !== 'unavailable' &&
+      weather.planningMode !== 'seasonal',
+  );
 }
 import { isDateRelatedCompanion } from '@/types/plan';
 import type { PlanCreationType } from '@/types/plan-creation';
@@ -141,8 +146,12 @@ function resolveSeasonalContext(
 function weatherStats(weather: WeatherForecast | undefined, seasonalContext: SeasonalWeatherContext) {
   if (isWeatherForecastAvailable(weather)) {
     const forecast = weather!;
-    const maxTemp = Math.max(...forecast.days.map((d) => d.temperatureMax));
-    const minTemp = Math.min(...forecast.days.map((d) => d.temperatureMin));
+    const maxTemp = Math.max(
+      ...forecast.days.map((d) => d.feelsLikeMax ?? d.temperatureMax),
+    );
+    const minTemp = Math.min(
+      ...forecast.days.map((d) => d.feelsLikeMin ?? d.temperatureMin),
+    );
     const maxRainProb = Math.max(...forecast.days.map((d) => d.precipitationProbability));
 
     return {
@@ -179,27 +188,30 @@ function weatherStats(weather: WeatherForecast | undefined, seasonalContext: Sea
 
 /**
  * Opening line(s) used in place of a weather-based lead when no real forecast is available.
- * Explicitly states the uncertainty, then gives season/month/destination-only guidance —
- * never a rain/snow/wind/temperature-swing claim.
+ * Clothing only — weather card owns the unavailableReason messaging (no duplicate "取得できなかった").
+ * Never rain / umbrella / waterproof / absolute heat-cold assertions.
  */
 function buildWeatherUnavailableIntro(
   seasonalContext: SeasonalWeatherContext,
   isHot: boolean,
   isCold: boolean,
 ): string[] {
-  const lines = ['天気情報が取得できていないため、気温や雨の有無は断定できません。'];
   const destination = seasonalContext.destination || '旅行先';
   const monthLabel = seasonalContext.monthLabel || '今回の時期';
 
   if (isHot) {
-    lines.push(`${monthLabel}の${destination}旅行なので、暑さ・湿度・日差し対策を中心に準備してください。`);
-  } else if (isCold) {
-    lines.push(`${monthLabel}の${destination}旅行なので、防寒対策を中心に準備してください。`);
-  } else {
-    lines.push(`${monthLabel}の${destination}旅行として、脱ぎ着しやすい服装を準備しておくと安心です。`);
+    return [
+      `${monthLabel}の${destination}旅行として、通気性がよく脱ぎ着しやすい服装がおすすめです。`,
+    ];
   }
-
-  return lines;
+  if (isCold) {
+    return [
+      `${monthLabel}の${destination}旅行として、重ね着できる服装がおすすめです。`,
+    ];
+  }
+  return [
+    `${monthLabel}の${destination}旅行として、通気性がよく脱ぎ着しやすい服装がおすすめです。`,
+  ];
 }
 
 function styleOutfitLine(mode: OutfitStyleMode, weatherAvailable: boolean): string | null {

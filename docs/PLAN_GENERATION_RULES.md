@@ -1,9 +1,16 @@
 # 旅行プラン生成ルール（destination / 通貨 / 時間 / Maps・SNS）
 
+> **Before changing plan generation, Maps, Weather, Places, or itinerary UI,
+> read `docs/NANISURU_PRODUCT_BRAIN.md` first.
+> Any implementation that violates Product Brain rules is not acceptable.**
+
 Nanisuru の旅行プラン生成（Lightweight MVP モード）に関するルールをまとめたものです。
 実装は `src/lib/generate-plan.ts` / `src/lib/destination-safety.ts` /
 `src/lib/travel-plan-dev-fallback.ts` / `src/lib/concierge-links.ts` /
 `src/lib/place-preview-links.ts` を参照してください。
+
+ユーザー目線の絶対ルール（空港仮定禁止・目的カバレッジ・抽象スポット禁止・失敗時の元プラン保護など）は
+`docs/NANISURU_PRODUCT_BRAIN.md` と `npm run verify:beta-acceptance` を正とする。
 
 ---
 

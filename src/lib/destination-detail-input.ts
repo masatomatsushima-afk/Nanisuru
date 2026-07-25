@@ -193,6 +193,7 @@ export function buildDestinationDetailPromptSection(
     lines.push(
       `拠点エリア: ${details.baseArea}`,
       `【baseArea hub】When baseArea is set, mornings and evenings should stay easy to return to ${details.baseArea}. Cluster nearby neighborhoods on the same day; put farther areas (e.g. other districts) on separate days to avoid wasteful round trips.`,
+      `【拠点ロック】Do not send the traveler to airports, distant stations, or far districts (e.g. Umeda when base is Namba) unless the user explicitly selected them.`,
     );
   }
   if (details.accommodation) {
@@ -204,7 +205,11 @@ export function buildDestinationDetailPromptSection(
   if (details.arrivalPoint) {
     lines.push(
       `到着場所: ${details.arrivalPoint}`,
-      `【arrivalPoint・day 1】On day 1, order activities starting from ${details.arrivalPoint} with logical transfer toward baseArea/accommodation. Respect arrivalTime.`,
+      `【arrivalPoint・day 1】On day 1, order activities starting from ${details.arrivalPoint} with logical transfer toward baseArea/accommodation. Respect arrivalTime as plan-start preference (not necessarily a flight landing).`,
+    );
+  } else {
+    lines.push(
+      '【帰路・到着・禁止】arrivalPoint / return transport is NOT specified. Do NOT invent airport transfers, 「空港到着目安」, or flight-based logistics. End the day near baseArea/accommodation.',
     );
   }
 

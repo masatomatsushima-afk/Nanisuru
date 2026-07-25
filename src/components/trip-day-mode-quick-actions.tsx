@@ -3,8 +3,11 @@ import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { APP_MESSAGES } from '@/lib/app-errors';
-import { getPlaceMapsUrl, getWebsiteUrl } from '@/lib/concierge-links';
-import { buildInstagramSearchUrl, buildTikTokSearchUrl, buildPlacePreviewSearchQuery } from '@/lib/place-preview-links';
+import { getPlaceMapsUrlOrNull, getWebsiteUrl } from '@/lib/concierge-links';
+import {
+  getPlacePreviewLinks,
+} from '@/lib/place-preview-links';
+import { openSocialSearchLink } from '@/lib/open-social-search-link';
 import type { ItineraryItem } from '@/types/plan';
 
 type TripDayModeQuickActionsProps = {
@@ -67,12 +70,13 @@ export function TripDayModeQuickActions({
   rainPlanDisabled,
   assistantDisabled,
 }: TripDayModeQuickActionsProps) {
-  const previewQuery = item ? buildPlacePreviewSearchQuery(item, location) : location;
+  const previewLinks = item ? getPlacePreviewLinks(item, location) : null;
   const websiteUrl = item ? getWebsiteUrl(item, location) : null;
+  const mapsUrl = item ? getPlaceMapsUrlOrNull(item, location) : null;
 
   const openMaps = () => {
-    if (!item) return;
-    void openUrl(getPlaceMapsUrl(item, location));
+    if (!item || !mapsUrl) return;
+    void openUrl(mapsUrl);
   };
 
   const openWebsite = () => {
@@ -80,25 +84,40 @@ export function TripDayModeQuickActions({
       void openUrl(websiteUrl);
       return;
     }
-    void openUrl(`https://www.google.com/search?q=${encodeURIComponent(previewQuery + ' 公式')}`);
+    if (!previewLinks) return;
+    void openUrl(`https://www.google.com/search?q=${encodeURIComponent(previewLinks.query + ' 公式')}`);
   };
 
   const openInstagram = () => {
-    void openUrl(buildInstagramSearchUrl(previewQuery));
+    if (!previewLinks) return;
+    void openSocialSearchLink({
+      type: 'instagram',
+      query: previewLinks.query,
+      primaryUrl: previewLinks.instagram,
+    });
   };
 
   const openTikTok = () => {
-    void openUrl(buildTikTokSearchUrl(previewQuery));
+    if (!previewLinks) return;
+    void openSocialSearchLink({
+      type: 'tiktok',
+      query: previewLinks.query,
+      primaryUrl: previewLinks.tiktok,
+    });
   };
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.sectionTitle}>クイックアクション</Text>
       <View style={styles.grid}>
-        <ActionButton label="Google Mapsで開く" onPress={openMaps} disabled={!item} />
+        <ActionButton label="Google Mapsで開く" onPress={openMaps} disabled={!item || !mapsUrl} />
         <ActionButton label="公式サイト" onPress={openWebsite} disabled={!item} />
-        <ActionButton label="Instagramで見る" onPress={openInstagram} />
-        <ActionButton label="TikTokで見る" onPress={openTikTok} />
+        <ActionButton
+          label="Instagramで見る"
+          onPress={openInstagram}
+          disabled={!previewLinks}
+        />
+        <ActionButton label="TikTokで見る" onPress={openTikTok} disabled={!previewLinks} />
         <ActionButton label="この予定を変更" onPress={onEditItem} disabled={!item} />
         <ActionButton label="遅れてる" onPress={onDelay} variant="danger" />
         <ActionButton label="雨プランにする" onPress={onRainPlan} disabled={rainPlanDisabled} />

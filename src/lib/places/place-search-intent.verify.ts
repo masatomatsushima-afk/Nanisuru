@@ -92,4 +92,32 @@ check('every intent carries the destination fields through unchanged (no invente
   }
 });
 
+check('selectedPurposes gourmet+shopping produces both food and shopping intents', () => {
+  const intents = buildPlaceSearchIntents(DEFAULT_TRIP_DNA_PROFILE, DESTINATION, {
+    selectedPurposes: [
+      { purpose: 'gourmet', weight: 0.55 },
+      { purpose: 'shopping', weight: 0.45 },
+    ],
+  });
+  assert.ok(intents.some((intent) => intent.category === 'food' || intent.category === 'cafe'));
+  assert.ok(intents.some((intent) => intent.category === 'shopping'));
+  assert.ok(intents.some((intent) => intent.purposeId === 'gourmet'));
+  assert.ok(intents.some((intent) => intent.purposeId === 'shopping'));
+});
+
+check('Namba baseArea shopping query includes nearby hub neighborhoods', () => {
+  const namba = {
+    destinationLabel: '日本・大阪（難波拠点）',
+    city: '大阪',
+    country: '日本',
+    baseArea: '難波',
+  };
+  const intents = buildPlaceSearchIntents(findDna('shopping'), namba, {
+    selectedPurposes: [{ purpose: 'shopping', weight: 1 }],
+  });
+  const shopping = intents.find((intent) => intent.category === 'shopping');
+  assert.ok(shopping, 'expected shopping intent');
+  assert.ok(/難波|心斎橋|道頓堀/.test(shopping!.query), `query should include hub area, got: ${shopping!.query}`);
+});
+
 console.log(`\n[place-search-intent.verify] ${passed} checks passed.`);

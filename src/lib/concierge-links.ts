@@ -1,5 +1,12 @@
 import type { ItineraryItem } from '@/types/plan';
-import { buildGoogleMapsPlaceIdUrl, buildGoogleMapsSearchUrl } from '@/lib/geo';
+import { buildGoogleMapsDirectionsUrl } from '@/lib/geo';
+import {
+  buildDirectionsDestinationSafe,
+  canOfferDirectionsForItem,
+  logMapsLinkDiagnostics,
+  resolveItineraryMapsLink,
+  sanitizePlaceId,
+} from '@/lib/maps-link-safety';
 import { scopeMapsQueryToLocation } from '@/lib/destination-safety';
 
 export function isValidHttpUrl(value: string | undefined): boolean {
@@ -8,49 +15,45 @@ export function isValidHttpUrl(value: string | undefined): boolean {
   return /^https?:\/\/.+/i.test(trimmed);
 }
 
-function isGoogleMapsUrl(value: string): boolean {
-  return /google\.com\/maps/i.test(value);
-}
-
-export function buildGoogleMapsUrl(activity: string, location: string): string {
-  const query = [activity, location].filter(Boolean).join(' ');
-  return buildGoogleMapsSearchUrl(query);
-}
-
 /**
  * Builds the query used for both "open in Google Maps" and "directions" links. Always prefers
  * the item's own destination-scoped mapsQuery (set at generation time); only falls back to raw
  * title/address text for legacy items that predate mapsQuery, and even then the destination is
  * appended so the search can never resolve near the device's current location instead of the
  * actual trip destination.
+ *
+ * Returns empty string when nothing safe can be built — callers must not open Maps with it.
  */
 export function buildDirectionsDestination(item: ItineraryItem, location?: string): string {
-  if (item.mapsQuery?.trim()) {
-    return item.mapsQuery.trim();
-  }
-
-  const name = item.activity.trim();
-  const address = item.placeAddress?.trim();
-  const base = name && address ? `${name}, ${address}` : name;
-  return scopeMapsQueryToLocation(base, location);
+  return (
+    buildDirectionsDestinationSafe(item, location) ||
+    scopeMapsQueryToLocation(
+      item.mapsQuery?.trim() || item.placeName?.trim() || item.activity.trim(),
+      location,
+    )
+  );
 }
 
 /**
- * Maps button URL. Prefers a Google Place ID deep link (`query_place_id`) when the item is backed
- * by a real Places candidate — this is the precise, unambiguous venue link. Falls back to the
- * existing destination-scoped text search for items without a place_id (unchanged behavior).
+ * Maps button URL. Priority:
+ * A) valid placeId → place_id URL
+ * B) valid coordinates → coord URL
+ * C) concrete name + city/country text search
+ * D) empty string (caller must hide the button — never open a broken Maps page)
  */
 export function getPlaceMapsUrl(item: ItineraryItem, location?: string): string {
-  const website = item.websiteUrl?.trim();
-  if (website && isGoogleMapsUrl(website)) {
-    return website;
+  if (process.env.NODE_ENV !== 'production') {
+    logMapsLinkDiagnostics(item, location);
   }
-  const destination = buildDirectionsDestination(item, location);
-  const placeId = item.placeId?.trim();
-  if (placeId) {
-    return buildGoogleMapsPlaceIdUrl(placeId, destination);
+  return resolveItineraryMapsLink(item, location)?.url ?? '';
+}
+
+/** Null when no safe Maps URL exists for this item. */
+export function getPlaceMapsUrlOrNull(item: ItineraryItem, location?: string): string | null {
+  if (process.env.NODE_ENV !== 'production') {
+    logMapsLinkDiagnostics(item, location);
   }
-  return buildGoogleMapsSearchUrl(destination);
+  return resolveItineraryMapsLink(item, location)?.url ?? null;
 }
 
 export function buildReservationSearchUrl(activity: string, location: string): string {
@@ -78,7 +81,7 @@ export function getMapsUrl(item: ItineraryItem, location: string): string {
 
 /** True when it's safe to offer live "directions from current location" for this item. */
 export function canOfferDirections(item: ItineraryItem): boolean {
-  return item.isSpecificPlace !== false && Boolean(item.mapsQuery?.trim() || item.activity?.trim());
+  return canOfferDirectionsForItem(item);
 }
 
 export function hasTravelTime(item: ItineraryItem): boolean {
@@ -88,4 +91,29 @@ export function hasTravelTime(item: ItineraryItem): boolean {
 
 export function usesDirectReservationLink(item: ItineraryItem): boolean {
   return isValidHttpUrl(item.reservationUrl);
+}
+
+/** Build directions URL only when destination is safe; otherwise null. */
+export function getDirectionsUrlFromCurrentLocation(
+  item: ItineraryItem,
+  originLatitude: number,
+  originLongitude: number,
+  location?: string,
+): string | null {
+  if (!canOfferDirections(item)) return null;
+  if (!Number.isFinite(originLatitude) || !Number.isFinite(originLongitude)) return null;
+
+  const destination = buildDirectionsDestinationSafe(item, location);
+  if (!destination) return null;
+
+  const url = buildGoogleMapsDirectionsUrl(
+    originLatitude,
+    originLongitude,
+    destination,
+    sanitizePlaceId(item.placeId),
+  );
+  if (!url || /undefined|null|NaN|invalid/i.test(url) || /destination=(?:&|$)/i.test(url)) {
+    return null;
+  }
+  return url;
 }

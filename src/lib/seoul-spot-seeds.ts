@@ -5,7 +5,7 @@
 
 import type { GenericAreaPhraseKind, NormalizedDestination, PlaceCategory, PopularityType } from './destination-safety';
 import { buildSafeAreaMapsQuery } from './destination-safety';
-import { normalizePlaceName } from './itinerary-quality';
+import { normalizePlaceName } from './place-name-normalize';
 import type { SpotCandidate } from '@/types/spot-candidate';
 
 export type SeoulSpotSeed = {

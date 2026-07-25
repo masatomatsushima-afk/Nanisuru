@@ -6,6 +6,7 @@ import {
   getDaysUntilDeparture,
   getWeatherPlanningMessage,
   getWeatherPlanningMode,
+  getWeatherUnavailableUserMessage,
   isWithinForecastHorizon,
   WEATHER_PLANNING_MESSAGES,
   type SeasonalWeatherContext,
@@ -24,6 +25,9 @@ export type WeatherDayForecast = {
   category: WeatherCategory;
   temperatureMax: number;
   temperatureMin: number;
+  /** Prefer feels-like when present (from WeatherContext). */
+  feelsLikeMax?: number | null;
+  feelsLikeMin?: number | null;
   precipitationProbability: number;
   preferIndoor: boolean;
   preferOutdoor: boolean;
@@ -50,6 +54,11 @@ export type WeatherForecast = {
   maxTemperature?: number | null;
   rainChance?: number | null;
   condition?: WeatherCategory;
+  /**
+   * Soft-fail reason when available=false. Preserved for Plan Detail UI branching.
+   * Never show the raw code to users — map via getWeatherUnavailableUserMessage.
+   */
+  unavailableReason?: import('@/types/weather-context').WeatherUnavailableReason;
 };
 
 type GeocodingResponse = {
@@ -177,18 +186,23 @@ export function resolveWeatherLocation(destination: string): string {
 export function createUnavailableWeatherForecast(
   destination: string,
   weatherLocation?: string,
+  unavailableReason: import('@/types/weather-context').WeatherUnavailableReason = 'fetch_failed',
 ): WeatherForecast {
   const resolved = weatherLocation ?? resolveWeatherLocation(destination);
+  const planningMessage = getWeatherUnavailableUserMessage(unavailableReason);
   return {
     available: false,
     locationName: destination,
     location: resolved,
     searchLocation: resolved !== destination.trim() ? resolved : undefined,
     planningMode: 'unavailable',
-    planningMessage: WEATHER_PLANNING_MESSAGES.unavailable,
-    rescheduleNote: WEATHER_PLANNING_MESSAGES.rescheduleNote,
+    planningMessage,
+    rescheduleNote:
+      unavailableReason === 'outside_forecast_range'
+        ? WEATHER_PLANNING_MESSAGES.rescheduleNote
+        : undefined,
     days: [],
-    summary: '天気情報は取得できませんでした',
+    summary: planningMessage,
     hasRainExpected: false,
     isMostlySunny: false,
     temperature: null,
@@ -196,6 +210,7 @@ export function createUnavailableWeatherForecast(
     maxTemperature: null,
     rainChance: null,
     condition: 'unknown',
+    unavailableReason,
   };
 }
 

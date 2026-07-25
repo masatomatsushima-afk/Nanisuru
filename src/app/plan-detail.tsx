@@ -409,14 +409,20 @@ export default function PlanDetailScreen() {
         <ConciergeAnalysisSection analysis={planDetails.conciergeAnalysis} />
       ) : null}
 
-      {planDetails.weather ? (
+      {planDetails.weather &&
+      ((planDetails.weather.available !== false &&
+        (planDetails.weather.days?.length ?? 0) > 0) ||
+        planDetails.weather.planningMode === 'seasonal') ? (
         <View>
           <WeatherSection weather={planDetails.weather} />
-          <WeatherReplanActions
-            payload={planPayload}
-            onApply={handleApplyWeatherReplan}
-            placement="weather-note"
-          />
+          {planDetails.weather.available !== false &&
+          (planDetails.weather.days?.length ?? 0) > 0 ? (
+            <WeatherReplanActions
+              payload={planPayload}
+              onApply={handleApplyWeatherReplan}
+              placement="weather-note"
+            />
+          ) : null}
         </View>
       ) : null}
 
@@ -430,9 +436,11 @@ export default function PlanDetailScreen() {
         <BulletList items={planDetails.highlights} />
       </DetailCard>
 
-      <DetailCard icon="☔" title="天候変化時のバックアップ">
-        <BulletList items={planDetails.rainyDayAlternatives} />
-      </DetailCard>
+      {(planDetails.rainyDayAlternatives?.length ?? 0) > 0 ? (
+        <DetailCard icon="☔" title="天候変化時のバックアップ">
+          <BulletList items={planDetails.rainyDayAlternatives} />
+        </DetailCard>
+      ) : null}
 
       {planDetails.plannerMessage ? (
         <View style={styles.plannerCard}>
@@ -449,6 +457,9 @@ export default function PlanDetailScreen() {
           days={days}
           variant="detail"
           location={location}
+          city={planDetails.city}
+          country={planDetails.country}
+          weather={planDetails.weather}
           editable
           onEditItem={(target) => {
             setEditTarget(target);

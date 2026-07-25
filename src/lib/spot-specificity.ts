@@ -18,16 +18,29 @@ import {
   genericAreaPhrase,
   genericMapsQuery,
   normalizeDestination,
+  resolveAreaPhraseHub,
   type GenericAreaPhraseKind,
   type NormalizedDestination,
 } from './destination-safety';
 
 const ABSTRACT_TITLE_PATTERNS: RegExp[] = [
-  /で(韓国料理|グルメ|ランチ|ディナー|デザート|ショッピング|名物料理|伝統料理|BBQ)/i,
+  /で(韓国料理|グルメ|ランチ|ディナー|デザート|ショッピング|名物料理|伝統料理|BBQ|お土産)/i,
+  /（[^）]*拠点）/,
+  /\([^)]*拠点\)/,
+  /^日本・/,
+  /^韓国・/,
+  /で(?:お土産|ショッピング|グルメ|観光|カフェ)?を?楽しむ/,
+  /周辺で楽しむ/,
+  /美しい公園/,
+  /人気カフェ/,
+  /買い物スポット/,
+  /韓国料理ディナー/,
+  /市場を散策/,
+  /UI確認/,
+  /テスト用/,
   /^カフェで/,
   /^コリアンBBQ/i,
   /^(韓国)?伝統市場で/,
-  /人気カフェ/,
   /夜景スポット/,
   /地元探索/,
   /市場エリア/,
@@ -138,9 +151,9 @@ function buildCandidateAreaItem(
 
   return {
     ...item,
-    activity: genericAreaPhrase(normalized.destinationLabel, kind),
+    activity: genericAreaPhrase(resolveAreaPhraseHub(normalized), kind),
     placeName: undefined,
-    placeAddress: areaLabel,
+    placeAddress: areaLabel || resolveAreaPhraseHub(normalized),
     isSpecificPlace: false,
     confidence: 'low',
     popularityType: 'fallback',
@@ -183,7 +196,7 @@ function applySeoulSeed(item: ItineraryItem, seed: SeoulSpotSeed, normalized: No
 export function enforceItemSpecificity(
   item: ItineraryItem,
   normalized: NormalizedDestination,
-  options?: { seoulSeedCursor?: number },
+  options?: { seoulSeedCursor?: number; allowSeoulSeeds?: boolean },
 ): ItineraryItem {
   const scopedMaps = enforceDestinationScopedQuery(
     item.mapsQuery ?? item.activity,
@@ -205,8 +218,9 @@ export function enforceItemSpecificity(
   };
 
   const abstract = isAbstractItineraryItem(next);
+  const allowSeoulSeeds = options?.allowSeoulSeeds !== false;
 
-  if (abstract && isSeoulDestination(normalized)) {
+  if (abstract && allowSeoulSeeds && isSeoulDestination(normalized)) {
     const kind = inferKindFromItem(next);
     const seed = pickSeoulSeedForKind(kind, options?.seoulSeedCursor ?? 0);
     if (seed) {
@@ -215,6 +229,9 @@ export function enforceItemSpecificity(
   }
 
   if (abstract || !next.placeName?.trim() || next.confidence === 'low') {
+    if (process.env.NODE_ENV !== 'production' && abstract) {
+      console.info('[spot-specificity]', { abstractTitleBlocked: true });
+    }
     return buildCandidateAreaItem(next, normalized, inferKindFromItem(next));
   }
 
@@ -246,15 +263,20 @@ export function enforceItemSpecificity(
 export function enforceSpecificityOnDays(
   days: ItineraryDay[],
   rawLocation: string | undefined | null,
+  options?: { allowSeoulSeeds?: boolean },
 ): ItineraryDay[] {
   const normalized = normalizeDestination(rawLocation);
   let seoulSeedCursor = 0;
+  const allowSeoulSeeds = options?.allowSeoulSeeds !== false;
 
   return days.map((day) => ({
     ...day,
     items: day.items.map((item) => {
-      const enforced = enforceItemSpecificity(item, normalized, { seoulSeedCursor });
-      if (isSeoulDestination(normalized) && enforced.source === 'seed') {
+      const enforced = enforceItemSpecificity(item, normalized, {
+        seoulSeedCursor,
+        allowSeoulSeeds,
+      });
+      if (allowSeoulSeeds && isSeoulDestination(normalized) && enforced.source === 'seed') {
         seoulSeedCursor += 1;
       } else if (enforced.isSpecificPlace === false) {
         seoulSeedCursor += 1;

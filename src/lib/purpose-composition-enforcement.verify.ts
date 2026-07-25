@@ -244,4 +244,50 @@ check('maxDominantRatio replaces excess food with non-dominant candidates', () =
   assert.ok(report.fixesApplied.some((fix) => fix.includes('downgraded_for_max_ratio')));
 });
 
+// --- Test 10: multi-purpose coverage guarantees gourmet + shopping each ≥1 when candidates exist ---
+check('selectedPurposes gourmet+shopping never leave gourmet at 0 when food candidates exist', () => {
+  const shopping = PURPOSE_PROFILES.find((profile) => profile.id === 'shopping')!;
+  const days = [
+    day([
+      item({
+        activity: 'なんばパークス',
+        category: 'shopping',
+        isSpecificPlace: true,
+        placeName: 'なんばパークス',
+        placeId: 'p1',
+      }),
+      item({
+        activity: '心斎橋PARCO',
+        category: 'shopping',
+        isSpecificPlace: true,
+        placeName: '心斎橋PARCO',
+        placeId: 'p2',
+      }),
+      item({
+        activity: '日本・大阪（難波拠点）でお土産・ショッピングを楽しむ',
+        category: 'shopping',
+        isSpecificPlace: false,
+      }),
+    ]),
+  ];
+  const candidates = [
+    candidate({ placeId: 'f1', placeName: 'たこ焼道楽 わなか 千日前本店', category: 'food', rating: 4.5 }),
+    candidate({ placeId: 's3', placeName: '黒門市場', category: 'shopping', rating: 4.3 }),
+  ];
+  const report = enforcePurposeComposition(days, {
+    profile: shopping,
+    selectedMood: '買い物',
+    candidates,
+    rawLocation: '大阪 難波',
+    selectedPurposes: [
+      { purpose: 'gourmet', weight: 0.55 },
+      { purpose: 'shopping', weight: 0.45 },
+    ],
+  });
+  assert.ok((report.finalItemCountByPurpose?.gourmet ?? 0) >= 1, 'gourmet must be covered');
+  assert.ok((report.finalItemCountByPurpose?.shopping ?? 0) >= 1, 'shopping must be covered');
+  assert.strictEqual(report.missingPurposeCoverageFixed, true);
+  assert.ok(report.days[0].items.some((it) => it.placeName === 'たこ焼道楽 わなか 千日前本店'));
+});
+
 console.log(`\n[purpose-composition-enforcement.verify] ${passed} checks passed.`);

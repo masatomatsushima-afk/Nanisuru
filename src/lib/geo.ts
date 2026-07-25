@@ -55,10 +55,36 @@ export function buildGoogleMapsDirectionsUrl(
   originLatitude: number,
   originLongitude: number,
   destination: string,
+  destinationPlaceId?: string | null,
 ): string {
-  return (
+  const originLat = Number(originLatitude);
+  const originLng = Number(originLongitude);
+  const dest = typeof destination === 'string' ? destination.trim() : '';
+  if (
+    !Number.isFinite(originLat) ||
+    !Number.isFinite(originLng) ||
+    !dest ||
+    /undefined|null|NaN|invalid/i.test(dest)
+  ) {
+    return '';
+  }
+
+  let url =
     `https://www.google.com/maps/dir/?api=1` +
-    `&origin=${originLatitude},${originLongitude}` +
-    `&destination=${encodeURIComponent(destination)}`
-  );
+    `&origin=${originLat},${originLng}` +
+    `&destination=${encodeURIComponent(dest)}`;
+
+  const placeId =
+    typeof destinationPlaceId === 'string' ? destinationPlaceId.trim() : '';
+  if (
+    placeId &&
+    placeId.length >= 12 &&
+    !/^(undefined|null|nan|invalid)$/i.test(placeId) &&
+    !/^mock:/i.test(placeId)
+  ) {
+    url += `&destination_place_id=${encodeURIComponent(placeId)}`;
+  }
+
+  return url;
 }
+

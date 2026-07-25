@@ -32,7 +32,19 @@ import {
 } from './plan-api-url';
 import { safeJsonParse, stripJsonCodeFence } from './safe-json';
 import { flattenItineraryDays, resolveDurationConfig } from './trip-duration';
-import { fetchWeatherForecast, getTodayIsoDate, resolveWeatherLocation, resolveWeatherForTrip, createUnavailableWeatherForecast, type WeatherForecast } from './weather';
+import { getTodayIsoDate, createUnavailableWeatherForecast, type WeatherForecast } from './weather';
+import {
+  resolveWeatherForPlanGeneration,
+  mergeWeatherPlanDiagnostics,
+} from './weather-context/resolve-weather-for-plan';
+import { applyWeatherToItinerary } from './weather-context/apply-weather-to-itinerary';
+import type { DailyWeatherModifier } from './weather-context/daily-weather-modifier';
+import {
+  buildDailyWeatherModifiers,
+  buildWeatherPlanDiagnostics,
+} from './weather-context/daily-weather-modifier';
+import type { WeatherContext } from '@/types/weather-context';
+import type { PlaceWeatherFitContext } from './places/place-ranking-context';
 import { EMPTY_USER_PREFERENCES, getUserPreferences } from './user-memory';
 import { getTravelMemories } from './travel-memory';
 import { getTravelUserPreferences } from './travel-user-preferences';
@@ -132,6 +144,7 @@ import {
 import type { CurrencyCode } from '@/constants/currency';
 import type { CustomTripDuration } from '@/types/trip-schedule';
 import type { TourSuggestion, TravelTimingSettings } from '@/types/travel-timing';
+import { resolveArrivalContext, resolveDepartureContext } from '@/types/travel-timing';
 import {
   BUDGET_KEY_DESCRIPTIONS,
   getBreakdownKeysForScope,
@@ -142,6 +155,7 @@ import {
   logOutfitAdviceGenerated,
 } from './outfit-packing-advice';
 import type { BudgetScopeSettings } from '@/types/budget-scope';
+import { sanitizePlaceId } from './maps-link-safety';
 
 export type GeneratedPlan = {
   days: ItineraryDay[];
@@ -722,14 +736,19 @@ function buildMvpUserPrompt(input: PlanInput, placeCandidatesSection?: string | 
     `期間: ${input.durationLabel ?? input.tripDuration}（${durationConfig.dayCount}日間）`,
     input.departureDate ? `出発日: ${input.departureDate}` : null,
     input.returnDate ? `帰着日: ${input.returnDate}` : null,
-    timing?.arrivalTime ? `到着時刻: ${timing.arrivalTime}` : null,
+    timing?.arrivalTime
+      ? `プラン開始希望時刻: ${timing.arrivalTime}（旅行先への到着時刻／飛行機とは限らない）`
+      : null,
     earliestStart != null
-      ? `→ 1日目は ${formatMinutesAsTime(earliestStart)} 以降に開始すること`
+      ? `→ 1日目（または当日）は ${formatMinutesAsTime(earliestStart)} 以降に開始すること`
       : null,
-    timing?.departureTime ? `出発時刻: ${timing.departureTime}` : null,
+    timing?.departureTime
+      ? `プラン終了希望時刻: ${timing.departureTime}（空港・帰宅とは限らない）`
+      : null,
     latestEnd != null
-      ? `→ 最終日は ${formatMinutesAsTime(latestEnd)} までに全アクティビティを終えること`
+      ? `→ 最終日（または当日）は ${formatMinutesAsTime(latestEnd)} までに全アクティビティを終えること`
       : null,
+    '【帰路・禁止】空港・駅・飛行機・新幹線を勝手に仮定しないこと。帰路交通が明示されていない場合は、拠点エリア／宿泊先周辺で終了すること（「空港へ向かう」「空港到着目安」は禁止）。',
     '【日別の予定数・必須】到着/出発時刻から計算した利用可能時間に合わせて件数を決めること（固定件数で埋めない）:',
     ...daySizingLines,
     `予算: ${input.budget || '未定'} ${input.currency ?? ''}`,
@@ -829,7 +848,10 @@ function parseMvpAiResponse(
       source: VALID_SPOT_SOURCES.has(item.source ?? '')
         ? (item.source as ItineraryItem['source'])
         : 'openai',
-      placeId: item.placeId?.trim() || null,
+      placeId: sanitizePlaceId(item.placeId),
+      coordinates: null,
+      latitude: null,
+      longitude: null,
     })),
   }));
 
@@ -1521,6 +1543,7 @@ async function executePlanFromAiRequest(params: {
         selectedMood: params.fallbackPlanInput.mood,
         candidates: params.placeCandidates ?? [],
         rawLocation: params.fallbackPlanInput.location,
+        selectedPurposes: params.fallbackPlanInput.selectedPurposes,
       });
       if (__DEV__) {
         console.log('[Purpose] composition check', {
@@ -1533,6 +1556,12 @@ async function executePlanFromAiRequest(params: {
           foodRatio: Math.round(purposeComposition.foodRatio * 100) / 100,
           abstractWalkItemsRemoved: purposeComposition.abstractWalkItemsRemoved,
           googlePlaceCount: purposeComposition.googlePlaceCount,
+          finalItemCountByPurpose: purposeComposition.finalItemCountByPurpose,
+          missingPurposeCoverageFixed: purposeComposition.missingPurposeCoverageFixed,
+          selectedPurposeWeights: params.fallbackPlanInput.selectedPurposes?.map((p) => ({
+            purpose: p.purpose,
+            weight: p.weight,
+          })),
         });
         if (purposeComposition.fixesApplied.length > 0) {
           console.warn('[Purpose] composition fixes applied', {
@@ -1772,44 +1801,115 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   if (lightweight) {
     lightweightMvpLog(
       'generate-plan',
-      'skipping weather / real-places / Discover / memories / local gems fetches for plan generation',
+      'WeatherContext resolved once (soft-fail); Places/Discover/memories follow lightweight rules',
     );
   }
 
   let weather: WeatherForecast;
-  if (lightweight) {
-    weather = createUnavailableWeatherForecast(locationTrimmed, resolveWeatherLocation(locationTrimmed));
-  } else {
-    try {
-      const weatherLocation = resolveWeatherLocation(locationTrimmed);
-      weather = await resolveWeatherForTrip({
-        location: locationTrimmed,
-        startDate: input.tripDate,
-        tripDuration: input.tripDuration,
-        endDate: input.tripEndDate,
-        customDuration: input.customDuration,
-      });
+  let weatherContext: WeatherContext;
+  let weatherModifiers: DailyWeatherModifier[] = [];
+  let weatherFit: PlaceWeatherFitContext | undefined;
+  let weatherDiagnostics = {
+    weatherProvider: 'none',
+    weatherAvailable: false,
+    weatherModifierCount: 0,
+    rainyDayCount: 0,
+    hotDayCount: 0,
+    coldDayCount: 0,
+    weatherAdjustedCandidateCount: 0,
+    outdoorItemsRescheduled: 0,
+    weatherBackupCount: 0,
+    outfitUsedForecast: false,
+    fallbackType: null as string | null,
+  };
 
-      if (!weather.available && weather.planningMode !== 'seasonal') {
-        console.warn('[Weather] using fallback weather context', {
-          destination: locationTrimmed,
-          weatherLocation,
-          location: weather.location,
-          planningMode: weather.planningMode,
+  try {
+    // Weather replan: prefer the forecast already shown on Plan Detail / passed in.
+    // Still soft-fail — never invent rain when nothing usable is available.
+    const replanPreferredWeather =
+      input.weatherReplan &&
+      (input.weather ??
+        input.planAdjustment?.baseDetails?.weather ??
+        input.weatherReplan.previousWeather ??
+        input.weatherReplan.baseDetails.weather);
+    const replanPreferredContext =
+      input.weatherReplan &&
+      (input.planAdjustment?.baseDetails?.weatherContext ??
+        input.weatherReplan.baseDetails.weatherContext);
+
+    if (
+      input.weatherReplan &&
+      replanPreferredWeather &&
+      replanPreferredWeather.available !== false &&
+      (replanPreferredWeather.days?.length ?? 0) > 0 &&
+      replanPreferredWeather.planningMode !== 'seasonal' &&
+      replanPreferredWeather.planningMode !== 'unavailable'
+    ) {
+      weather = replanPreferredWeather;
+      weatherContext =
+        replanPreferredContext ??
+        ({
+          weatherAvailable: true,
+          provider: 'open_meteo',
+          attribution: null,
+          fetchedAt: null,
+          timezone: null,
+          location: null,
+          forecastStartDate: input.tripDate || null,
+          forecastEndDate: input.tripEndDate || input.tripDate || null,
+          daily: [],
+          hourly: [],
+          partialForecast: false,
+        } satisfies WeatherContext);
+      if (replanPreferredContext?.weatherAvailable && replanPreferredContext.daily.length > 0) {
+        weatherModifiers = buildDailyWeatherModifiers(replanPreferredContext);
+        weatherFit = undefined;
+        weatherDiagnostics = buildWeatherPlanDiagnostics({
+          weatherContext: replanPreferredContext,
+          modifiers: weatherModifiers,
+          outfitUsedForecast: true,
+          requestedDateRange: `${input.tripDate}..${input.tripEndDate ?? input.tripDate}`,
         });
-      } else if (weather.planningMode === 'seasonal') {
-        if (__DEV__) {
-          console.log('[Weather] using seasonal weather context', {
-            destination: locationTrimmed,
-            planningMode: weather.planningMode,
-          });
-        }
+      } else {
+        weatherModifiers = [];
+        weatherFit = undefined;
       }
-    } catch (error) {
-      console.warn('[Weather] fetch failed, continuing without weather', error);
-      const weatherLocation = resolveWeatherLocation(locationTrimmed);
-      weather = createUnavailableWeatherForecast(locationTrimmed, weatherLocation);
+    } else {
+      // Pass original PlanInput (tripDate / city / country), not normalized log shape
+      // (departureDate-only) — otherwise weather-context gets undefined dates.
+      const resolved = await resolveWeatherForPlanGeneration({
+        ...input,
+        location: locationTrimmed,
+        tripDate: input.tripDate || normalized.departureDate,
+        tripEndDate: input.tripEndDate || normalized.returnDate,
+        tripDuration: normalized.tripDuration,
+        customDuration: normalized.customDuration ?? input.customDuration,
+      });
+      weather = resolved.weather;
+      weatherContext = resolved.weatherContext;
+      weatherModifiers = resolved.modifiers;
+      weatherFit = resolved.weatherFit;
+      weatherDiagnostics = resolved.diagnostics;
     }
+  } catch (error) {
+    console.warn('[Weather] fetch failed, continuing without weather', error);
+    weather = createUnavailableWeatherForecast(locationTrimmed, locationTrimmed);
+    weatherContext = {
+      weatherAvailable: false,
+      provider: 'none',
+      attribution: null,
+      fetchedAt: null,
+      timezone: null,
+      location: null,
+      forecastStartDate: null,
+      forecastEndDate: null,
+      daily: [],
+      hourly: [],
+      partialForecast: false,
+      unavailableReason: 'fetch_failed',
+    };
+    weatherModifiers = [];
+    weatherFit = undefined;
   }
 
   let realPlaces;
@@ -2028,15 +2128,25 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
   // from real candidates instead of the generic seed templates.
   const placesFetchStartedAt = Date.now();
   const placeCandidatesResult = lightweight
-    ? await fetchPlaceCandidatesForPlanPrompt(aiPlanInput)
+    ? await fetchPlaceCandidatesForPlanPrompt(aiPlanInput, { weatherFit })
     : null;
   const placesCandidateCount = placeCandidatesResult?.candidates.length ?? 0;
   if (__DEV__ && lightweight) {
     // Dev-only diagnostic (no secrets): confirms whether Google Places candidates actually
     // reached the prompt, and how much latency this step added before the OpenAI call starts.
+    const arrivalContext = resolveArrivalContext(aiPlanInput.travelTiming);
+    const departureContext = resolveDepartureContext(aiPlanInput.travelTiming);
     console.log('[Places] candidates for prompt', {
       placesCandidateCount,
       candidatesPassedToPrompt: Boolean(placeCandidatesResult?.promptSection),
+      candidateCountByPurpose: placeCandidatesResult?.diagnostics?.candidateCountByPurpose,
+      purposeRetryTriggered: placeCandidatesResult?.diagnostics?.purposeRetryTriggered,
+      arrivalContextType: arrivalContext.type,
+      departureContextType: departureContext.type,
+      inferredAirportBlocked:
+        departureContext.type === 'stay_in_area' || departureContext.type === 'unknown',
+      airportAssumptionBlocked:
+        departureContext.type !== 'airport' && departureContext.type !== 'station',
       elapsedMs: Date.now() - placesFetchStartedAt,
     });
   }
@@ -2070,6 +2180,10 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
         placesCandidateCount,
       });
       plan = devFallback.plan;
+      weatherDiagnostics = mergeWeatherPlanDiagnostics(weatherDiagnostics, {
+        fallbackType: devFallback.fallbackType,
+        weatherAdjustedCandidateCount: placesCandidateCount,
+      });
       if (__DEV__) {
         const finalGoogleItems = plan.items?.filter((item) => item.source === 'google_places') ?? [];
         console.log('[AI] fallback plan built', {
@@ -2233,6 +2347,35 @@ export async function generatePlanWithAi(input: PlanInput): Promise<GeneratedPla
 
   const isTravelPlan =
     input.planCreationType === '旅行プラン' || input.planCreationType === '週末プラン';
+
+  // Apply DailyWeatherModifier: soft reschedule + data-backed weatherBackup only.
+  const weatherApplied = applyWeatherToItinerary({
+    days: plan.days,
+    modifiers: weatherModifiers,
+    weatherContext,
+    tripStartDate: input.tripDate,
+    rainyDayAlternatives: plan.details.rainyDayAlternatives,
+    earliestActivityMinutes: getEarliestActivityStartMinutes(input.travelTiming),
+    latestActivityMinutes: getLatestActivityEndMinutes(input.travelTiming),
+  });
+  plan = {
+    ...plan,
+    days: weatherApplied.days,
+    items: flattenItineraryDays(weatherApplied.days),
+    details: {
+      ...plan.details,
+      weather,
+      weatherContext,
+      rainyDayAlternatives: weatherApplied.rainyDayAlternatives,
+    },
+  };
+  weatherDiagnostics = mergeWeatherPlanDiagnostics(weatherDiagnostics, {
+    outdoorItemsRescheduled: weatherApplied.outdoorItemsRescheduled,
+    weatherBackupCount: weatherApplied.weatherBackupCount,
+    weatherAdjustedCandidateCount: placesCandidateCount,
+    fallbackType: plan.details.isFallback ? 'dev_fallback' : weatherDiagnostics.fallbackType,
+    outfitUsedForecast: weather.available === true && weather.planningMode === 'forecast',
+  });
 
   const outfitAdvice = generateOutfitPackingAdvice({
     days: plan.days,

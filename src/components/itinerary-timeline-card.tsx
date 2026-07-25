@@ -39,6 +39,8 @@ type ItineraryTimelineCardProps = {
   isLast: boolean;
   variant?: 'timeline' | 'detail';
   location?: string;
+  city?: string;
+  country?: string;
   transportContext?: TransportGuidanceContext;
   dayIndex?: number;
   totalDays?: number;
@@ -54,6 +56,8 @@ export function ItineraryTimelineCard({
   isLast,
   variant = 'timeline',
   location,
+  city,
+  country,
   transportContext,
   dayIndex = 0,
   totalDays = 1,
@@ -137,7 +141,7 @@ export function ItineraryTimelineCard({
             </View>
           ) : null}
 
-          <PlaceAtmosphereLinks item={item} location={location} />
+          <PlaceAtmosphereLinks item={item} location={location} city={city} country={country} />
 
           <ItineraryMapActions item={item} location={location} />
 
@@ -162,7 +166,9 @@ export function ItineraryTimelineCard({
             />
           ) : null}
 
-          {item.weatherBackup && item.weatherBackup !== '天候に関わらず可' ? (
+          {item.weatherBackup &&
+          item.weatherBackup !== '天候に関わらず可' &&
+          !/天候に関わらず|天気に関わらず/.test(item.weatherBackup) ? (
             <View style={styles.weatherBackupBox}>
               <Text style={styles.weatherBackupLabel}>☔ 天候変化時</Text>
               <Text style={styles.weatherBackupText}>{item.weatherBackup}</Text>

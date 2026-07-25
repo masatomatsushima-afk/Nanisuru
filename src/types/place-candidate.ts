@@ -9,6 +9,9 @@ import type { PlaceCategory, PopularityType } from '@/lib/destination-safety';
 /** どこから来た候補か。Places 実装後も `SpotCandidateSource`（既存）とは別軸で管理する。 */
 export type PlaceCandidateSource = 'google_places' | 'seed' | 'fallback';
 
+/** Soft venue setting for weather-fit ranking. Prefer explicit; never invent from place names. */
+export type PlaceVenueSetting = 'indoor' | 'outdoor' | 'mixed';
+
 export type PlaceCoordinates = {
   lat: number;
   lng: number;
@@ -58,6 +61,11 @@ export type PlaceCandidate = {
   category?: PlaceCategory;
   /** 人気度の種別（人気・隠れた名所・地元向け等）。既存 destination-safety の分類を再利用。 */
   popularityType?: PopularityType;
+  /**
+   * Optional indoor/outdoor setting when known from Places metadata.
+   * Do not invent from place names — leave unset and let category heuristics stay conservative.
+   */
+  venueSetting?: PlaceVenueSetting;
   address?: string;
   area?: string;
   city?: string;

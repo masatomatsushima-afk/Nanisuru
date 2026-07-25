@@ -64,7 +64,14 @@
     "verify:place-search-orchestrator": "npx --yes tsx scripts/verify-place-search-orchestrator.ts",
     "verify:weather-context": "npx --yes tsx scripts/verify-weather-context.ts",
     "verify:google-weather": "npx --yes tsx scripts/verify-google-weather.ts",
-    "verify:open-meteo-weather": "npx --yes tsx scripts/verify-open-meteo-weather.ts"
+    "verify:open-meteo-weather": "npx --yes tsx scripts/verify-open-meteo-weather.ts",
+    "verify:weather-plan": "npx --yes tsx scripts/verify-weather-plan.ts",
+    "verify:maps-link-safety": "npx --yes tsx scripts/verify-maps-link-safety.ts",
+    "verify:weather-replan": "npx --yes tsx scripts/verify-weather-replan.ts",
+    "verify:weather-replan-beta": "npx --yes tsx scripts/verify-weather-replan-beta.ts",
+    "verify:place-preview-links": "npx --yes tsx scripts/verify-place-preview-links.ts",
+    "verify:plan-generation-mvp": "npx --yes tsx scripts/verify-plan-generation-mvp.ts",
+    "verify:beta-acceptance": "npx --yes tsx scripts/verify-beta-acceptance.ts"
   },
   "private": true
 }

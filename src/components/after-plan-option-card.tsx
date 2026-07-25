@@ -4,7 +4,13 @@ import { useUserLocation } from '@/contexts/user-location-context';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
 import { buildGoogleMapsDirectionsUrl } from '@/lib/geo';
-import { buildGoogleImagesSearchUrl, buildInstagramSearchUrl, buildTikTokSearchUrl } from '@/lib/place-preview-links';
+import {
+  buildGoogleImagesSearchUrl,
+  buildInstagramSearchUrl,
+  buildTikTokSearchUrl,
+  isSafeSocialQuery,
+} from '@/lib/place-preview-links';
+import { openSocialSearchLink } from '@/lib/open-social-search-link';
 import type { AfterPlanOption } from '@/types/after-plan';
 
 type AfterPlanOptionCardProps = {
@@ -33,7 +39,13 @@ export function AfterPlanOptionCard({
   onSelect,
 }: AfterPlanOptionCardProps) {
   const { location: userLocation, fetchLocation } = useUserLocation();
-  const previewQuery = [option.placeName, location, option.placeCategory].filter(Boolean).join(' ');
+  const previewQuery = [option.placeName, location, option.placeCategory]
+    .filter(Boolean)
+    .join(' ');
+  const safePreviewQuery = isSafeSocialQuery(previewQuery) ? previewQuery : null;
+  const instagramUrl = safePreviewQuery ? buildInstagramSearchUrl(safePreviewQuery) : null;
+  const tiktokUrl = safePreviewQuery ? buildTikTokSearchUrl(safePreviewQuery) : null;
+  const imagesUrl = safePreviewQuery ? buildGoogleImagesSearchUrl(safePreviewQuery) : null;
 
   const handleDirections = async () => {
     let coords = userLocation;
@@ -112,18 +124,43 @@ export function AfterPlanOptionCard({
         <LinkButton label="🧭 道案内" onPress={() => void handleDirections()} />
       </View>
 
-      <Text style={styles.atmosphereLabel}>雰囲気をチェック</Text>
-      <View style={styles.linksRow}>
-        <LinkButton
-          label="Instagram"
-          onPress={() => void openUrl(buildInstagramSearchUrl(previewQuery))}
-        />
-        <LinkButton label="TikTok" onPress={() => void openUrl(buildTikTokSearchUrl(previewQuery))} />
-        <LinkButton
-          label="Google画像"
-          onPress={() => void openUrl(buildGoogleImagesSearchUrl(previewQuery))}
-        />
-      </View>
+      {safePreviewQuery && instagramUrl && tiktokUrl && imagesUrl ? (
+        <>
+          <Text style={styles.atmosphereLabel}>雰囲気をチェック</Text>
+          <View style={styles.linksRow}>
+            <LinkButton
+              label="Instagram"
+              onPress={() =>
+                void openSocialSearchLink({
+                  type: 'instagram',
+                  query: safePreviewQuery,
+                  primaryUrl: instagramUrl,
+                })
+              }
+            />
+            <LinkButton
+              label="TikTok"
+              onPress={() =>
+                void openSocialSearchLink({
+                  type: 'tiktok',
+                  query: safePreviewQuery,
+                  primaryUrl: tiktokUrl,
+                })
+              }
+            />
+            <LinkButton
+              label="Google画像"
+              onPress={() =>
+                void openSocialSearchLink({
+                  type: 'google_images',
+                  query: safePreviewQuery,
+                  primaryUrl: imagesUrl,
+                })
+              }
+            />
+          </View>
+        </>
+      ) : null}
     </Pressable>
   );
 }

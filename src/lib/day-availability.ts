@@ -9,7 +9,13 @@
  * unit-tested directly with tsx/Node.
  */
 
-import type { TravelTimingPlaceType, TravelTimingSettings } from '@/types/travel-timing';
+import type { TravelTimingSettings } from '@/types/travel-timing';
+import {
+  arrivalTransferBufferMinutes,
+  departureTransferBufferMinutes,
+  resolveArrivalContext,
+  resolveDepartureContext,
+} from '@/types/travel-timing';
 
 export function parseTimeToMinutes(time: string): number | null {
   const match = time.trim().match(/^(\d{1,2}):(\d{2})$/);
@@ -28,43 +34,39 @@ export function formatMinutesAsTime(totalMinutes: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-function departureBufferMinutes(place?: TravelTimingPlaceType): number {
-  switch (place) {
-    case '空港':
-      return 180;
-    case '駅':
-      return 60;
-    case 'ホテル':
-      return 30;
-    default:
-      return 90;
-  }
-}
-
+/**
+ * Plan start minutes from arrivalTime.
+ * MVP: arrivalTime is the preferred plan-start time unless airport/station is explicit.
+ */
 export function getEarliestActivityStartMinutes(timing?: TravelTimingSettings | null): number | null {
   if (!timing?.arrivalTime?.trim()) return null;
 
   const arrival = parseTimeToMinutes(timing.arrivalTime);
   if (arrival == null) return null;
 
-  const checkIn = timing.hotelCheckInTime?.trim()
-    ? parseTimeToMinutes(timing.hotelCheckInTime)
-    : parseTimeToMinutes('15:00');
+  const arrivalContext = resolveArrivalContext(timing);
+  const transfer = arrivalTransferBufferMinutes(arrivalContext);
+  if (transfer > 0) {
+    return arrival + transfer;
+  }
 
-  const readyAfterArrival = arrival + 90;
-  const readyAfterCheckIn =
-    checkIn != null && arrival <= checkIn ? checkIn + 60 : readyAfterArrival;
-
-  return Math.max(readyAfterArrival, readyAfterCheckIn);
+  // already_in_area / hotel / custom / unknown → start at the stated time.
+  return arrival;
 }
 
+/**
+ * Plan end minutes from departureTime.
+ * MVP: departureTime is the preferred plan-end time unless airport/station is explicit.
+ */
 export function getLatestActivityEndMinutes(timing?: TravelTimingSettings | null): number | null {
   if (!timing?.departureTime?.trim()) return null;
 
   const departure = parseTimeToMinutes(timing.departureTime);
   if (departure == null) return null;
 
-  return departure - departureBufferMinutes(timing.departurePlace);
+  const departureContext = resolveDepartureContext(timing);
+  const buffer = departureTransferBufferMinutes(departureContext);
+  return departure - buffer;
 }
 
 /** Safe default day window used whenever no arrival/departure/daily start-end constraint is set. */
@@ -97,11 +99,19 @@ export function resolveDayAvailableMinutes(params: {
 
   if (isFirstDay) {
     const earliest = getEarliestActivityStartMinutes(travelTiming);
-    if (earliest != null) start = Math.max(start, earliest);
+    if (earliest != null) {
+      // Explicit arrivalTime is the plan-start preference — do not clamp it down with the
+      // default 09:00–21:00 window. Only an explicit dailyStartTime may push it later.
+      start = dailyStart != null ? Math.max(dailyStart, earliest) : earliest;
+    }
   }
   if (isLastDay) {
     const latest = getLatestActivityEndMinutes(travelTiming);
-    if (latest != null) end = Math.min(end, latest);
+    if (latest != null) {
+      // Explicit departureTime is the plan-end preference — allow evenings past the default
+      // 21:00 window. Only an explicit dailyEndTime may cut it earlier.
+      end = dailyEnd != null ? Math.min(dailyEnd, latest) : latest;
+    }
   }
 
   return Math.max(0, end - start);

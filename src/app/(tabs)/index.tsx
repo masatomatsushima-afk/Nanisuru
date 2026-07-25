@@ -78,6 +78,7 @@ import { PLAN_LOADING_STAGES } from '@/lib/plan-generation-progress';
 import { PlacesNoticeBanner } from '@/components/places-notice-banner';
 import { WeatherSection } from '@/components/weather-section';
 import { WeatherReplanActions } from '@/components/weather-replan-actions';
+import { slimPlanDetailsForRoute } from '@/lib/weather-replan';
 import { buildTravelMemoryDisplayData } from '@/lib/travel-memory-display';
 import { consumePendingLocalSpotForPlan } from '@/lib/plan-local-spot-intent';
 import { getTravelMemories } from '@/lib/travel-memory';
@@ -420,7 +421,11 @@ function ItineraryTimeline({
     }
   };
 
-  const cleanPlan = cleanSerializable({ days, items, details });
+  const cleanPlan = cleanSerializable({
+    days,
+    items,
+    details: slimPlanDetailsForRoute(details),
+  });
   const planParams = {
     location,
     budget,
@@ -438,18 +443,20 @@ function ItineraryTimeline({
   };
 
   const openDetail = () => {
-    if (__DEV__) {
-      console.log('[TravelPlanSubmit] generated plan before serialize', cleanPlan);
-      console.log('[TravelPlanSubmit] serialized planJson lengths', {
-        days: planParams.days.length,
-        items: planParams.items.length,
-        details: planParams.details.length,
+    try {
+      if (__DEV__) {
+        console.log('[TravelPlanSubmit] openDetail CTA', {
+          detailCtaAction: 'navigate_plan_detail',
+          detailsBytes: planParams.details.length,
+        });
+      }
+      router.push({
+        pathname: '/plan-detail',
+        params: safeRouteParams(planParams),
       });
+    } catch (error) {
+      console.warn('[TravelPlanSubmit] openDetail failed', error);
     }
-    router.push({
-      pathname: '/plan-detail',
-      params: safeRouteParams(planParams),
-    });
   };
 
   const handleConfirm = () => {
@@ -470,7 +477,9 @@ function ItineraryTimeline({
       <View style={styles.itinerarySection}>
         <Pressable
           style={({ pressed }) => pressed && styles.itinerarySectionPressed}
-          onPress={openDetail}>
+          onPress={openDetail}
+          accessibilityRole="button"
+          accessibilityLabel="プラン詳細を見る">
           <View style={styles.itineraryHeader}>
             <View style={styles.itineraryHeaderText}>
               <Text style={styles.itineraryEyebrow}>{getItineraryEyebrow(companion, location)}</Text>
@@ -531,6 +540,7 @@ function ItineraryTimeline({
               </Text>
             </View>
           </View>
+        </Pressable>
 
           <View style={styles.timelineList}>
             <AfterPlanLaunchButton location={location} variant="compact" />
@@ -539,6 +549,9 @@ function ItineraryTimeline({
               days={days}
               variant="timeline"
               location={location}
+              city={details.city}
+              country={details.country}
+              weather={details.weather}
               editable
               onEditItem={(target) => {
                 setEditTarget(target);
@@ -548,84 +561,87 @@ function ItineraryTimeline({
             />
           </View>
 
-          <View style={styles.detailHint}>
+          <Pressable
+            style={({ pressed }) => [styles.detailHint, pressed && styles.itinerarySectionPressed]}
+            onPress={openDetail}
+            accessibilityRole="button"
+            accessibilityLabel="プラン詳細を見る">
             <Text style={styles.detailHintText}>タップしてプラン詳細を見る →</Text>
-          </View>
-        </Pressable>
+          </Pressable>
+      </View>
 
-        <ConciergeAccessSection
-          days={days}
+      <ConciergeAccessSection
+        days={days}
+        location={location}
+        compact
+        transportContext={transportContext}
+      />
+
+      {(planType === '旅行プラン' || planType === '週末プラン') && days.length >= 2 ? (
+        <TourExperienceSection
+          destination={location}
+          tourSuggestions={details.tourSuggestions}
+        />
+      ) : null}
+
+      {isDateRelatedCompanion(companion) && details.aiAdvice ? (
+        <AiAdviceSection advice={details.aiAdvice} />
+      ) : null}
+
+      <RecommendReasonsSection companion={companion} />
+
+      <PlanRatingSection
+        context={ratingContext}
+        savedTripId={savedTripId}
+        onRated={setPendingRatingId}
+      />
+
+      <View style={styles.regenerateButtonWrap}>
+        <PrimaryButton
+          label={isRegenerating ? '提案中...' : '別のプランを提案'}
+          onPress={onRegenerate}
+          disabled={isRegenerating}
+          variant="secondary"
+        />
+      </View>
+
+      <View style={styles.saveButtonWrap}>
+        <SaveTripButton
           location={location}
-          compact
-          transportContext={transportContext}
-        />
-
-        {(planType === '旅行プラン' || planType === '週末プラン') && days.length >= 2 ? (
-          <TourExperienceSection
-            destination={location}
-            tourSuggestions={details.tourSuggestions}
-          />
-        ) : null}
-
-        {isDateRelatedCompanion(companion) && details.aiAdvice ? (
-          <AiAdviceSection advice={details.aiAdvice} />
-        ) : null}
-
-        <RecommendReasonsSection companion={companion} />
-
-        <PlanRatingSection
-          context={ratingContext}
+          budget={budget}
+          currency={currency}
+          people={people}
+          mood={mood}
+          companion={companion}
+          personality={personality}
+          tripDuration={tripDuration}
+          customDuration={customDuration}
+          days={days}
+          items={items}
+          details={details}
+          budgetIncludes={budgetIncludes}
+          travelPurpose={travelPurpose}
           savedTripId={savedTripId}
-          onRated={setPendingRatingId}
+          preserveSavedAt={preserveSavedAt}
+          onSaved={handleTripSaved}
         />
+      </View>
 
-        <View style={styles.regenerateButtonWrap}>
-          <PrimaryButton
-            label={isRegenerating ? '提案中...' : '別のプランを提案'}
-            onPress={onRegenerate}
-            disabled={isRegenerating}
-            variant="secondary"
-          />
-        </View>
+      <View style={styles.shareButtonWrap}>
+        <ShareTripButton
+          location={location}
+          companion={companion}
+          personality={personality}
+          tripDuration={tripDuration}
+          customDuration={customDuration}
+          days={days}
+          items={items}
+          details={details}
+        />
+      </View>
 
-        <View style={styles.saveButtonWrap}>
-          <SaveTripButton
-            location={location}
-            budget={budget}
-            currency={currency}
-            people={people}
-            mood={mood}
-            companion={companion}
-            personality={personality}
-            tripDuration={tripDuration}
-            customDuration={customDuration}
-            days={days}
-            items={items}
-            details={details}
-            budgetIncludes={budgetIncludes}
-            travelPurpose={travelPurpose}
-            savedTripId={savedTripId}
-            preserveSavedAt={preserveSavedAt}
-            onSaved={handleTripSaved}
-          />
-        </View>
-
-        <View style={styles.shareButtonWrap}>
-          <ShareTripButton
-            location={location}
-            companion={companion}
-            personality={personality}
-            tripDuration={tripDuration}
-            customDuration={customDuration}
-            days={days}
-            items={items}
-            details={details}
-          />
-        </View>
-
-        <View style={styles.confirmButtonWrap}>
-          <PrimaryButton label="このプランで決定" onPress={handleConfirm} variant="secondary" />
-        </View>
+      <View style={styles.confirmButtonWrap}>
+        <PrimaryButton label="このプランで決定" onPress={handleConfirm} variant="secondary" />
       </View>
 
       <ItineraryItemEditSheet

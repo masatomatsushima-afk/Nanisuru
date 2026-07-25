@@ -1,15 +1,18 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useUserLocation } from '@/contexts/user-location-context';
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
-import { AppErrorBanner } from '@/components/app-error-banner';
-import { APP_MESSAGES } from '@/lib/app-errors';
-import { LOCATION_PERMISSION_DENIED_MESSAGE } from '@/lib/current-location';
-import { buildGoogleMapsDirectionsUrl } from '@/lib/geo';
-import { buildDirectionsDestination, canOfferDirections, getPlaceMapsUrl } from '@/lib/concierge-links';
+import {
+  canOfferDirections,
+  getDirectionsUrlFromCurrentLocation,
+  getPlaceMapsUrlOrNull,
+} from '@/lib/concierge-links';
 import type { ItineraryItem } from '@/types/plan';
+
+export const DIRECTIONS_LOCATION_PERMISSION_HINT =
+  '位置情報を許可すると現在地から案内できます';
 
 type ItineraryMapActionsProps = {
   item: ItineraryItem;
@@ -17,63 +20,130 @@ type ItineraryMapActionsProps = {
   location?: string;
 };
 
-async function openGoogleMapsUrl(url: string): Promise<void> {
-  await Linking.openURL(url);
+async function openGoogleMapsUrl(url: string): Promise<boolean> {
+  if (!url.trim() || /undefined|null|NaN|invalid/i.test(url)) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.info('[maps-link]', {
+        invalidExternalLinkBlocked: true,
+        externalLinkOpened: false,
+      });
+    }
+    return false;
+  }
+  try {
+    await Linking.openURL(url);
+    if (process.env.NODE_ENV !== 'production') {
+      console.info('[maps-link]', {
+        externalLinkOpened: true,
+        mapsLinkType: 'opened',
+      });
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function ItineraryMapActions({ item, location }: ItineraryMapActionsProps) {
   const { location: currentLocation, fetchLocation } = useUserLocation();
-  const [directionsError, setDirectionsError] = useState<string | null>(null);
+  const [directionsHint, setDirectionsHint] = useState<string | null>(null);
   const [isDirectionsLoading, setIsDirectionsLoading] = useState(false);
+  const directionsInFlight = useRef(false);
 
-  const destination = buildDirectionsDestination(item, location);
-  const showDirections = canOfferDirections(item);
+  const mapsUrl = getPlaceMapsUrlOrNull(item, location);
+  const showDirections = canOfferDirections(item) && Boolean(mapsUrl);
 
   const handleOpenPlace = () => {
-    setDirectionsError(null);
-    void openGoogleMapsUrl(getPlaceMapsUrl(item, location));
+    if (!mapsUrl) return;
+    setDirectionsHint(null);
+    void openGoogleMapsUrl(mapsUrl);
   };
 
   const handleDirections = async () => {
-    setDirectionsError(null);
-
-    let coords = currentLocation;
-
-    if (!coords) {
-      setIsDirectionsLoading(true);
-      const outcome = await fetchLocation();
-      setIsDirectionsLoading(false);
-      coords = outcome.location;
-
-      if (!coords) {
-        setDirectionsError(
-          outcome.errorMessage ?? LOCATION_PERMISSION_DENIED_MESSAGE,
-        );
-        return;
-      }
-    }
-
-    const url = buildGoogleMapsDirectionsUrl(
-      coords.latitude,
-      coords.longitude,
-      destination,
-    );
+    if (directionsInFlight.current || isDirectionsLoading) return;
+    directionsInFlight.current = true;
+    setDirectionsHint(null);
 
     try {
-      await openGoogleMapsUrl(url);
+      let coords = currentLocation;
+
+      if (!coords) {
+        setIsDirectionsLoading(true);
+        if (process.env.NODE_ENV !== 'production') {
+          console.info('[maps-link]', { locationPermissionState: 'requesting' });
+        }
+        const outcome = await fetchLocation();
+        setIsDirectionsLoading(false);
+        coords = outcome.location;
+
+        if (!coords) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.info('[maps-link]', {
+              locationPermissionState: 'denied_or_unavailable',
+              directionsAvailable: false,
+            });
+          }
+          setDirectionsHint(DIRECTIONS_LOCATION_PERMISSION_HINT);
+          return;
+        }
+
+        if (process.env.NODE_ENV !== 'production') {
+          console.info('[maps-link]', {
+            locationPermissionState: 'granted',
+            directionsAvailable: true,
+          });
+        }
+      }
+
+      const url = getDirectionsUrlFromCurrentLocation(
+        item,
+        coords.latitude,
+        coords.longitude,
+        location,
+      );
+
+      if (!url) {
+        if (mapsUrl) {
+          await openGoogleMapsUrl(mapsUrl);
+        } else {
+          setDirectionsHint('この場所は地図情報を確認できませんでした');
+        }
+        return;
+      }
+
+      const opened = await openGoogleMapsUrl(url);
+      if (!opened && mapsUrl) {
+        await openGoogleMapsUrl(mapsUrl);
+      }
     } catch {
-      setDirectionsError(APP_MESSAGES.mapsOpenFailed);
+      setIsDirectionsLoading(false);
+      if (mapsUrl) {
+        await openGoogleMapsUrl(mapsUrl);
+      } else {
+        setDirectionsHint(DIRECTIONS_LOCATION_PERMISSION_HINT);
+      }
+    } finally {
+      setIsDirectionsLoading(false);
+      directionsInFlight.current = false;
     }
   };
+
+  if (!mapsUrl && !showDirections) {
+    return null;
+  }
 
   return (
     <View style={styles.wrap}>
       <View style={styles.row}>
-        <Pressable
-          style={({ pressed }) => [styles.button, styles.buttonPrimary, pressed && styles.pressed]}
-          onPress={handleOpenPlace}>
-          <Text style={styles.buttonText}>📍 Google Mapsで開く</Text>
-        </Pressable>
+        {mapsUrl ? (
+          <Pressable
+            style={({ pressed }) => [styles.button, styles.buttonPrimary, pressed && styles.pressed]}
+            onPress={handleOpenPlace}
+            accessibilityRole="link"
+            accessibilityLabel="Google Mapsで開く">
+            <Text style={styles.buttonText}>📍 Google Mapsで開く</Text>
+          </Pressable>
+        ) : null}
         {showDirections ? (
           <Pressable
             style={({ pressed }) => [
@@ -83,20 +153,16 @@ export function ItineraryMapActions({ item, location }: ItineraryMapActionsProps
               isDirectionsLoading && styles.buttonDisabled,
             ]}
             onPress={() => void handleDirections()}
-            disabled={isDirectionsLoading}>
+            disabled={isDirectionsLoading}
+            accessibilityRole="button"
+            accessibilityLabel="現在地から道案内">
             <Text style={styles.buttonTextSecondary}>
               {isDirectionsLoading ? '現在地を取得中...' : '📍 現在地から道案内'}
             </Text>
           </Pressable>
         ) : null}
       </View>
-      {directionsError ? (
-        <AppErrorBanner
-          message={directionsError}
-          variant="error"
-          onRetry={() => void handleDirections()}
-        />
-      ) : null}
+      {directionsHint ? <Text style={styles.hintText}>{directionsHint}</Text> : null}
     </View>
   );
 }
@@ -109,6 +175,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
+    alignItems: 'center',
   },
   button: {
     flexGrow: 1,
@@ -144,5 +211,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  hintText: {
+    color: NS.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
   },
 });

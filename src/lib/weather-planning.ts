@@ -1,3 +1,5 @@
+import type { WeatherUnavailableReason } from '@/types/weather-context';
+
 export type WeatherPlanningMode = 'forecast' | 'seasonal' | 'unavailable';
 
 export type SeasonalWeatherContext = {
@@ -17,9 +19,34 @@ export const FORECAST_HORIZON_DAYS = 10;
 export const WEATHER_PLANNING_MESSAGES = {
   forecast: '予報をもとにプランを調整しています',
   seasonal: '旅行日が先のため、季節の傾向をもとにプランを作成しています',
-  unavailable: '天気情報が取得できなかったため、天候に左右されにくい候補も含めています',
-  rescheduleNote: '出発が近づいたら、最新の天気に合わせてプランを再調整できます',
+  unavailable: '天気予報を取得できませんでした。時間を置いて再取得してください。',
+  rescheduleNote: '出発が近づいたら、最新の天気に合わせて再調整できます',
+  outsideForecastRange:
+    '旅行日はまだ天気予報の対象期間外です。出発が近づいたら最新の天気で再調整できます。',
+  locationUnresolved:
+    '旅行先の位置を特定できなかったため、天気予報を取得できませんでした。',
+  fetchFailed: '天気予報を取得できませんでした。時間を置いて再取得してください。',
 } as const;
+
+/** User-facing copy for soft-fail reasons — never return the raw reason code. */
+export function getWeatherUnavailableUserMessage(
+  reason?: WeatherUnavailableReason | string | null,
+): string {
+  switch (reason) {
+    case 'outside_forecast_range':
+      return WEATHER_PLANNING_MESSAGES.outsideForecastRange;
+    case 'location_unresolved':
+      return WEATHER_PLANNING_MESSAGES.locationUnresolved;
+    case 'fetch_failed':
+    case 'no_forecast_data':
+    case 'missing_api_key':
+    case 'api_disabled':
+    case 'unsupported_location':
+    case 'invalid_request':
+    default:
+      return WEATHER_PLANNING_MESSAGES.fetchFailed;
+  }
+}
 
 type ClimateZone =
   | 'japan'
@@ -167,7 +194,9 @@ function japanProfile(month: number): SeasonProfile {
 }
 
 function koreaProfile(month: number): SeasonProfile {
-  if (month === 6 || month === 7) {
+  // June only for rainy-season profile — July was incorrectly caught here and leaked
+  // umbrella copy into weatherAvailable=false UI.
+  if (month === 6) {
     return {
       seasonLabel: '梅雨〜初夏',
       guidance: 'この時期は雨と湿度が増えやすく、屋外より屋内中心のプランが安心です。',

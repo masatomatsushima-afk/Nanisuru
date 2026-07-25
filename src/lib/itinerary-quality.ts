@@ -1,20 +1,19 @@
 import type { NearbyPlace } from '@/types/nearby-places';
 import type { ItineraryDay, ItineraryItem } from '@/types/plan';
-import type { TravelTimingPlaceType, TravelTimingSettings } from '@/types/travel-timing';
+import {
+  arrivalTransferBufferMinutes,
+  departureTransferBufferMinutes,
+  isExplicitTransportHub,
+  resolveArrivalContext,
+  resolveDepartureContext,
+  type TravelTimingSettings,
+} from '@/types/travel-timing';
 
 import { analyzeItineraryBalance, isGourmetTourIntent } from './itinerary-balance';
 import { logPlanGenerationStep } from './plan-generation-log';
+import { normalizePlaceName } from './place-name-normalize';
 
-export function normalizePlaceName(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .normalize('NFKC')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\b(the|a|an|de|la|le|les|du|des)\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+export { normalizePlaceName } from './place-name-normalize';
 
 function tokenizePlaceName(name: string): string[] {
   return normalizePlaceName(name)
@@ -191,34 +190,19 @@ export function formatMinutesAsTime(totalMinutes: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-function departureBufferMinutes(place?: TravelTimingPlaceType): number {
-  switch (place) {
-    case '空港':
-      return 180;
-    case '駅':
-      return 60;
-    case 'ホテル':
-      return 30;
-    default:
-      return 90;
-  }
-}
-
 export function getEarliestActivityStartMinutes(timing?: TravelTimingSettings | null): number | null {
   if (!timing?.arrivalTime?.trim()) return null;
 
   const arrival = parseTimeToMinutes(timing.arrivalTime);
   if (arrival == null) return null;
 
-  const checkIn = timing.hotelCheckInTime?.trim()
-    ? parseTimeToMinutes(timing.hotelCheckInTime)
-    : parseTimeToMinutes('15:00');
+  const arrivalContext = resolveArrivalContext(timing);
+  const transfer = arrivalTransferBufferMinutes(arrivalContext);
+  if (transfer > 0) {
+    return arrival + transfer;
+  }
 
-  const readyAfterArrival = arrival + 90;
-  const readyAfterCheckIn =
-    checkIn != null && arrival <= checkIn ? checkIn + 60 : readyAfterArrival;
-
-  return Math.max(readyAfterArrival, readyAfterCheckIn);
+  return arrival;
 }
 
 export function getLatestActivityEndMinutes(timing?: TravelTimingSettings | null): number | null {
@@ -227,7 +211,8 @@ export function getLatestActivityEndMinutes(timing?: TravelTimingSettings | null
   const departure = parseTimeToMinutes(timing.departureTime);
   if (departure == null) return null;
 
-  return departure - departureBufferMinutes(timing.departurePlace);
+  const departureContext = resolveDepartureContext(timing);
+  return departure - departureTransferBufferMinutes(departureContext);
 }
 
 export function checkArrivalDepartureConstraints(
@@ -428,30 +413,37 @@ export function buildTravelTimingPromptSection(
 
   const earliest = getEarliestActivityStartMinutes(timing);
   const latest = getLatestActivityEndMinutes(timing);
+  const arrivalContext = resolveArrivalContext(timing);
+  const departureContext = resolveDepartureContext(timing);
 
   const arrivalLine = timing.arrivalTime
-    ? `- 到着: ${timing.arrivalTime}${timing.arrivalPlace ? `（${timing.arrivalPlace}${timing.arrivalPlaceDetail ? ` · ${timing.arrivalPlaceDetail}` : ''}）` : ''}`
+    ? `- プラン開始希望: ${timing.arrivalTime}（context=${arrivalContext.type}${arrivalContext.label ? ` · ${arrivalContext.label}` : ''}）`
     : '';
   const departureLine = timing.departureTime
-    ? `- 出発: ${timing.departureTime}${timing.departurePlace ? `（${timing.departurePlace}${timing.departurePlaceDetail ? ` · ${timing.departurePlaceDetail}` : ''}）` : ''}`
+    ? `- プラン終了希望: ${timing.departureTime}（context=${departureContext.type}${departureContext.label ? ` · ${departureContext.label}` : ''}）`
     : '';
 
+  const airportOrStationNote = isExplicitTransportHub(departureContext)
+    ? departureContext.type === 'airport'
+      ? '- 帰路が空港と明示されている場合のみ: 国際線は3時間前、国内線は2時間前を目安に空港到着'
+      : '- 帰路が駅と明示されている場合のみ: 出発30〜60分前に駅到着を想定'
+    : '- 【禁止】空港・駅・飛行機・新幹線を勝手に仮定しない。帰路未指定なら拠点エリア／ホテル周辺で終了する（「空港へ向かう」「空港到着目安」禁止）';
+
   return `
-## 到着・出発時間（必須遵守）
+## プラン開始・終了時刻（必須遵守）
 ${arrivalLine}
 ${departureLine}
 ${timing.hotelCheckInTime ? `- ホテルチェックイン: ${timing.hotelCheckInTime}` : ''}
 ${timing.dailyStartTime ? `- 1日の行動開始目安: ${timing.dailyStartTime}` : ''}
 ${timing.dailyEndTime ? `- 1日の行動終了目安: ${timing.dailyEndTime}` : ''}
 
-### Day 1（到着日）
-${earliest != null ? `- **${formatMinutesAsTime(earliest)} より前に観光・食事を入れない**（到着後の移動・荷物・チェックインの余裕）` : '- 到着後は軽めの街歩き・食事・休憩中心に'}
-- 到着直後の詰め込み禁止。人間が疲れないペースに
+### Day 1
+${earliest != null ? `- **${formatMinutesAsTime(earliest)} より前に観光・食事を入れない**` : '- 開始希望時刻以降に予定を組む'}
+- arrivalTime は飛行機到着とは限らない。明示されていない交通手段を仮定しない
 
 ### 最終日（${dayCount}日目）
-${latest != null ? `- **最後のアクティビティは ${formatMinutesAsTime(latest)} までに終える**（出発場所へ向かう時間を確保）` : '- 帰路に間に合うよう軽めの予定に'}
-${timing.departurePlace === '空港' ? '- 空港出発の場合: 国際線は3時間前、国内線は2時間前を目安に空港到着' : ''}
-${timing.departurePlace === '駅' ? '- 電車・新幹線の場合: 出発30〜60分前に駅到着を想定' : ''}
+${latest != null ? `- **最後のアクティビティは ${formatMinutesAsTime(latest)} までに終える**` : '- 終了希望時刻までに予定を収める'}
+${airportOrStationNote}
 `.trim();
 }
 

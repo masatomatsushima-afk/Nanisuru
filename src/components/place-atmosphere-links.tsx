@@ -1,13 +1,19 @@
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { NS } from '@/constants/nanisuru-ui';
 import { Spacing } from '@/constants/theme';
-import { getPlacePreviewLinks } from '@/lib/place-preview-links';
+import {
+  getPlacePreviewLinks,
+  type SocialLinkType,
+} from '@/lib/place-preview-links';
+import { openSocialSearchLink } from '@/lib/open-social-search-link';
 import type { ItineraryItem } from '@/types/plan';
 
 type PlaceAtmosphereLinksProps = {
   item: ItineraryItem;
   location?: string;
+  city?: string;
+  country?: string;
 };
 
 type PreviewButtonProps = {
@@ -19,21 +25,27 @@ function PreviewButton({ label, onPress }: PreviewButtonProps) {
   return (
     <Pressable
       style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-      onPress={onPress}>
+      onPress={onPress}
+      accessibilityRole="link">
       <Text style={styles.buttonLabel}>{label}</Text>
     </Pressable>
   );
 }
 
-async function openExternalUrl(url: string): Promise<void> {
-  await Linking.openURL(url);
-}
+export function PlaceAtmosphereLinks({
+  item,
+  location,
+  city,
+  country,
+}: PlaceAtmosphereLinksProps) {
+  const links = getPlacePreviewLinks(item, { location, city, country });
 
-export function PlaceAtmosphereLinks({ item, location }: PlaceAtmosphereLinksProps) {
-  const links = getPlacePreviewLinks(item, location);
+  if (!links) {
+    return null;
+  }
 
-  const handleOpen = (url: string) => {
-    void openExternalUrl(url);
+  const handleOpen = (type: SocialLinkType, url: string) => {
+    void openSocialSearchLink({ type, query: links.query, primaryUrl: url });
   };
 
   return (
@@ -42,12 +54,15 @@ export function PlaceAtmosphereLinks({ item, location }: PlaceAtmosphereLinksPro
       <View style={styles.row}>
         <PreviewButton
           label="Instagramで見る"
-          onPress={() => handleOpen(links.instagram)}
+          onPress={() => handleOpen('instagram', links.instagram)}
         />
-        <PreviewButton label="TikTokで見る" onPress={() => handleOpen(links.tiktok)} />
+        <PreviewButton
+          label="TikTokで見る"
+          onPress={() => handleOpen('tiktok', links.tiktok)}
+        />
         <PreviewButton
           label="Google画像で見る"
-          onPress={() => handleOpen(links.googleImages)}
+          onPress={() => handleOpen('google_images', links.googleImages)}
         />
       </View>
     </View>

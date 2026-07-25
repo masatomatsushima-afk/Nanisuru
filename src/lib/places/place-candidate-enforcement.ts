@@ -16,6 +16,7 @@ import {
   normalizeDestination,
   type GenericAreaPhraseKind,
 } from '@/lib/destination-safety';
+import { hasValidCoordinates, sanitizePlaceId } from '@/lib/maps-link-safety';
 import type { ItineraryDay, ItineraryItem } from '@/types/plan';
 import type { PlaceCandidate } from '@/types/place-candidate';
 
@@ -47,6 +48,30 @@ export type PlaceCandidateEnforcementResult = {
   fixesApplied: string[];
 };
 
+function buildCandidateMapsQuery(candidate: PlaceCandidate): string {
+  const parts = [
+    candidate.placeName?.trim(),
+    candidate.area?.trim(),
+    candidate.city?.trim(),
+    candidate.country?.trim(),
+  ].filter((part): part is string => Boolean(part));
+  const deduped: string[] = [];
+  for (const part of parts) {
+    if (deduped.some((p) => p.toLowerCase() === part.toLowerCase())) continue;
+    deduped.push(part);
+  }
+  return deduped.join(' ').trim();
+}
+
+function candidateCoordinates(
+  candidate: PlaceCandidate,
+): { latitude: number; longitude: number } | null {
+  const lat = candidate.coordinates?.lat;
+  const lng = candidate.coordinates?.lng;
+  if (!hasValidCoordinates(lat, lng)) return null;
+  return { latitude: Number(lat), longitude: Number(lng) };
+}
+
 function downgradeToGenericItem(
   item: ItineraryItem,
   normalized: ReturnType<typeof normalizeDestination>,
@@ -68,6 +93,9 @@ function downgradeToGenericItem(
     mapsQuery,
     socialQuery: mapsQuery,
     placeId: null,
+    coordinates: null,
+    latitude: null,
+    longitude: null,
     rating: null,
     reviewCount: null,
     priceLevel: null,
@@ -75,6 +103,10 @@ function downgradeToGenericItem(
 }
 
 function applyValidCandidate(item: ItineraryItem, candidate: PlaceCandidate): ItineraryItem {
+  const mapsQuery = buildCandidateMapsQuery(candidate) || item.mapsQuery;
+  const coordinates = candidateCoordinates(candidate);
+  const placeId = sanitizePlaceId(candidate.placeId);
+
   return {
     ...item,
     placeName: candidate.placeName,
@@ -83,10 +115,19 @@ function applyValidCandidate(item: ItineraryItem, candidate: PlaceCandidate): It
     isSpecificPlace: true,
     confidence: 'high',
     source: 'google_places',
-    placeId: candidate.placeId,
+    // Always prefer Google Places canonical id/coords — never keep OpenAI's copy if it drifted.
+    placeId,
+    coordinates,
+    latitude: coordinates?.latitude ?? null,
+    longitude: coordinates?.longitude ?? null,
     rating: candidate.rating ?? null,
     reviewCount: candidate.reviewCount ?? null,
     priceLevel: candidate.priceLevel ?? null,
+    mapsQuery: mapsQuery || item.mapsQuery,
+    socialQuery: mapsQuery || item.socialQuery || item.mapsQuery,
+    // Drop potentially broken Maps website URLs; Maps button rebuilds from placeId/coords/query.
+    websiteUrl:
+      item.websiteUrl && !/google\.com\/maps/i.test(item.websiteUrl) ? item.websiteUrl : undefined,
   };
 }
 
@@ -120,12 +161,13 @@ export function enforcePlaceCandidateSelection(
     const nextDays: ItineraryDay[] = days.map((day: ItineraryDay) => ({
       ...day,
       items: day.items.map((item: ItineraryItem): ItineraryItem => {
-        const placeId = item.placeId?.trim() || null;
+        const rawPlaceId = item.placeId?.trim() || null;
         const nameKey = item.placeName?.trim().toLowerCase();
+        // Match by raw placeId (including mock: ids) or exact placeName within the candidate list.
         const candidate =
-          (placeId ? candidateMap.get(placeId) : undefined) ??
+          (rawPlaceId ? candidateMap.get(rawPlaceId) : undefined) ??
           (nameKey ? candidateByName.get(nameKey) : undefined);
-        const resolvedPlaceId = candidate?.placeId ?? placeId;
+        const resolvedPlaceId = candidate?.placeId ?? rawPlaceId;
 
         if (candidate && resolvedPlaceId && !usedPlaceIds.has(resolvedPlaceId)) {
           usedPlaceIds.add(resolvedPlaceId);
@@ -133,11 +175,11 @@ export function enforcePlaceCandidateSelection(
         }
 
         const claimsSpecificPlace = item.isSpecificPlace !== false && Boolean(item.placeName?.trim());
-        if (placeId || claimsSpecificPlace) {
+        if (rawPlaceId || claimsSpecificPlace) {
           const reason =
             candidate && resolvedPlaceId && usedPlaceIds.has(resolvedPlaceId)
               ? 'duplicate_place_id'
-              : placeId && !candidate
+              : rawPlaceId && !candidate
                 ? 'invalid_place_id'
                 : 'specific_claim_without_valid_candidate';
           fixesApplied.push(`${reason}: "${item.activity}" (placeId=${resolvedPlaceId ?? 'none'})`);

@@ -90,15 +90,14 @@ check('scenario B: midday departure on final day yields a small, safe budget (br
   assert.strictEqual(targetItemCount, 0);
 });
 
-// --- First day is clamped to start after arrival/check-in, not a fixed constant ---
-check('first day start is clamped by arrival + check-in readiness time', () => {
+// --- First day: arrivalTime is plan start (no airport buffer unless airport is explicit) ---
+check('first day start uses arrivalTime directly when transport is unspecified', () => {
   const timing: TravelTimingSettings = {
     arrivalTime: '22:00',
     hotelCheckInTime: '23:00',
   };
   const { availableMinutes } = resolveTargetItemCountForDay({ dayIndex: 0, totalDays: 3, travelTiming: timing });
-  // arrival 22:00 + 90min = 23:30; check-in 23:00 + 60 = 00:00 -> max(23:30, 00:00-as-minutes clamped)
-  // day end defaults to 21:00, which is before the (very late) start -> 0 available minutes.
+  // already_in_area: start=22:00, default end=21:00 → 0 available minutes.
   assert.strictEqual(availableMinutes, 0);
 });
 
@@ -111,8 +110,29 @@ check('single-day trip applies both arrival and departure clamps to day 0', () =
     departurePlace: '駅',
   };
   const minutes = resolveDayAvailableMinutes({ dayIndex: 0, totalDays: 1, travelTiming: timing });
-  // arrival 09:00+90min=10:30 vs check-in 10:00+60min=11:00 -> start=11:00; departure 20:00-60min(station)=19:00 end.
-  assert.strictEqual(minutes, 19 * 60 - 11 * 60);
+  // arrival already_in_area → start 09:00; station departure → end 19:00.
+  assert.strictEqual(minutes, 19 * 60 - 9 * 60);
+});
+
+check('departureTime without place does not apply airport buffer', () => {
+  const timing: TravelTimingSettings = {
+    arrivalTime: '16:30',
+    departureTime: '22:30',
+  };
+  const minutes = resolveDayAvailableMinutes({ dayIndex: 0, totalDays: 1, travelTiming: timing });
+  // stay_in_area: 16:30–22:30 = 6h, no −180 airport buffer.
+  assert.strictEqual(minutes, 6 * 60);
+});
+
+check('explicit airport departure still applies 180min buffer', () => {
+  const timing: TravelTimingSettings = {
+    arrivalTime: '09:00',
+    departureTime: '21:00',
+    departurePlace: '空港',
+  };
+  const minutes = resolveDayAvailableMinutes({ dayIndex: 0, totalDays: 1, travelTiming: timing });
+  // start 09:00, end 18:00
+  assert.strictEqual(minutes, 9 * 60);
 });
 
 console.log(`\n[day-availability.verify] ${passed} checks passed.`);

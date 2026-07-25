@@ -1,10 +1,8 @@
 /**
- * Trip DNA → Google Places検索意図（PlaceSearchIntent[]）。
+ * Trip DNA / selected purposes → Google Places検索意図（PlaceSearchIntent[]）。
  *
- * 1回の生成につき「巨大な1クエリ」ではなく、DNAの timeOfDayRules から複数の具体的な検索意図
- * （朝食・ランチ・カフェ・ディナー・観光・買い物…）を作る。DNAごとの if 分岐は書かない —
- * timeOfDayRules / categoryPriority / forbiddenCategories という設定データだけを読んで動く
- * 純粋関数（外部通信なし・Node実行可）。
+ * 1回の生成につき「巨大な1クエリ」ではなく、複数の具体的な検索意図を作る。
+ * 複数目的のときは purpose ごとのカテゴリ意図を合成し、巨大な組み合わせ if 文は書かない。
  */
 
 import type { PlaceCategory } from '@/lib/destination-safety';
@@ -23,6 +21,8 @@ export type PlaceSearchIntent = {
   destinationLabel: string;
   desiredCount: number;
   requiredSpecificPlace: boolean;
+  /** Canonical purpose this intent primarily serves (diagnostics). */
+  purposeId?: string;
 };
 
 export type SearchIntentDestination = {
@@ -30,6 +30,11 @@ export type SearchIntentDestination = {
   city?: string;
   country?: string;
   baseArea?: string;
+};
+
+export type SelectedPurposeLike = {
+  purpose: string;
+  weight?: number;
 };
 
 /** 旅行全体で作る検索意図の最大数（= Google Places呼び出し回数の土台。実際の呼び出し上限は orchestrator 側）。 */
@@ -41,16 +46,18 @@ const MAX_CATEGORIES_PER_SLOT = 2;
 
 /**
  * slot × category → 自然な検索キーワード（英語ベース・DNA非依存の共通テーブル）。
- * 「グルメ専用」ではなく、food/cafe というカテゴリが登場する *どの* DNA でも同じテーブルを使う。
  */
-const QUERY_KEYWORDS_BY_CATEGORY: Record<PlaceCategory, Partial<Record<TimeOfDaySlot, string>> & { default: string }> = {
+const QUERY_KEYWORDS_BY_CATEGORY: Record<
+  PlaceCategory,
+  Partial<Record<TimeOfDaySlot, string>> & { default: string }
+> = {
   food: {
     morning: 'breakfast restaurants',
-    midday: 'lunch restaurants',
-    afternoon: 'restaurants',
+    midday: 'lunch restaurants local food',
+    afternoon: 'restaurants street food',
     evening: 'dinner restaurants',
     night: 'late night restaurants',
-    default: 'restaurants',
+    default: 'restaurants local food',
   },
   cafe: {
     morning: 'cafe breakfast',
@@ -58,10 +65,13 @@ const QUERY_KEYWORDS_BY_CATEGORY: Record<PlaceCategory, Partial<Record<TimeOfDay
     default: 'cafe',
   },
   sightseeing: {
-    default: 'tourist attractions',
+    default: 'tourist attractions landmarks museum park temple shrine',
   },
   shopping: {
-    default: 'shopping',
+    midday: 'shopping mall department store',
+    afternoon: 'fashion street shopping cosmetics store',
+    evening: 'shopping street cosmetics store',
+    default: 'shopping mall market fashion street',
   },
   nightlife: {
     default: 'bars nightlife',
@@ -71,28 +81,212 @@ const QUERY_KEYWORDS_BY_CATEGORY: Record<PlaceCategory, Partial<Record<TimeOfDay
   },
 };
 
+/** Canonical purpose → categories to search (no combination if-trees). */
+export const PURPOSE_SEARCH_CATEGORIES: Readonly<Record<string, readonly PlaceCategory[]>> = {
+  gourmet: ['food', 'cafe'],
+  shopping: ['shopping'],
+  sightseeing: ['sightseeing'],
+  nightlife: ['nightlife'],
+  nature: ['activity', 'sightseeing'],
+  ai: ['sightseeing', 'food', 'cafe', 'shopping'],
+};
+
+/** Alternate queries when a purpose returns 0 candidates (retry; still real Places only). */
+export const PURPOSE_RETRY_QUERIES: Readonly<Record<string, readonly string[]>> = {
+  gourmet: ['restaurant', 'local food', 'dessert cafe', 'street food'],
+  shopping: ['shopping mall', 'fashion street', 'cosmetics store', 'department store', 'market'],
+  sightseeing: ['landmark', 'tourist attraction', 'museum', 'park'],
+  nightlife: ['bar', 'nightlife'],
+  nature: ['park', 'garden', 'outdoor'],
+  ai: ['tourist attraction', 'restaurant', 'shopping mall'],
+};
+
+/** Known hub → nearby neighborhoods for query enrichment (config, not purpose×city if-trees). */
+const BASE_AREA_NEARBY: Readonly<Record<string, readonly string[]>> = {
+  難波: ['難波', '心斎橋', '道頓堀', '日本橋', '千日前', '黒門市場'],
+  namba: ['Namba', 'Shinsaibashi', 'Dotonbori', 'Nipponbashi'],
+  聖水: ['聖水', 'Seongsu'],
+  seongsu: ['Seongsu', '성수'],
+  明洞: ['明洞', 'Myeongdong'],
+  myeongdong: ['Myeongdong'],
+};
+
 function buildQueryKeyword(category: PlaceCategory, slot: TimeOfDaySlot): string {
   const table = QUERY_KEYWORDS_BY_CATEGORY[category];
   return table[slot] ?? table.default;
 }
 
+function nearbyHint(baseArea?: string): string {
+  if (!baseArea?.trim()) return '';
+  const key = baseArea.trim().toLowerCase();
+  const nearby =
+    BASE_AREA_NEARBY[baseArea.trim()] ??
+    BASE_AREA_NEARBY[key] ??
+    null;
+  if (!nearby?.length) return baseArea.trim();
+  return nearby.slice(0, 3).join(' ');
+}
+
+function makeIntent(params: {
+  intentId: string;
+  slot: TimeOfDaySlot;
+  category: PlaceCategory;
+  query: string;
+  destination: SearchIntentDestination;
+  purposeId?: string;
+}): PlaceSearchIntent {
+  const areaHint = nearbyHint(params.destination.baseArea);
+  const queryWithArea = areaHint
+    ? `${params.query} ${areaHint}`.trim()
+    : params.query;
+
+  return {
+    intentId: params.intentId,
+    dayIndex: null,
+    timeSlot: params.slot,
+    category: params.category,
+    query: queryWithArea,
+    city: params.destination.city,
+    country: params.destination.country,
+    baseArea: params.destination.baseArea,
+    destinationLabel: params.destination.destinationLabel,
+    desiredCount: DEFAULT_DESIRED_COUNT_PER_INTENT,
+    requiredSpecificPlace: true,
+    purposeId: params.purposeId,
+  };
+}
+
 /**
- * Trip DNA の `timeOfDayRules` から、旅行全体で使う検索意図の一覧を作る。
- * 各スロットの `preferredCategories` は既にそのスロットにとって自然な順（例: 午後なら
- * "カフェ→食事"）で書かれているため、その並び順の先頭から `MAX_CATEGORIES_PER_SLOT` 件を採用
- * する（`categoryPriority` で上書きしない — food のようなグローバル優先カテゴリが全スロットを
- * 奪ってしまうのを避ける）。forbiddenCategories は除外。同じ slot×category の組み合わせは1回
- * しか作らない（= 日をまたいで候補プールを共有する前提）。
+ * Ensure each selected purpose contributes at least one search intent.
+ * Round-robin so secondary purposes are not starved by primary weight.
+ */
+function buildPurposeCoverageIntents(
+  selectedPurposes: readonly SelectedPurposeLike[],
+  destination: SearchIntentDestination,
+  seenKeys: Set<string>,
+  limit: number,
+): PlaceSearchIntent[] {
+  const intents: PlaceSearchIntent[] = [];
+  if (selectedPurposes.length === 0 || limit <= 0) return intents;
+
+  const slotsForWeight = (weight: number | undefined): TimeOfDaySlot[] => {
+    if ((weight ?? 0) >= 0.5) return ['midday', 'afternoon', 'evening'];
+    if ((weight ?? 0) >= 0.25) return ['afternoon', 'evening'];
+    return ['afternoon'];
+  };
+
+  type Pending = { purposeId: string; slot: TimeOfDaySlot; category: PlaceCategory };
+  const queues: Pending[][] = selectedPurposes.map((purpose) => {
+    const categories = PURPOSE_SEARCH_CATEGORIES[purpose.purpose] ?? [];
+    const pending: Pending[] = [];
+    for (const slot of slotsForWeight(purpose.weight)) {
+      for (const category of categories) {
+        pending.push({ purposeId: purpose.purpose, slot, category });
+      }
+    }
+    return pending;
+  });
+
+  const tryPush = (entry: Pending): boolean => {
+    const slotKey = `${entry.slot}:${entry.category}`;
+    const key = `purpose:${entry.purposeId}:${entry.slot}:${entry.category}`;
+    if (seenKeys.has(key) || seenKeys.has(slotKey)) return false;
+    seenKeys.add(key);
+    seenKeys.add(slotKey);
+    intents.push(
+      makeIntent({
+        intentId: key,
+        slot: entry.slot,
+        category: entry.category,
+        query: buildQueryKeyword(entry.category, entry.slot),
+        destination,
+        purposeId: entry.purposeId,
+      }),
+    );
+    return true;
+  };
+
+  // Pass 1: at least one intent per purpose (when possible).
+  for (const queue of queues) {
+    if (intents.length >= limit) break;
+    while (queue.length > 0) {
+      const next = queue.shift()!;
+      if (tryPush(next)) break;
+    }
+  }
+
+  // Pass 2: round-robin fill remaining budget.
+  let progressed = true;
+  while (intents.length < limit && progressed) {
+    progressed = false;
+    for (const queue of queues) {
+      if (intents.length >= limit) break;
+      while (queue.length > 0) {
+        const next = queue.shift()!;
+        if (tryPush(next)) {
+          progressed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return intents;
+}
+
+/** Retry intents when candidateCountByPurpose[purpose] === 0. */
+export function buildPurposeRetryIntents(
+  purposeId: string,
+  destination: SearchIntentDestination,
+  alreadyUsedIds: ReadonlySet<string>,
+  limit = 2,
+): PlaceSearchIntent[] {
+  const categories = PURPOSE_SEARCH_CATEGORIES[purposeId] ?? [];
+  const queries = PURPOSE_RETRY_QUERIES[purposeId] ?? [];
+  const intents: PlaceSearchIntent[] = [];
+  let qi = 0;
+
+  for (const category of categories) {
+    for (; qi < queries.length && intents.length < limit; qi += 1) {
+      const intentId = `retry:${purposeId}:${category}:${queries[qi]}`;
+      if (alreadyUsedIds.has(intentId)) continue;
+      intents.push(
+        makeIntent({
+          intentId,
+          slot: 'afternoon',
+          category,
+          query: queries[qi],
+          destination,
+          purposeId,
+        }),
+      );
+    }
+  }
+
+  return intents;
+}
+
+/**
+ * Trip DNA の `timeOfDayRules` から検索意図を作る。
+ * selectedPurposes がある場合は、先に目的別カバレッジ意図を確保してから DNA 意図を足す。
  */
 export function buildPlaceSearchIntents(
   dna: TripDnaProfile,
   destination: SearchIntentDestination,
+  options?: { selectedPurposes?: readonly SelectedPurposeLike[] | null },
 ): PlaceSearchIntent[] {
   const forbidden = new Set(dna.forbiddenCategories);
   const seenKeys = new Set<string>();
   const intents: PlaceSearchIntent[] = [];
+  const selected = options?.selectedPurposes ?? [];
+
+  if (selected.length > 0) {
+    const purposeBudget = Math.min(MAX_SEARCH_INTENTS, Math.max(3, selected.length * 2));
+    intents.push(...buildPurposeCoverageIntents(selected, destination, seenKeys, purposeBudget));
+  }
 
   for (const slot of TIME_OF_DAY_SLOTS) {
+    if (intents.length >= MAX_SEARCH_INTENTS) break;
     const rule = dna.timeOfDayRules.find((entry) => entry.slot === slot);
     const preferred = (rule?.preferredCategories ?? []).filter((category) => !forbidden.has(category));
 
@@ -101,23 +295,34 @@ export function buildPlaceSearchIntents(
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
 
-      intents.push({
-        intentId: key,
-        dayIndex: null,
-        timeSlot: slot,
-        category,
-        query: buildQueryKeyword(category, slot),
-        city: destination.city,
-        country: destination.country,
-        baseArea: destination.baseArea,
-        destinationLabel: destination.destinationLabel,
-        desiredCount: DEFAULT_DESIRED_COUNT_PER_INTENT,
-        requiredSpecificPlace: true,
-      });
+      intents.push(
+        makeIntent({
+          intentId: key,
+          slot,
+          category,
+          query: buildQueryKeyword(category, slot),
+          destination,
+        }),
+      );
 
       if (intents.length >= MAX_SEARCH_INTENTS) return intents;
     }
   }
 
   return intents;
+}
+
+/** Count how many candidates map to each selected purpose (by category). */
+export function countCandidatesByPurpose(
+  candidates: readonly { category?: PlaceCategory | null }[],
+  selectedPurposes: readonly SelectedPurposeLike[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const purpose of selectedPurposes) {
+    const categories = new Set(PURPOSE_SEARCH_CATEGORIES[purpose.purpose] ?? []);
+    counts[purpose.purpose] = candidates.filter(
+      (candidate) => candidate.category && categories.has(candidate.category),
+    ).length;
+  }
+  return counts;
 }

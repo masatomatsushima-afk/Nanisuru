@@ -28,7 +28,7 @@ function AdviceBlock({ label, lines }: { label: string; lines: string[] }) {
 export function OutfitPackingSection({ advice, compact = false }: OutfitPackingSectionProps) {
   return (
     <View style={[styles.wrap, compact && styles.wrapCompact]}>
-      <Text style={styles.eyebrow}>OUTFIT & PACKING</Text>
+      <Text style={styles.eyebrow}>服装・持ち物</Text>
       <Text style={styles.title}>{advice.title}</Text>
       {advice.styleMode ? (
         <Text style={styles.styleMode}>服装の雰囲気: {advice.styleMode}</Text>

@@ -2,7 +2,13 @@ import type { WeatherForecast } from '@/types/plan';
 import type { SavedTripPayload } from '@/types/trip';
 
 export type WeatherReplanEligibility =
-  | { status: 'ready'; highlight?: boolean; daysUntil: number }
+  | {
+      status: 'ready';
+      highlight?: boolean;
+      daysUntil: number;
+      /** Button label — weatherAvailable / fetch_failed / etc. */
+      buttonLabel: string;
+    }
   | { status: 'future'; message: string }
   | { status: 'hidden' };
 
@@ -13,6 +19,9 @@ export type WeatherReplanPreviewSuccess = {
   freshWeather: WeatherForecast;
   previousWeather?: WeatherForecast;
   changePoints: string[];
+  /** Number of daily forecast days used for this replan. */
+  forecastDayCount?: number;
+  reusedExistingWeatherContext?: boolean;
 };
 
 export type WeatherReplanPreviewFailure = {

@@ -42,13 +42,14 @@ function isGenericCategoryItem(item: ItineraryItem, category: PlaceCategory): bo
 // カテゴリ別の安全な言い回し。「で」+ジャンル名だけの言い回しは isAbstractItineraryItem
 // (spot-specificity.ts) に抽象判定されてplaceId/placeNameを剥奪されるため、それを避ける表現のみ使う。
 // travel-plan-dev-fallback.ts の Google Places フォールバックでも同じ制約を適用している。
+/** Prefer real placeName as the visible title — never destinationLabel + 「で〇〇を楽しむ」. */
 const CATEGORY_ACTIVITY_TEMPLATE: Record<PlaceCategory, (name: string) => string> = {
-  food: (name) => `${name}で人気のグルメを味わう`,
-  cafe: (name) => `${name}でカフェ休憩を楽しむ`,
-  sightseeing: (name) => `${name}を訪れる`,
-  shopping: (name) => `${name}でお土産を探す`,
-  nightlife: (name) => `${name}で夜を楽しむ`,
-  activity: (name) => `${name}で体験を楽しむ`,
+  food: (name) => name,
+  cafe: (name) => name,
+  sightseeing: (name) => name,
+  shopping: (name) => name,
+  nightlife: (name) => name,
+  activity: (name) => name,
 };
 
 function buildCandidateActivity(candidate: PlaceCandidate): string {
@@ -69,6 +70,19 @@ export type PurposeCompositionReport = {
   abstractWalkItemsRemoved: number;
   googlePlaceCount: number;
   fixesApplied: string[];
+  /** Per selected purpose: how many matching items ended up in the plan. */
+  finalItemCountByPurpose?: Record<string, number>;
+  missingPurposeCoverageFixed?: boolean;
+};
+
+/** Canonical purpose id → categories that count as coverage for that purpose. */
+export const PURPOSE_COVERAGE_CATEGORIES: Readonly<Record<string, readonly PlaceCategory[]>> = {
+  gourmet: ['food', 'cafe'],
+  shopping: ['shopping'],
+  sightseeing: ['sightseeing'],
+  nightlife: ['nightlife'],
+  nature: ['activity', 'sightseeing'],
+  ai: ['sightseeing', 'food', 'cafe', 'shopping'],
 };
 
 function countByCategories(
@@ -122,6 +136,7 @@ export function enforcePurposeComposition(
     selectedMood: string;
     candidates: readonly PlaceCandidate[];
     rawLocation: string | undefined | null;
+    selectedPurposes?: readonly { purpose: string; weight?: number }[] | null;
   },
 ): PurposeCompositionReport {
   const { profile } = options;
@@ -130,6 +145,7 @@ export function enforcePurposeComposition(
   const fixesApplied: string[] = [];
   let abstractWalkItemsRemoved = 0;
   let googlePlaceCount = 0;
+  let missingPurposeCoverageFixed = false;
 
   try {
     const normalized = normalizeDestination(options.rawLocation);
@@ -301,18 +317,77 @@ export function enforcePurposeComposition(
       );
     }
 
+    // Step 5: purpose coverage — each selected purpose must have ≥1 matching item when candidates exist.
+    const selected = options.selectedPurposes ?? [];
+    if (selected.length >= 1) {
+      for (const purpose of selected) {
+        const categories = PURPOSE_COVERAGE_CATEGORIES[purpose.purpose];
+        if (!categories?.length) continue;
+        const { matched } = countByCategories(nextDays, categories);
+        if (matched > 0) continue;
+
+        let placed = false;
+        outerPurpose: for (const category of categories) {
+          const candidate = takeNextCandidate(category);
+          if (!candidate) continue;
+          for (const day of nextDays) {
+            for (let i = 0; i < day.items.length; i += 1) {
+              const item = day.items[i];
+              if (isLogisticsItem(item) || item.activityCategory === '移動') continue;
+              if (item.category && categories.includes(item.category)) continue;
+              day.items[i] = applyCandidateToItem(item, candidate);
+              fixesApplied.push(
+                `missing_purpose_coverage_fixed: ${purpose.purpose} <- "${candidate.placeName}"`,
+              );
+              missingPurposeCoverageFixed = true;
+              placed = true;
+              break outerPurpose;
+            }
+          }
+        }
+        if (!placed) {
+          fixesApplied.push(`missing_purpose_coverage_no_candidates: ${purpose.purpose}`);
+        }
+      }
+    }
+
+    const finalItemCountByPurpose: Record<string, number> = {};
+    for (const purpose of selected) {
+      const categories = PURPOSE_COVERAGE_CATEGORIES[purpose.purpose];
+      finalItemCountByPurpose[purpose.purpose] = categories
+        ? countByCategories(nextDays, categories).matched
+        : 0;
+    }
+
+    if (process.env.NODE_ENV !== 'production' && selected.length > 0) {
+      console.info('[Purpose]', {
+        selectedPurposeWeights: selected.map((p) => ({
+          purpose: p.purpose,
+          weight: p.weight ?? null,
+        })),
+        finalItemCountByPurpose,
+        missingPurposeCoverageFixed,
+      });
+    }
+
+    const refreshedCounts = countByCategories(nextDays, dominantGroup);
+    const refreshedRatio =
+      refreshedCounts.total > 0 ? refreshedCounts.matched / refreshedCounts.total : 0;
+
     return {
       days: nextDays,
       purposeId: profile.id,
       selectedMood: options.selectedMood,
       dominantCategory: profile.dominantCategory,
-      dominantCategoryItemCount: finalCounts.matched,
-      totalItemCount: finalCounts.total,
-      dominantCategoryRatio: finalRatio,
-      foodRatio: finalRatio,
+      dominantCategoryItemCount: refreshedCounts.matched,
+      totalItemCount: refreshedCounts.total,
+      dominantCategoryRatio: refreshedRatio,
+      foodRatio: refreshedRatio,
       abstractWalkItemsRemoved,
       googlePlaceCount,
       fixesApplied,
+      finalItemCountByPurpose,
+      missingPurposeCoverageFixed,
     };
   } catch (error) {
     console.warn('[enforcePurposeComposition] failed, keeping original days:', error);

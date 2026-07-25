@@ -11,6 +11,7 @@ import {
   placeCandidateSafetyPenalty,
 } from './place-candidate-safety';
 import type { PlaceRankingContext } from './place-ranking-context';
+import { resolveVenueSetting } from './place-venue-setting';
 
 export type { PlaceRankingContext } from './place-ranking-context';
 
@@ -109,6 +110,40 @@ function scoreConfidence(candidate: PlaceCandidate): number {
   }
 }
 
+/**
+ * Weather fit — boost/penalty from venue setting + trip weather bias.
+ * Unknown venue settings are barely touched (no dangerous outdoor assertion).
+ */
+function scoreWeatherFit(candidate: PlaceCandidate, context: PlaceRankingContext): number {
+  const fit = context.weatherFit;
+  if (!fit) return 0;
+
+  const setting = resolveVenueSetting(candidate);
+
+  let score = 0;
+  if (fit.preferIndoor || fit.rainRisk) {
+    if (setting === 'indoor') score += 14;
+    else if (setting === 'mixed') score += 6;
+    else if (setting === 'outdoor') score -= 12;
+    // unknown: mild indoor preference only when rain is clear
+    else if (fit.rainRisk) score += 2;
+  } else if (fit.preferOutdoor) {
+    if (setting === 'outdoor') score += 10;
+    else if (setting === 'indoor') score -= 3;
+  }
+
+  if (fit.heatRisk) {
+    if (setting === 'indoor') score += 6;
+    else if (setting === 'outdoor') score -= 6;
+  }
+  if (fit.coldRisk) {
+    if (setting === 'indoor') score += 5;
+    else if (setting === 'outdoor') score -= 4;
+  }
+
+  return score;
+}
+
 function scoreCandidate(candidate: PlaceCandidate, context: PlaceRankingContext): number {
   const raw =
     scoreDestinationMatch(candidate, context) +
@@ -118,7 +153,8 @@ function scoreCandidate(candidate: PlaceCandidate, context: PlaceRankingContext)
     scorePriceLevel(candidate) +
     scoreProximity(candidate, context) +
     scoreOpeningHours(candidate, context) +
-    scoreConfidence(candidate);
+    scoreConfidence(candidate) +
+    scoreWeatherFit(candidate, context);
 
   return Math.max(0, raw - placeCandidateSafetyPenalty(candidate));
 }

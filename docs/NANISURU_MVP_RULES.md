@@ -1,5 +1,9 @@
 # Nanisuru MVP 最優先ルール
 
+> **Before changing plan generation, Maps, Weather, Places, or itinerary UI,
+> read `docs/NANISURU_PRODUCT_BRAIN.md` first.
+> Any implementation that violates Product Brain rules is not acceptable.**
+
 このドキュメントは、Nanisuru を **モバイルSafari実機での開発テスト向けMVP** として安定させるための
 最優先ルールです。Cursor（AIエージェント）はコード変更前に必ずこのファイルを確認してください。
 
@@ -9,14 +13,16 @@
 
 ## 0. このドキュメントの位置づけ
 
+- `docs/NANISURU_PRODUCT_BRAIN.md` — **ユーザー目線の絶対ルール（必読）**
 - `docs/NANISURU_MVP_RULES.md` — 最優先ルール（このファイル）
 - `docs/PLAN_GENERATION_RULES.md` — 旅行プラン生成（destination / 通貨 / 時間 / Maps・SNS）の詳細ルール
 - `docs/TEST_CHECKLIST.md` — iPhone Safari 実機での確認手順
 - `docs/PRODUCT_ROADMAP.md` — Nanisuru の最終目標と、MVPで意図的に後回しにしている機能の一覧
+- `npm run verify:beta-acceptance` — Product Brain の自動回帰ゲート
 
-4つとも**ドキュメントのみ**で、アプリ本体の挙動を変えるものではありません。実装は
+これらは**ドキュメント + verify**で、アプリ本体の挙動を変えるものではありません。実装は
 `src/lib/lightweight-mvp.ts`, `src/lib/generate-plan.ts`, `src/lib/destination-safety.ts` などの
-実コードが正です。矛盾があればコードを正としつつ、このドキュメントを更新してください。
+実コードが正です。矛盾があればコードを正としつつ、Product Brain とこのドキュメントを更新してください。
 
 ---
 

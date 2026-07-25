@@ -6,8 +6,12 @@
  * 2. baseArea existing coordinates
  * 3. destination city existing Google Places coordinates (request.coordinates / Places text search)
  * 4. existing safe Open-Meteo geocode (same pattern as src/lib/weather.ts)
+ *
+ * Open-Meteo often returns 0 for "city, country" and for some Japanese kanji city names.
+ * We therefore try Latin aliases and the legacy country→city mapper before giving up.
  */
 
+import { resolveWeatherLocation as mapDestinationToWeatherCity } from '@/lib/weather';
 import type { WeatherLocation } from '@/types/weather-context';
 import { finiteNumber, isValidLatitude, isValidLongitude } from './weather-context-numbers';
 
@@ -40,6 +44,28 @@ export type WeatherLocationResolveResult = {
 };
 
 type ParsedCoords = { latitude: number; longitude: number };
+
+/** Japanese (and common) place labels → Open-Meteo-friendly Latin queries. */
+const GEOCODE_LATIN_ALIASES: Record<string, string> = {
+  大阪: 'Osaka',
+  東京: 'Tokyo',
+  京都: 'Kyoto',
+  神戸: 'Kobe',
+  名古屋: 'Nagoya',
+  福岡: 'Fukuoka',
+  札幌: 'Sapporo',
+  横浜: 'Yokohama',
+  ソウル: 'Seoul',
+  釜山: 'Busan',
+  済州: 'Jeju',
+  韓国: 'Seoul',
+  日本: 'Tokyo',
+  パリ: 'Paris',
+  メルボルン: 'Melbourne',
+  シドニー: 'Sydney',
+  バンコク: 'Bangkok',
+  ニューヨーク: 'New York',
+};
 
 function parseCoords(value: CoordLike | null | undefined): ParsedCoords | null {
   if (!value || typeof value !== 'object') return null;
@@ -75,6 +101,63 @@ function buildLabel(parts: Array<string | null | undefined>): string | null {
   return cleaned.length ? cleaned.join(' · ') : null;
 }
 
+function latinAlias(value: string | null | undefined): string | null {
+  if (!value?.trim()) return null;
+  const key = value.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  return GEOCODE_LATIN_ALIASES[key] ?? null;
+}
+
+/**
+ * Build geocode query candidates that Open-Meteo actually resolves.
+ * Prefer single-token Latin city names; avoid leading with "city, country"
+ * (often returns zero results for JP/KR locales).
+ */
+export function buildWeatherGeocodeCandidates(input: WeatherLocationResolveInput): string[] {
+  const city = input.city?.trim() || '';
+  const country = input.country?.trim() || '';
+  const destination = input.destination?.trim() || '';
+  const baseAreaName = namedLabel(input.baseArea);
+  const accommodationName = namedLabel(input.accommodation);
+
+  const mappedDestination = destination ? mapDestinationToWeatherCity(destination) : '';
+  const mappedCountry = country ? mapDestinationToWeatherCity(country) : '';
+  const mappedCity = city ? mapDestinationToWeatherCity(city) : '';
+
+  const destForCombo = latinAlias(destination) ?? (mappedDestination || destination);
+  const countryForCombo = latinAlias(country) ?? country;
+
+  const ordered: string[] = [
+    latinAlias(city),
+    latinAlias(destination),
+    latinAlias(country),
+    mappedCity !== city ? mappedCity : null,
+    city,
+    mappedDestination !== destination ? mappedDestination : null,
+    destination,
+    // Country-only → default city (e.g. 韓国 → Seoul)
+    mappedCountry && mappedCountry !== country ? mappedCountry : null,
+    latinAlias(mappedCountry),
+    // Combined forms last (sometimes work for Latin pairs like Osaka, Japan)
+    city && country ? `${latinAlias(city) ?? city}, ${countryForCombo}` : null,
+    city && country ? `${city}, ${country}` : null,
+    destination && country && destForCombo ? `${destForCombo}, ${countryForCombo}` : null,
+    baseAreaName ? latinAlias(baseAreaName) ?? baseAreaName : null,
+    accommodationName ? latinAlias(accommodationName) ?? accommodationName : null,
+    country,
+  ].filter((v): v is string => Boolean(v && v.trim()));
+
+  // Dedupe while preserving order
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const q of ordered) {
+    const key = q.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(q.trim());
+  }
+  return unique;
+}
+
 const PLACES_KEY_PLACEHOLDERS = new Set([
   '',
   'your-google-places-api-key',
@@ -89,10 +172,6 @@ function getPlacesApiKey(): string | undefined {
 
 type GeocodeResult = { latitude: number; longitude: number; label: string };
 
-/**
- * Destination city via Google Places Text Search (real Places lat/lng).
- * Soft-fails to null — never invents coordinates.
- */
 async function geocodeViaGooglePlaces(query: string): Promise<GeocodeResult | null> {
   const apiKey = getPlacesApiKey();
   if (!apiKey || !query.trim()) return null;
@@ -146,9 +225,6 @@ type OpenMeteoGeocodeResponse = {
   }>;
 };
 
-/**
- * Existing safe location resolver (Open-Meteo geocoding), same approach as weather.ts.
- */
 async function geocodeViaOpenMeteo(query: string): Promise<GeocodeResult | null> {
   const q = query.trim();
   if (!q) return null;
@@ -171,18 +247,6 @@ async function geocodeViaOpenMeteo(query: string): Promise<GeocodeResult | null>
   } catch {
     return null;
   }
-}
-
-function cityCountryQuery(input: WeatherLocationResolveInput): string | null {
-  const city = input.city?.trim() || '';
-  const country = input.country?.trim() || '';
-  const destination = input.destination?.trim() || '';
-  if (city && country) return `${city}, ${country}`;
-  if (city) return city;
-  if (destination && country) return `${destination}, ${country}`;
-  if (destination) return destination;
-  if (country) return country;
-  return null;
 }
 
 /**
@@ -227,12 +291,10 @@ export async function resolveWeatherLocation(
     };
   }
 
-  const query = cityCountryQuery(input);
-  const baseAreaName = namedLabel(input.baseArea);
-  const accommodationName = namedLabel(input.accommodation);
+  const candidates = buildWeatherGeocodeCandidates(input);
 
-  // Prefer Places for destination city when key is available (real Google Places coords).
-  if (query) {
+  // Prefer Places for the strongest candidate when key is available.
+  for (const query of candidates.slice(0, 3)) {
     const places = await geocodeViaGooglePlaces(query);
     if (places) {
       return {
@@ -247,16 +309,7 @@ export async function resolveWeatherLocation(
     }
   }
 
-  // Existing safe resolver — try specific names then city/country.
-  const geocodeCandidates = [
-    accommodationName && query ? `${accommodationName}, ${query}` : null,
-    baseAreaName && query ? `${baseAreaName}, ${query}` : null,
-    query,
-    accommodationName,
-    baseAreaName,
-  ].filter((v): v is string => Boolean(v));
-
-  for (const candidate of geocodeCandidates) {
+  for (const candidate of candidates) {
     const geo = await geocodeViaOpenMeteo(candidate);
     if (geo) {
       return {

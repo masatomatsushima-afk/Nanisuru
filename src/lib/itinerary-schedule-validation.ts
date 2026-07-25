@@ -30,6 +30,10 @@ import {
 import { inferKindFromItem, isAbstractItineraryItem } from './spot-specificity';
 import type { ItineraryDay, ItineraryItem } from '@/types/plan';
 import type { TravelTimingSettings } from '@/types/travel-timing';
+import {
+  departureTransferBufferMinutes,
+  resolveDepartureContext,
+} from '@/types/travel-timing';
 
 const NIGHT_VIEW_EARLIEST_MINUTES = 18 * 60 + 30;
 const DEFAULT_NIGHT_SLOT_MINUTES = 19 * 60 + 30;
@@ -45,6 +49,11 @@ export type ItineraryScheduleValidationOptions = {
   rawLocation: string;
   travelTiming?: TravelTimingSettings | null;
   destinationDetails?: ResolvedDestinationDetails;
+  /**
+   * When false (weather replan β), do not invent seed/area venues as specific places.
+   * Duplicate items are dropped instead of being replaced with Seoul seeds.
+   */
+  allowInventedSpecificPlaces?: boolean;
 };
 
 export type ItineraryScheduleValidationReport = {
@@ -142,26 +151,176 @@ function maxItemsForDay(
   return Math.max(targetItemCount, targetItemCount === 0 ? 1 : targetItemCount);
 }
 
-function getDepartureArrivalTargetMinutes(
+function getDepartureCutoffMinutes(
   timing: TravelTimingSettings,
-  arrivalPoint?: string,
-): number | null {
+  departurePoint?: string,
+): { cutoff: number; contextType: string; injectTransit: boolean; hubLabel: string } | null {
   const departure = timing.departureTime?.trim()
     ? parseTimeToMinutes(timing.departureTime)
     : null;
   if (departure == null) return null;
 
-  const detail = `${arrivalPoint ?? ''} ${timing.departurePlaceDetail ?? ''}`;
-  const internationalHint = /国際|international|仁川|成田|ICN|NRT|HND|GMP/i.test(detail);
+  // NEVER pass arrivalPoint here — arrival ≠ return transport.
+  const departureContext = resolveDepartureContext(timing, departurePoint);
+  const buffer = departureTransferBufferMinutes(departureContext);
+  const cutoff = Math.max(6 * 60, departure - buffer);
 
-  let bufferMinutes = 120;
-  if (timing.departurePlace === '空港' || internationalHint) {
-    bufferMinutes = 180;
-  } else if (timing.departurePlace === '駅') {
-    bufferMinutes = 120;
+  const injectTransit =
+    departureContext.type === 'airport' || departureContext.type === 'station';
+
+  const hubLabel =
+    departureContext.type === 'airport'
+      ? departureContext.label?.trim() || '空港'
+      : departureContext.type === 'station'
+        ? departureContext.label?.trim() || '駅'
+        : '';
+
+  return {
+    cutoff,
+    contextType: departureContext.type,
+    injectTransit,
+    hubLabel,
+  };
+}
+
+function applyFinalDayDepartureRules(
+  days: ItineraryDay[],
+  timing: TravelTimingSettings | null | undefined,
+  _arrivalPoint: string | undefined,
+  baseArea: string | undefined,
+  accommodation: string | undefined,
+  fixes: string[],
+  issues: string[],
+): { days: ItineraryDay[]; itemsRemoved: number; cutoffMinutes: number | null } {
+  if (days.length === 0 || !timing?.departureTime?.trim()) {
+    return { days, itemsRemoved: 0, cutoffMinutes: null };
   }
 
-  return Math.max(6 * 60, departure - bufferMinutes);
+  const resolved = getDepartureCutoffMinutes(timing);
+  if (!resolved) return { days, itemsRemoved: 0, cutoffMinutes: null };
+
+  const { cutoff, injectTransit, hubLabel, contextType } = resolved;
+  const lastIndex = days.length - 1;
+  const lastDay = days[lastIndex];
+  const hub = accommodation || baseArea || '拠点エリア';
+  const { targetItemCount } = resolveTargetItemCountForDay({
+    dayIndex: lastIndex,
+    totalDays: days.length,
+    travelTiming: timing,
+  });
+  const maxNonTransit = Math.max(1, targetItemCount);
+
+  const kept: ItineraryItem[] = [];
+  let nonTransitCount = 0;
+  let itemsRemoved = 0;
+
+  for (const item of sortItemsByTime(lastDay.items)) {
+    const minutes = parseTimeToMinutes(item.time);
+    if (minutes == null) {
+      kept.push(item);
+      continue;
+    }
+
+    const looksLikeInventedReturn =
+      /空港|airport|空港到着|出発目安|フライト|飛行機|帰路優先|(?:を|へ)出発$/i.test(
+        `${item.activity} ${item.note ?? ''}`,
+      );
+
+    if (!injectTransit && looksLikeInventedReturn) {
+      itemsRemoved += 1;
+      fixes.push(`帰路未指定のため「${item.activity}」を削除`);
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[itinerary-schedule]', {
+          airportAssumptionBlocked: true,
+          inferredAirportBlocked: true,
+          departureContextType: contextType,
+        });
+      }
+      continue;
+    }
+
+    if (isTransitItem(item)) {
+      kept.push(item);
+      continue;
+    }
+
+    if (minutes >= cutoff) {
+      issues.push(`終了時刻以降の予定: ${item.time} ${item.activity}`);
+      fixes.push(
+        injectTransit
+          ? `最終日「${item.activity}」を削除（${formatMinutesAsTime(cutoff)}以降は${hubLabel}移動優先）`
+          : `最終日「${item.activity}」を削除（終了希望 ${timing.departureTime} 以降）`,
+      );
+      itemsRemoved += 1;
+      continue;
+    }
+
+    if (nonTransitCount >= maxNonTransit) {
+      fixes.push(`最終日の件数超過のため「${item.activity}」を削除（上限${maxNonTransit}件）`);
+      itemsRemoved += 1;
+      continue;
+    }
+
+    nonTransitCount += 1;
+    kept.push(item);
+  }
+
+  if (injectTransit) {
+    const hasTransit = kept.some(isTransitItem);
+    if (!hasTransit) {
+      kept.push({
+        time: formatMinutesAsTime(Math.max(6 * 60, cutoff - 30)),
+        activity: `${hub}を出発`,
+        activityCategory: '移動',
+        note: `${hubLabel}へ向かいます`,
+        isSpecificPlace: false,
+        confidence: 'low',
+      });
+      kept.push({
+        time: formatMinutesAsTime(cutoff),
+        activity: `${hubLabel}到着目安`,
+        activityCategory: '移動',
+        note: `出発 ${timing.departureTime} に合わせた到着目安`,
+        isSpecificPlace: false,
+        confidence: 'low',
+      });
+      fixes.push(`最終日に${hub}→${hubLabel}の移動を追加`);
+    }
+  } else {
+    // Stay in area — soft closing item only when the day has no non-transit ending near cutoff.
+    const hasClosing = kept.some(
+      (item) =>
+        !isTransitItem(item) ||
+        /終える|戻る|解散|ホテル|拠点|周辺で/i.test(item.activity),
+    );
+    if (!hasClosing && kept.filter((i) => !isTransitItem(i)).length === 0) {
+      kept.push({
+        time: formatMinutesAsTime(Math.max(6 * 60, cutoff - 30)),
+        activity: `${hub}周辺で一日を終える`,
+        activityCategory: '体験',
+        note: '帰路の交通手段は指定されていないため、拠点エリアで終了します',
+        isSpecificPlace: false,
+        confidence: 'low',
+        category: 'activity',
+      });
+      fixes.push(`帰路未指定のため最終日を${hub}周辺で終了`);
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      console.info('[itinerary-schedule]', {
+        departureContextType: contextType,
+        airportAssumptionBlocked: true,
+        inferredAirportBlocked: true,
+      });
+    }
+  }
+
+  const nextDays = [...days];
+  nextDays[lastIndex] = {
+    ...lastDay,
+    theme: lastDay.theme?.trim() || (injectTransit ? '出発・移動' : '拠点エリアで終了'),
+    items: sortItemsByTime(kept),
+  };
+  return { days: nextDays, itemsRemoved, cutoffMinutes: cutoff };
 }
 
 function buildReplacementItem(
@@ -286,6 +445,7 @@ function applyDuplicateFixes(
   normalized: NormalizedDestination,
   fixes: string[],
   issues: string[],
+  allowInventedSpecificPlaces = true,
 ): { days: ItineraryDay[]; removedCount: number; replacedCount: number } {
   const seen = new Set<string>();
   let removedCount = 0;
@@ -311,6 +471,11 @@ function applyDuplicateFixes(
       }
 
       issues.push(`重複: ${item.activity}`);
+      if (!allowInventedSpecificPlaces) {
+        removedCount += 1;
+        fixes.push(`重複のため「${item.activity}」を削除（架空スポット差し替えなし）`);
+        continue;
+      }
       const kind = inferKindFromItem(item);
       const replacement = buildReplacementItem(kind, normalized, seen, seedCursor);
       if (replacement) {
@@ -364,100 +529,6 @@ function sortItemsByTime(items: ItineraryItem[]): ItineraryItem[] {
     const bm = parseTimeToMinutes(b.time) ?? 0;
     return am - bm;
   });
-}
-
-function applyFinalDayDepartureRules(
-  days: ItineraryDay[],
-  timing: TravelTimingSettings | null | undefined,
-  arrivalPoint: string | undefined,
-  baseArea: string | undefined,
-  accommodation: string | undefined,
-  fixes: string[],
-  issues: string[],
-): { days: ItineraryDay[]; itemsRemoved: number; cutoffMinutes: number | null } {
-  if (days.length === 0 || !timing?.departureTime?.trim()) {
-    return { days, itemsRemoved: 0, cutoffMinutes: null };
-  }
-
-  const airportArrivalTarget = getDepartureArrivalTargetMinutes(timing, arrivalPoint);
-  const latestEnd = getLatestActivityEndMinutes(timing);
-  const cutoff = airportArrivalTarget ?? latestEnd;
-  if (cutoff == null) return { days, itemsRemoved: 0, cutoffMinutes: null };
-
-  const lastIndex = days.length - 1;
-  const lastDay = days[lastIndex];
-  const hub = accommodation || baseArea || '宿泊先';
-  const departurePlace = timing.departurePlace === '駅' ? '駅' : '空港';
-  const { targetItemCount } = resolveTargetItemCountForDay({
-    dayIndex: lastIndex,
-    totalDays: days.length,
-    travelTiming: timing,
-  });
-  // Available-minutes based cap — never the old hard-coded "max 2" that collapsed evening
-  // departures to a single 17:00 survivor. target 0 (midday flight) still allows 1 light item.
-  const maxNonTransit = Math.max(1, targetItemCount);
-
-  const kept: ItineraryItem[] = [];
-  let nonTransitCount = 0;
-  let itemsRemoved = 0;
-
-  for (const item of sortItemsByTime(lastDay.items)) {
-    const minutes = parseTimeToMinutes(item.time);
-    if (minutes == null) {
-      kept.push(item);
-      continue;
-    }
-
-    if (isTransitItem(item)) {
-      kept.push(item);
-      continue;
-    }
-
-    if (minutes >= cutoff) {
-      issues.push(`最終日の出発前に間に合わない予定: ${item.time} ${item.activity}`);
-      fixes.push(`最終日「${item.activity}」を削除（${formatMinutesAsTime(cutoff)}以降は${departurePlace}移動優先）`);
-      itemsRemoved += 1;
-      continue;
-    }
-
-    if (nonTransitCount >= maxNonTransit) {
-      fixes.push(`最終日の件数超過のため「${item.activity}」を削除（上限${maxNonTransit}件）`);
-      itemsRemoved += 1;
-      continue;
-    }
-
-    nonTransitCount += 1;
-    kept.push(item);
-  }
-
-  const hasTransit = kept.some(isTransitItem);
-  if (!hasTransit) {
-    kept.push({
-      time: formatMinutesAsTime(Math.max(6 * 60, cutoff - 30)),
-      activity: `${hub}を出発`,
-      activityCategory: '移動',
-      note: `${departurePlace}へ向かいます`,
-      isSpecificPlace: false,
-      confidence: 'low',
-    });
-    kept.push({
-      time: formatMinutesAsTime(cutoff),
-      activity: `${departurePlace}到着目安`,
-      activityCategory: '移動',
-      note: `出発 ${timing.departureTime} に合わせた到着目安`,
-      isSpecificPlace: false,
-      confidence: 'low',
-    });
-    fixes.push(`最終日に${hub}→${departurePlace}の移動を追加`);
-  }
-
-  const nextDays = [...days];
-  nextDays[lastIndex] = {
-    ...lastDay,
-    theme: lastDay.theme?.trim() || '出発・移動',
-    items: sortItemsByTime(kept),
-  };
-  return { days: nextDays, itemsRemoved, cutoffMinutes: cutoff };
 }
 
 function isFoodItem(item: ItineraryItem): boolean {
@@ -590,7 +661,7 @@ function applyDayThemes(days: ItineraryDay[]): ItineraryDay[] {
     if (day.theme?.trim()) return day;
     if (total <= 1) return { ...day, theme: '日帰りプラン' };
     if (index === 0) return { ...day, theme: '到着・拠点周辺' };
-    if (index === total - 1) return { ...day, theme: '出発・移動' };
+    if (index === total - 1) return { ...day, theme: '拠点エリアで終了' };
     if (index === 1) return { ...day, theme: 'メイン観光' };
     return { ...day, theme: 'カフェ・買い物・散策' };
   });
@@ -647,7 +718,13 @@ export function validateAndFixItinerarySchedule(
   days = applyDayThemes(days);
   days = applyDayItemCountLimits(days, fixesApplied, options.travelTiming);
 
-  const dedupeResult = applyDuplicateFixes(days, normalized, fixesApplied, issuesFound);
+  const dedupeResult = applyDuplicateFixes(
+    days,
+    normalized,
+    fixesApplied,
+    issuesFound,
+    options.allowInventedSpecificPlaces !== false,
+  );
   days = dedupeResult.days;
 
   days = applyNightViewRules(days, fixesApplied, issuesFound);
@@ -726,7 +803,7 @@ export function collectItineraryScheduleIssues(
   }
 
   if (travelTiming?.departureTime) {
-    const cutoff = getDepartureArrivalTargetMinutes(travelTiming);
+    const cutoff = getLatestActivityEndMinutes(travelTiming);
     const lastDay = days[days.length - 1];
     if (cutoff != null && lastDay) {
       for (const item of lastDay.items) {

@@ -87,6 +87,7 @@ type SpotTemplate = {
   placeId?: string | null;
   rating?: number | null;
   reviewCount?: number | null;
+  coordinates?: { latitude: number; longitude: number } | null;
   /** Per-spot reason override. Falls back to the shared "テスト用" wording when absent, so the
    * existing seed-based fallback (`buildDevFallbackTravelPlan`) is unaffected. */
   reason?: string;
@@ -120,6 +121,7 @@ function buildFallbackItem(params: {
   placeId?: string | null;
   rating?: number | null;
   reviewCount?: number | null;
+  coordinates?: { latitude: number; longitude: number } | null;
 }): ItineraryItem {
   return {
     time: formatMinutesAsTime(params.timeMinutes),
@@ -131,7 +133,7 @@ function buildFallbackItem(params: {
     note: params.note,
     transportation: '—',
     travelTimeToNext: '—',
-    weatherBackup: '天候に関わらず楽しめます',
+    weatherBackup: undefined,
     mapsQuery: params.mapsQuery,
     socialQuery: params.mapsQuery,
     isSpecificPlace: params.isSpecificPlace,
@@ -145,6 +147,9 @@ function buildFallbackItem(params: {
     rating: params.rating ?? null,
     reviewCount: params.reviewCount ?? null,
     priceLevel: null,
+    coordinates: params.coordinates ?? null,
+    latitude: params.coordinates?.latitude ?? null,
+    longitude: params.coordinates?.longitude ?? null,
   };
 }
 
@@ -423,8 +428,29 @@ function buildGooglePlacesDayTemplates(
     const kind = PLACE_CATEGORY_TO_KIND[category];
     const candidate = takeCandidateForCategory(category);
     if (candidate) {
-      const mapsQuery = `${candidate.placeName} ${normalized.destinationLabel}`.trim();
+      const mapsQuery = [
+        candidate.placeName,
+        candidate.area,
+        candidate.city,
+        candidate.country,
+        normalized.destinationLabel,
+      ]
+        .map((part) => part?.trim())
+        .filter((part): part is string => Boolean(part))
+        .filter((part, index, arr) => arr.findIndex((p) => p.toLowerCase() === part.toLowerCase()) === index)
+        .join(' ')
+        .trim();
       const resolvedCategory = candidate.category ?? category;
+      const coords =
+        candidate.coordinates &&
+        Number.isFinite(candidate.coordinates.lat) &&
+        Number.isFinite(candidate.coordinates.lng) &&
+        !(candidate.coordinates.lat === 0 && candidate.coordinates.lng === 0)
+          ? {
+              latitude: candidate.coordinates.lat,
+              longitude: candidate.coordinates.lng,
+            }
+          : null;
       return {
         activity: CATEGORY_ACTIVITY[resolvedCategory](candidate.placeName),
         category: PLACE_CATEGORY_TO_ACTIVITY_CATEGORY[resolvedCategory],
@@ -440,6 +466,7 @@ function buildGooglePlacesDayTemplates(
         placeId: candidate.placeId,
         rating: candidate.rating ?? null,
         reviewCount: candidate.reviewCount ?? null,
+        coordinates: coords,
         reason: googleReason(candidate.placeName),
       };
     }
@@ -458,6 +485,7 @@ function buildGooglePlacesDayTemplates(
       placeId: null,
       rating: null,
       reviewCount: null,
+      coordinates: null,
       reason: fallbackReason,
     };
   };
@@ -936,6 +964,7 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
             placeId: spot.placeId,
             rating: spot.rating,
             reviewCount: spot.reviewCount,
+            coordinates: spot.coordinates ?? null,
           });
         });
 
@@ -964,6 +993,7 @@ export function buildGooglePlacesFallbackTravelPlan(input: PlanInput, candidates
     selectedMood: input.mood,
     candidates,
     rawLocation: location,
+    selectedPurposes: input.selectedPurposes,
   });
 
   if (__DEV__) {

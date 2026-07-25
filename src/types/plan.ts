@@ -60,6 +60,15 @@ export type ItineraryItem = {
   spotCandidates?: SpotCandidate[];
   /** Reserved for Google Places API — null in MVP. */
   placeId?: string | null;
+  /**
+   * Lat/lng from a confirmed Google Places candidate (or trusted geocode).
+   * Never invent — leave unset when unknown. Prefer `coordinates` object.
+   */
+  coordinates?: { latitude: number; longitude: number } | null;
+  /** @deprecated Prefer `coordinates` — kept for older payloads / partial merges. */
+  latitude?: number | null;
+  /** @deprecated Prefer `coordinates` — kept for older payloads / partial merges. */
+  longitude?: number | null;
   rating?: number | null;
   reviewCount?: number | null;
   priceLevel?: number | null;
@@ -144,6 +153,11 @@ export type PlanDetails = {
   tripEndDate?: string;
   customDuration?: CustomTripDuration;
   weather?: WeatherForecast;
+  /**
+   * Full WeatherContext used during plan generation (Open-Meteo / Google).
+   * Kept so weather replan can reuse the same forecast shown on Plan Detail.
+   */
+  weatherContext?: import('@/types/weather-context').WeatherContext;
   plannerMessage?: string;
   conciergeAnalysis?: ConciergeAnalysis;
   highlights: string[];
